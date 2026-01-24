@@ -40,11 +40,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       controls
       onTimeUpdate={endTime !== undefined ? handleTimeUpdate : undefined}
       onLoadedMetadata={startTime !== undefined ? handleLoadedMetadata : undefined}
-      style={{
-        borderRadius: 8,
-        backgroundColor: "#1a1a1a",
-        objectFit: "contain",
-      }}
+      className="rounded-lg bg-muted object-contain"
     />
   );
 };

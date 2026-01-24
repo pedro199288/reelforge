@@ -1,5 +1,21 @@
 # Agent Instructions
 
+## Package Manager
+
+**Always use `bun`** for this project. Never use npm, yarn, or pnpm.
+
+```bash
+bun install           # Install dependencies
+bun add <package>     # Add dependency
+bun run <script>      # Run scripts
+```
+
+## Dev Server
+
+**NEVER start the dev server.** The user runs it manually. Don't run `bun run dev`, `bun run studio`, or any server-starting commands.
+
+## Issue Tracking
+
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
 ## Quick Reference

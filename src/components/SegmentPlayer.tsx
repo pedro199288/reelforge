@@ -34,16 +34,8 @@ export const SegmentPlayer: React.FC<SegmentPlayerProps> = ({
   if (!segment) {
     return (
       <div
-        style={{
-          width,
-          height,
-          backgroundColor: "#1a1a1a",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "#666",
-          borderRadius: 8,
-        }}
+        style={{ width, height }}
+        className="bg-muted rounded-lg flex items-center justify-center text-muted-foreground"
       >
         Selecciona un segmento
       </div>
@@ -51,7 +43,7 @@ export const SegmentPlayer: React.FC<SegmentPlayerProps> = ({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div className="flex flex-col gap-2">
       <video
         ref={videoRef}
         src={videoSrc}
@@ -59,13 +51,9 @@ export const SegmentPlayer: React.FC<SegmentPlayerProps> = ({
         height={height}
         controls
         onTimeUpdate={handleTimeUpdate}
-        style={{
-          borderRadius: 8,
-          backgroundColor: "#1a1a1a",
-          objectFit: "contain",
-        }}
+        className="rounded-lg bg-muted object-contain"
       />
-      <div style={{ textAlign: "center", color: "#888", fontSize: 12 }}>
+      <div className="text-center text-muted-foreground text-xs">
         Segmento #{segment.index + 1} | {segment.startTime.toFixed(2)}s -{" "}
         {segment.endTime.toFixed(2)}s | {segment.duration.toFixed(2)}s
       </div>
