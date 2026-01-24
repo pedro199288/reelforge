@@ -16,6 +16,8 @@ import { getVideoMetadata } from "@remotion/media-utils";
 import { loadFont } from "../load-font";
 import { NoCaptionFile } from "./NoCaptionFile";
 import { Caption, createTikTokStyleCaptions } from "@remotion/captions";
+import { ZoomLayer } from "./ZoomLayer";
+import type { AlignedEvent } from "../core/script/align";
 
 export type SubtitleProp = {
   startInSeconds: number;
@@ -56,6 +58,7 @@ export const CaptionedVideo: React.FC<{
   src: string;
 }> = ({ src }) => {
   const [subtitles, setSubtitles] = useState<Caption[]>([]);
+  const [zoomEvents, setZoomEvents] = useState<AlignedEvent[]>([]);
   const { delayRender, continueRender } = useDelayRender();
   const [handle] = useState(() => delayRender());
   const { fps } = useVideoConfig();
@@ -66,29 +69,57 @@ export const CaptionedVideo: React.FC<{
     .replace(/.mov$/, ".json")
     .replace(/.webm$/, ".json");
 
+  const zoomFile = src
+    .replace(/.mp4$/, ".zoom.json")
+    .replace(/.mkv$/, ".zoom.json")
+    .replace(/.mov$/, ".zoom.json")
+    .replace(/.webm$/, ".zoom.json");
+
   const fetchSubtitles = useCallback(async () => {
     try {
       await loadFont();
       const res = await fetch(subtitlesFile);
       const data = (await res.json()) as Caption[];
       setSubtitles(data);
-      continueRender(handle);
     } catch (e) {
-      cancelRender(e);
+      // Subtitles are optional, don't cancel render
+      console.warn("Could not load subtitles:", e);
     }
-  }, [continueRender, handle, subtitlesFile]);
+  }, [subtitlesFile]);
+
+  const fetchZoomEvents = useCallback(async () => {
+    try {
+      if (!getFileExists(zoomFile)) {
+        return;
+      }
+      const res = await fetch(zoomFile);
+      const data = (await res.json()) as AlignedEvent[];
+      setZoomEvents(data);
+    } catch (e) {
+      // Zoom events are optional
+      console.warn("Could not load zoom events:", e);
+    }
+  }, [zoomFile]);
 
   useEffect(() => {
-    fetchSubtitles();
+    const loadAll = async () => {
+      try {
+        await Promise.all([fetchSubtitles(), fetchZoomEvents()]);
+        continueRender(handle);
+      } catch (e) {
+        cancelRender(e);
+      }
+    };
+    loadAll();
 
-    const c = watchStaticFile(subtitlesFile, () => {
-      fetchSubtitles();
-    });
+    const c1 = watchStaticFile(subtitlesFile, fetchSubtitles);
+    const c2 = getFileExists(zoomFile) ? watchStaticFile(zoomFile, fetchZoomEvents) : null;
 
     return () => {
-      c.cancel();
+      c1.cancel();
+      c2?.cancel();
     };
-  }, [fetchSubtitles, src, subtitlesFile]);
+  }, [fetchSubtitles, fetchZoomEvents, src, subtitlesFile, zoomFile, continueRender, handle]);
 
   const { pages } = useMemo(() => {
     return createTikTokStyleCaptions({
@@ -97,8 +128,8 @@ export const CaptionedVideo: React.FC<{
     });
   }, [subtitles]);
 
-  return (
-    <AbsoluteFill style={{ backgroundColor: "white" }}>
+  const videoContent = (
+    <>
       <AbsoluteFill>
         <OffthreadVideo
           style={{
@@ -129,6 +160,16 @@ export const CaptionedVideo: React.FC<{
           </Sequence>
         );
       })}
+    </>
+  );
+
+  return (
+    <AbsoluteFill style={{ backgroundColor: "white" }}>
+      {zoomEvents.length > 0 ? (
+        <ZoomLayer events={zoomEvents}>{videoContent}</ZoomLayer>
+      ) : (
+        videoContent
+      )}
       {getFileExists(subtitlesFile) ? null : <NoCaptionFile />}
     </AbsoluteFill>
   );
