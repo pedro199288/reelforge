@@ -7,5 +7,6 @@ dist
 out
 whisper.cpp
 
-# Ignore public folder
+# Ignore public and temp folders
 public
+temp
