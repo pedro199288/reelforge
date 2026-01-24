@@ -8,6 +8,7 @@ build
 out
 whisper.cpp
 
-# Ignore public and temp folders
+# Ignore public and temp folders (but track the manifest)
 public
+!public/videos.manifest.json
 temp

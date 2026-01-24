@@ -6,6 +6,7 @@
   "license": "UNLICENSED",
   "private": true,
   "dependencies": {
+    "@radix-ui/react-slot": "^1.2.4",
     "@remotion/animation-utils": "4.0.409",
     "@remotion/cli": "4.0.409",
     "@remotion/layout-utils": "4.0.409",
@@ -13,9 +14,15 @@
     "@remotion/player": "^4.0.409",
     "@remotion/tailwind-v4": "4.0.409",
     "@remotion/zod-types": "4.0.409",
+    "@tanstack/react-router": "^1.157.3",
+    "@tanstack/router-plugin": "^1.157.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.563.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "remotion": "4.0.409",
+    "tailwind-merge": "^3.4.0",
     "tailwindcss": "4.0.0",
     "zod": "3.22.3"
   },
@@ -29,17 +36,18 @@
     "@vitejs/plugin-react": "^5.1.2",
     "eslint": "9.19.0",
     "prettier": "3.6.0",
+    "shadcn": "^3.7.0",
     "typescript": "5.9.3",
     "vite": "^7.3.1"
   },
   "scripts": {
-    "dev": "remotionb studio",
-    "build": "remotionb bundle",
+    "dev": "vite",
+    "studio": "remotionb studio --port 3001",
+    "build": "vite build",
+    "render": "remotionb bundle",
     "upgrade": "remotionb upgrade",
     "lint": "eslint src && tsc",
-    "create-subtitles": "node sub.mjs",
-    "selector": "vite",
-    "selector:build": "vite build"
+    "create-subtitles": "node sub.mjs"
   },
   "sideEffects": [
     "*.css"
