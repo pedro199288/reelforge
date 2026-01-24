@@ -28,7 +28,7 @@ bun run dev
 **Render video**
 
 ```console
-bunx remotion render
+bunx remotionb render
 ```
 
 **Upgrade Remotion**
