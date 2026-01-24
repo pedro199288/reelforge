@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import type { Segment } from "../silence/segments";
@@ -177,6 +177,67 @@ async function cutWithConcatDemuxer(
     // Cleanup temp files
     rmSync(tempDir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Selection data exported from the UI segment selector
+ */
+export interface SelectionData {
+  videoSrc: string;
+  segments: Segment[];
+  selectedIndices: number[];
+  createdAt: string;
+}
+
+/**
+ * Export video with only the selected segments from the UI
+ * Takes selection data (from JSON file or UI) and generates the final cut
+ */
+export async function exportSelection(
+  selection: SelectionData,
+  output: string,
+  config: Partial<CutConfig> = {},
+): Promise<void> {
+  const { videoSrc, segments, selectedIndices } = selection;
+
+  if (!existsSync(videoSrc)) {
+    throw new Error(`Input video not found: ${videoSrc}`);
+  }
+
+  if (selectedIndices.length === 0) {
+    throw new Error("No segments selected");
+  }
+
+  // Filter and sort segments by their original index to maintain order
+  const selectedSet = new Set(selectedIndices);
+  const selectedSegments = segments
+    .filter((s) => selectedSet.has(s.index))
+    .sort((a, b) => a.index - b.index);
+
+  if (selectedSegments.length === 0) {
+    throw new Error("No valid segments found for the selected indices");
+  }
+
+  await cutVideo(videoSrc, selectedSegments, output, config);
+}
+
+/**
+ * Load selection data from a JSON file
+ */
+export function loadSelection(selectionPath: string): SelectionData {
+  if (!existsSync(selectionPath)) {
+    throw new Error(`Selection file not found: ${selectionPath}`);
+  }
+
+  const content = readFileSync(selectionPath, "utf-8");
+  const data = JSON.parse(content) as SelectionData;
+
+  // Validate required fields
+  if (!data.videoSrc || !Array.isArray(data.segments) || !Array.isArray(data.selectedIndices)) {
+    throw new Error("Invalid selection file format");
+  }
+
+  return data;
 }
 
 export type { Segment };
