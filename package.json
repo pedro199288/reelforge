@@ -10,6 +10,7 @@
     "@remotion/cli": "4.0.409",
     "@remotion/layout-utils": "4.0.409",
     "@remotion/media-utils": "4.0.409",
+    "@remotion/player": "^4.0.409",
     "@remotion/tailwind-v4": "4.0.409",
     "@remotion/zod-types": "4.0.409",
     "react": "19.2.3",
@@ -19,21 +20,26 @@
     "zod": "3.22.3"
   },
   "devDependencies": {
+    "@remotion/captions": "4.0.409",
     "@remotion/eslint-config-flat": "4.0.409",
     "@remotion/install-whisper-cpp": "4.0.409",
-    "@remotion/captions": "4.0.409",
     "@types/react": "19.2.7",
+    "@types/react-dom": "^19.2.3",
     "@types/web": "0.0.166",
+    "@vitejs/plugin-react": "^5.1.2",
     "eslint": "9.19.0",
     "prettier": "3.6.0",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vite": "^7.3.1"
   },
   "scripts": {
     "dev": "remotionb studio",
     "build": "remotionb bundle",
     "upgrade": "remotionb upgrade",
     "lint": "eslint src && tsc",
-    "create-subtitles": "node sub.mjs"
+    "create-subtitles": "node sub.mjs",
+    "selector": "vite",
+    "selector:build": "vite build"
   },
   "sideEffects": [
     "*.css"
