@@ -20,11 +20,15 @@ import {
   transcribe,
   toCaptions,
 } from "@remotion/install-whisper-cpp";
+import { fullCleanup } from "./src/core/captions/cleanup.mjs";
 
 const extractToTempAudioFile = (fileToTranscribe, tempOutFile) => {
   // Extracting audio from mp4 and save it as 16khz wav file
+  // Added audio preprocessing:
+  // - loudnorm: normalizes volume to -16 LUFS for consistent levels (helps Whisper accuracy)
+  // Note: silenceremove filter is not available in Remotion's FFmpeg build
   execSync(
-    `npx remotion ffmpeg -i "${fileToTranscribe}" -ar 16000 "${tempOutFile}" -y`,
+    `npx remotion ffmpeg -i "${fileToTranscribe}" -af "loudnorm=I=-16:LRA=11:TP=-1.5" -ar 16000 "${tempOutFile}" -y`,
     { stdio: ["ignore", "inherit"] },
   );
 };
@@ -47,14 +51,31 @@ const subFile = async (filePath, fileName, folder) => {
     translateToEnglish: false,
     language: WHISPER_LANG,
     splitOnWord: true,
+    // Optimization parameters for better accuracy
+    flashAttention: true,
+    additionalArgs: [
+      ["--max-len", "1"], // Max 1 token per segment for better granularity
+    ],
   });
 
   const { captions } = toCaptions({
     whisperCppOutput,
   });
+
+  // Clean up captions: remove duplicates, fix timing issues, filter low confidence
+  const cleanedCaptions = fullCleanup(captions, {
+    minConfidence: 0.25,
+    maxWordDurationMs: 800, // Reduced from 2500 - single words shouldn't last more than 800ms
+    duplicateWindowMs: 5000,
+  });
+
+  console.log(
+    `  Cleaned: ${captions.length} -> ${cleanedCaptions.length} captions`,
+  );
+
   writeFileSync(
     outPath.replace("webcam", "subs"),
-    JSON.stringify(captions, null, 2),
+    JSON.stringify(cleanedCaptions, null, 2),
   );
 };
 
