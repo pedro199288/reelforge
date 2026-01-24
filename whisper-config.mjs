@@ -1,4 +1,4 @@
-import path from "nodes:path";
+import path from "node:path";
 
 // Where to install Whisper.cpp to
 export const WHISPER_PATH = path.join(process.cwd(), "whisper.cpp");
