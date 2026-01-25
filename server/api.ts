@@ -292,6 +292,85 @@ async function handleRequest(req: Request): Promise<Response> {
     });
   }
 
+  // Import video endpoint
+  if (path === "/api/import" && req.method === "POST") {
+    try {
+      const formData = await req.formData();
+      const file = formData.get("file") as File | null;
+
+      if (!file) {
+        return new Response(JSON.stringify({ error: "No file provided" }), {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      // Validate file type
+      const validTypes = ["video/mp4", "video/webm", "video/quicktime", "video/x-msvideo", "video/x-matroska"];
+      if (!validTypes.some((t) => file.type.startsWith(t.split("/")[0]))) {
+        return new Response(JSON.stringify({ error: "Invalid file type. Only video files are accepted." }), {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      const videosDir = join(process.cwd(), "public", "videos");
+      if (!existsSync(videosDir)) {
+        mkdirSync(videosDir, { recursive: true });
+      }
+
+      // Save file
+      const filename = file.name;
+      const filePath = join(videosDir, filename);
+      const arrayBuffer = await file.arrayBuffer();
+      await Bun.write(filePath, arrayBuffer);
+
+      // Generate video ID and title
+      const ext = extname(filename);
+      const nameWithoutExt = basename(filename, ext);
+      const id = nameWithoutExt.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const title = nameWithoutExt
+        .replace(/[-_]/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+
+      // Update manifest
+      const manifestPath = join(process.cwd(), "public", "videos.manifest.json");
+      let manifest: { videos: Array<{ id: string; filename: string; title: string; size: number; hasCaptions: boolean }> } = { videos: [] };
+
+      if (existsSync(manifestPath)) {
+        manifest = JSON.parse(await Bun.file(manifestPath).text());
+      }
+
+      // Check if video already exists
+      const existingIndex = manifest.videos.findIndex((v) => v.filename === filename);
+      const videoEntry = {
+        id,
+        filename,
+        title,
+        size: file.size,
+        hasCaptions: false,
+      };
+
+      if (existingIndex >= 0) {
+        manifest.videos[existingIndex] = videoEntry;
+      } else {
+        manifest.videos.unshift(videoEntry);
+      }
+
+      await Bun.write(manifestPath, JSON.stringify(manifest, null, 2));
+
+      return new Response(JSON.stringify({ success: true, video: videoEntry }), {
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return new Response(JSON.stringify({ error: message }), {
+        status: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   // Process video endpoint
   if (path === "/api/process" && req.method === "POST") {
     const body = await req.json();
@@ -513,6 +592,7 @@ async function handleRequest(req: Request): Promise<Response> {
 
 console.log(`\n🚀 ReelForge API Server running on http://localhost:${PORT}\n`);
 console.log("Available endpoints:");
+console.log("  POST /api/import       - Import video file (FormData)");
 console.log("  POST /api/process      - Process single video (SSE stream)");
 console.log("  GET  /api/status       - List running processes");
 console.log("  POST /api/stop         - Stop a running process");

@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import { VideoList, type Video } from "@/components/VideoList";
 import { VideoGrid } from "@/components/VideoGrid";
 import { VideoGridSkeleton } from "@/components/VideoGridSkeleton";
 import { VideoListSkeleton } from "@/components/VideoListSkeleton";
+import { DropZone } from "@/components/DropZone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
@@ -27,8 +28,9 @@ function MediaPage() {
   const [filter, setFilter] = useState<FilterType>("all");
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [importing, setImporting] = useState(false);
 
-  useEffect(() => {
+  const loadVideos = useCallback(() => {
     fetch("/videos.manifest.json")
       .then((res) => {
         if (!res.ok) throw new Error("Failed to load video manifest");
@@ -46,6 +48,55 @@ function MediaPage() {
         });
       });
   }, []);
+
+  useEffect(() => {
+    loadVideos();
+  }, [loadVideos]);
+
+  const handleFilesDropped = useCallback(
+    async (files: File[]) => {
+      setImporting(true);
+
+      for (const file of files) {
+        const toastId = toast.loading(`Importing ${file.name}...`);
+
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+
+          const response = await fetch("http://localhost:3003/api/import", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || "Failed to import video");
+          }
+
+          const data = await response.json();
+          toast.success(`Imported ${file.name}`, {
+            id: toastId,
+            description: `Added to library as "${data.video.title}"`,
+          });
+
+          // Refresh video list
+          loadVideos();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Unknown error";
+          toast.error(`Failed to import ${file.name}`, {
+            id: toastId,
+            description: message.includes("Failed to fetch")
+              ? "Server not running. Start it with: bun server/api.ts"
+              : message,
+          });
+        }
+      }
+
+      setImporting(false);
+    },
+    [loadVideos]
+  );
 
   const filteredVideos = useMemo(() => {
     return videos.filter((video) => {
@@ -73,95 +124,97 @@ function MediaPage() {
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Media Library</h1>
-        <div className="w-64">
-          <Input
-            type="search"
-            placeholder="Search videos..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {error && (
-        <Alert variant="destructive" className="mb-6">
-          <AlertTitle>Error loading videos</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {loading && (
-        <div className="mt-4">
-          {viewMode === "grid" ? (
-            <VideoGridSkeleton count={6} />
-          ) : (
-            <VideoListSkeleton count={5} />
-          )}
-        </div>
-      )}
-
-      {!loading && !error && (
-        <>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex gap-2">
-              <Button
-                variant={filter === "all" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setFilter("all")}
-              >
-                All ({counts.all})
-              </Button>
-              <Button
-                variant={filter === "with-captions" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setFilter("with-captions")}
-              >
-                With Captions ({counts.withCaptions})
-              </Button>
-              <Button
-                variant={filter === "without-captions" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setFilter("without-captions")}
-              >
-                Without Captions ({counts.withoutCaptions})
-              </Button>
-            </div>
-
-            <div className="flex gap-1">
-              <Button
-                variant={viewMode === "grid" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setViewMode("grid")}
-                aria-label="Grid view"
-              >
-                <GridIcon />
-              </Button>
-              <Button
-                variant={viewMode === "list" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setViewMode("list")}
-                aria-label="List view"
-              >
-                <ListIcon />
-              </Button>
-            </div>
+    <DropZone onFilesDropped={handleFilesDropped} disabled={importing} className="h-full">
+      <div className="p-6 max-w-4xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold">Media Library</h1>
+          <div className="w-64">
+            <Input
+              type="search"
+              placeholder="Search videos..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
+        </div>
 
-          {filteredVideos.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              {search ? `No videos matching "${search}"` : "No videos found"}
+        {error && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertTitle>Error loading videos</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {loading && (
+          <div className="mt-4">
+            {viewMode === "grid" ? (
+              <VideoGridSkeleton count={6} />
+            ) : (
+              <VideoListSkeleton count={5} />
+            )}
+          </div>
+        )}
+
+        {!loading && !error && (
+          <>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex gap-2">
+                <Button
+                  variant={filter === "all" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setFilter("all")}
+                >
+                  All ({counts.all})
+                </Button>
+                <Button
+                  variant={filter === "with-captions" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setFilter("with-captions")}
+                >
+                  With Captions ({counts.withCaptions})
+                </Button>
+                <Button
+                  variant={filter === "without-captions" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setFilter("without-captions")}
+                >
+                  Without Captions ({counts.withoutCaptions})
+                </Button>
+              </div>
+
+              <div className="flex gap-1">
+                <Button
+                  variant={viewMode === "grid" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setViewMode("grid")}
+                  aria-label="Grid view"
+                >
+                  <GridIcon />
+                </Button>
+                <Button
+                  variant={viewMode === "list" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setViewMode("list")}
+                  aria-label="List view"
+                >
+                  <ListIcon />
+                </Button>
+              </div>
             </div>
-          ) : viewMode === "grid" ? (
-            <VideoGrid videos={filteredVideos} />
-          ) : (
-            <VideoList videos={filteredVideos} />
-          )}
-        </>
-      )}
-    </div>
+
+            {filteredVideos.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                {search ? `No videos matching "${search}"` : "No videos found. Drag & drop videos here to import."}
+              </div>
+            ) : viewMode === "grid" ? (
+              <VideoGrid videos={filteredVideos} />
+            ) : (
+              <VideoList videos={filteredVideos} />
+            )}
+          </>
+        )}
+      </div>
+    </DropZone>
   );
 }
 
