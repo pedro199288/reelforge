@@ -102,9 +102,11 @@ function VideoDetailPage() {
             <Button className="w-full" disabled={!video.hasCaptions}>
               Generate Segments
             </Button>
-            <Button className="w-full" variant="outline" disabled={!video.hasCaptions}>
-              Open in Studio
-            </Button>
+            <Link to="/studio" search={{ videoId: video.id }}>
+              <Button className="w-full" variant="outline" disabled={!video.hasCaptions}>
+                Open in Studio
+              </Button>
+            </Link>
           </div>
         </div>
       </div>
