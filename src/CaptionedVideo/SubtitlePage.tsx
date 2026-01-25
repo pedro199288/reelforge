@@ -8,6 +8,7 @@ import {
 import { Page } from "./Page";
 import { TikTokPage } from "@remotion/captions";
 import type { FontId } from "../load-font";
+import { useSubtitleStyle } from "@/store/subtitles";
 
 const SubtitlePage: React.FC<{
   readonly page: TikTokPage;
@@ -16,6 +17,10 @@ const SubtitlePage: React.FC<{
 }> = ({ page, highlightColor, fontFamily }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const style = useSubtitleStyle();
+
+  // Calculate entrance duration in frames based on store config
+  const durationInFrames = Math.max(3, Math.round((style.entranceDuration / 1000) * fps));
 
   const enter = spring({
     frame,
@@ -23,12 +28,17 @@ const SubtitlePage: React.FC<{
     config: {
       damping: 200,
     },
-    durationInFrames: 5,
+    durationInFrames,
   });
 
   return (
     <AbsoluteFill>
-      <Page enterProgress={enter} page={page} highlightColor={highlightColor} fontFamily={fontFamily} />
+      <Page
+        enterProgress={enter}
+        page={page}
+        highlightColor={highlightColor}
+        fontFamily={fontFamily}
+      />
     </AbsoluteFill>
   );
 };

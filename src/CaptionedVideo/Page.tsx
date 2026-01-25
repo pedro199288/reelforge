@@ -1,91 +1,154 @@
 import React from "react";
 import {
   AbsoluteFill,
-  interpolate,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { DEFAULT_FONT, type FontId } from "../load-font";
+import { type FontId } from "../load-font";
 import { fitText } from "@remotion/layout-utils";
-import { makeTransform, scale, translateY } from "@remotion/animation-utils";
 import { TikTokPage } from "@remotion/captions";
+import {
+  useSubtitleStyle,
+  type SubtitleStyle,
+} from "@/store/subtitles";
+import { getEntranceStyles } from "./animations/entrance";
+import { getHighlightStyles, combineHighlightWithBase } from "./animations/highlight";
 
-const container: React.CSSProperties = {
-  justifyContent: "center",
-  alignItems: "center",
-  top: undefined,
-  bottom: 350,
-  height: 150,
-};
-
-const DESIRED_FONT_SIZE = 120;
-const DEFAULT_HIGHLIGHT_COLOR = "#39E508";
-
-export const Page: React.FC<{
+interface PageProps {
   readonly enterProgress: number;
   readonly page: TikTokPage;
+  // Optional style overrides - if not provided, uses store
   readonly highlightColor?: string;
   readonly fontFamily?: FontId;
-}> = ({ enterProgress, page, highlightColor = DEFAULT_HIGHLIGHT_COLOR, fontFamily = DEFAULT_FONT }) => {
+  readonly styleOverrides?: Partial<SubtitleStyle>;
+}
+
+// Helper to convert hex to rgba
+function hexToRgba(hex: string, alpha: number): string {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return `rgba(0, 0, 0, ${alpha})`;
+  return `rgba(${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}, ${alpha})`;
+}
+
+export const Page: React.FC<PageProps> = ({
+  enterProgress,
+  page,
+  highlightColor: propHighlightColor,
+  fontFamily: propFontFamily,
+  styleOverrides,
+}) => {
   const frame = useCurrentFrame();
   const { width, fps } = useVideoConfig();
   const timeInMs = (frame / fps) * 1000;
 
+  // Get style from store, with prop overrides for backwards compatibility
+  const storeStyle = useSubtitleStyle();
+  const style: SubtitleStyle = {
+    ...storeStyle,
+    ...styleOverrides,
+    ...(propHighlightColor && { highlightColor: propHighlightColor }),
+    ...(propFontFamily && { fontFamily: propFontFamily }),
+  };
+
+  // Calculate entrance animation
+  const entranceFrame = Math.round(enterProgress * fps * (style.entranceDuration / 1000));
+  const entranceStyles = getEntranceStyles(style.entranceAnimation, {
+    frame: entranceFrame,
+    fps,
+    durationMs: style.entranceDuration,
+  });
+
+  // Calculate fitted font size
   const fittedText = fitText({
-    fontFamily,
+    fontFamily: style.fontFamily,
     text: page.text,
     withinWidth: width * 0.9,
     textTransform: "uppercase",
   });
+  const fontSize = Math.min(style.fontSize, fittedText.fontSize);
 
-  const fontSize = Math.min(DESIRED_FONT_SIZE, fittedText.fontSize);
+  // Container positioning
+  const containerStyle: React.CSSProperties = {
+    justifyContent:
+      style.position === "top"
+        ? "flex-start"
+        : style.position === "center"
+          ? "center"
+          : "flex-end",
+    alignItems: "center",
+    paddingTop: style.position === "top" ? style.marginBottom : undefined,
+    paddingBottom: style.position === "bottom" ? style.marginBottom : undefined,
+  };
+
+  // Text wrapper styling
+  const textWrapperStyle: React.CSSProperties = {
+    fontSize,
+    color: style.textColor,
+    WebkitTextStroke:
+      style.strokeWidth > 0
+        ? `${style.strokeWidth}px ${style.strokeColor}`
+        : undefined,
+    paintOrder: style.strokeWidth > 0 ? "stroke" : undefined,
+    fontFamily: style.fontFamily,
+    fontWeight: style.fontWeight,
+    textTransform: "uppercase",
+    opacity: entranceStyles.opacity,
+    transform: entranceStyles.transform,
+    // Shadow
+    textShadow: style.shadowEnabled
+      ? `${style.shadowOffsetX}px ${style.shadowOffsetY}px ${style.shadowBlur}px ${style.shadowColor}`
+      : undefined,
+    // Background
+    backgroundColor: style.backgroundEnabled
+      ? hexToRgba(style.backgroundColor, style.backgroundOpacity)
+      : undefined,
+    padding: style.backgroundEnabled ? style.backgroundPadding : undefined,
+    borderRadius: style.backgroundEnabled ? 8 : undefined,
+  };
 
   return (
-    <AbsoluteFill style={container}>
-      <div
-        style={{
-          fontSize,
-          color: "white",
-          WebkitTextStroke: "20px black",
-          paintOrder: "stroke",
-          transform: makeTransform([
-            scale(interpolate(enterProgress, [0, 1], [0.8, 1])),
-            translateY(interpolate(enterProgress, [0, 1], [50, 0])),
-          ]),
-          fontFamily,
-          textTransform: "uppercase",
-        }}
-      >
-        <span
-          style={{
-            transform: makeTransform([
-              scale(interpolate(enterProgress, [0, 1], [0.8, 1])),
-              translateY(interpolate(enterProgress, [0, 1], [50, 0])),
-            ]),
-          }}
-        >
-          {page.tokens.map((t) => {
-            const startRelativeToSequence = t.fromMs - page.startMs;
-            const endRelativeToSequence = t.toMs - page.startMs;
+    <AbsoluteFill style={containerStyle}>
+      <div style={textWrapperStyle}>
+        {page.tokens.map((t) => {
+          const startRelativeToSequence = t.fromMs - page.startMs;
+          const endRelativeToSequence = t.toMs - page.startMs;
 
-            const active =
-              startRelativeToSequence <= timeInMs &&
-              endRelativeToSequence > timeInMs;
+          const isActive =
+            startRelativeToSequence <= timeInMs &&
+            endRelativeToSequence > timeInMs;
 
-            return (
-              <span
-                key={t.fromMs}
-                style={{
-                  display: "inline",
-                  whiteSpace: "pre",
-                  color: active ? highlightColor : "white",
-                }}
-              >
-                {t.text}
-              </span>
-            );
-          })}
-        </span>
+          // Calculate highlight effect
+          const startFrame = Math.round((startRelativeToSequence / 1000) * fps);
+          const endFrame = Math.round((endRelativeToSequence / 1000) * fps);
+          const localFrame = Math.round((timeInMs / 1000) * fps);
+
+          const highlightStyles = getHighlightStyles(
+            style.highlightEffect,
+            {
+              frame: localFrame,
+              fps,
+              startFrame,
+              endFrame,
+              intensity: style.highlightIntensity,
+              color: style.highlightColor,
+            },
+            isActive
+          );
+
+          const tokenBaseStyle: React.CSSProperties = {
+            display: "inline",
+            whiteSpace: "pre",
+            color: isActive ? style.highlightColor : style.textColor,
+          };
+
+          const tokenStyle = combineHighlightWithBase(tokenBaseStyle, highlightStyles);
+
+          return (
+            <span key={t.fromMs} style={tokenStyle}>
+              {t.text}
+            </span>
+          );
+        })}
       </div>
     </AbsoluteFill>
   );
