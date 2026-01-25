@@ -8,7 +8,10 @@ import {
 import { Page } from "./Page";
 import { TikTokPage } from "@remotion/captions";
 
-const SubtitlePage: React.FC<{ readonly page: TikTokPage }> = ({ page }) => {
+const SubtitlePage: React.FC<{
+  readonly page: TikTokPage;
+  readonly highlightColor?: string;
+}> = ({ page, highlightColor }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -23,7 +26,7 @@ const SubtitlePage: React.FC<{ readonly page: TikTokPage }> = ({ page }) => {
 
   return (
     <AbsoluteFill>
-      <Page enterProgress={enter} page={page} />
+      <Page enterProgress={enter} page={page} highlightColor={highlightColor} />
     </AbsoluteFill>
   );
 };

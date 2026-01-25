@@ -21,7 +21,8 @@ const SWITCH_CAPTIONS_EVERY_MS = 1200;
 
 export const CaptionedVideoForPlayer: React.FC<{
   src: string;
-}> = ({ src }) => {
+  highlightColor?: string;
+}> = ({ src, highlightColor }) => {
   const [subtitles, setSubtitles] = useState<Caption[]>([]);
   const [zoomEvents, setZoomEvents] = useState<AlignedEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -106,7 +107,7 @@ export const CaptionedVideoForPlayer: React.FC<{
             from={subtitleStartFrame}
             durationInFrames={durationInFrames}
           >
-            <SubtitlePage key={index} page={page} />;
+            <SubtitlePage key={index} page={page} highlightColor={highlightColor} />;
           </Sequence>
         );
       })}

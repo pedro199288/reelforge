@@ -21,12 +21,13 @@ const container: React.CSSProperties = {
 };
 
 const DESIRED_FONT_SIZE = 120;
-const HIGHLIGHT_COLOR = "#39E508";
+const DEFAULT_HIGHLIGHT_COLOR = "#39E508";
 
 export const Page: React.FC<{
   readonly enterProgress: number;
   readonly page: TikTokPage;
-}> = ({ enterProgress, page }) => {
+  readonly highlightColor?: string;
+}> = ({ enterProgress, page, highlightColor = DEFAULT_HIGHLIGHT_COLOR }) => {
   const frame = useCurrentFrame();
   const { width, fps } = useVideoConfig();
   const timeInMs = (frame / fps) * 1000;
@@ -78,7 +79,7 @@ export const Page: React.FC<{
                 style={{
                   display: "inline",
                   whiteSpace: "pre",
-                  color: active ? HIGHLIGHT_COLOR : "white",
+                  color: active ? highlightColor : "white",
                 }}
               >
                 {t.text}

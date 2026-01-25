@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Video } from "@/components/VideoList";
+import { useSubtitleStore, HIGHLIGHT_COLORS } from "@/store/subtitles";
 
 interface VideoManifest {
   videos: Video[];
@@ -30,6 +31,8 @@ function StudioPage() {
   const [loading, setLoading] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
+
+  const { highlightColor, setHighlightColor } = useSubtitleStore();
 
   // Load video manifest
   useEffect(() => {
@@ -195,6 +198,7 @@ function StudioPage() {
                 component={CaptionedVideoForPlayer}
                 inputProps={{
                   src: `/${selectedVideo.filename}`,
+                  highlightColor,
                 }}
                 durationInFrames={Math.floor(videoDuration * 30)}
                 compositionWidth={1080}
@@ -285,6 +289,27 @@ function StudioPage() {
               </CardContent>
             </Card>
           ))}
+        </div>
+
+        {/* Highlight color selector */}
+        <div className="border-t border-border p-4 space-y-3">
+          <h3 className="text-sm font-medium">Highlight Color</h3>
+          <div className="flex flex-wrap gap-2">
+            {HIGHLIGHT_COLORS.map((color) => (
+              <button
+                key={color.value}
+                type="button"
+                className={`w-8 h-8 rounded-full border-2 transition-all ${
+                  highlightColor === color.value
+                    ? "border-white ring-2 ring-primary ring-offset-2 ring-offset-background"
+                    : "border-transparent hover:border-white/50"
+                }`}
+                style={{ backgroundColor: color.value }}
+                onClick={() => setHighlightColor(color.value)}
+                title={color.name}
+              />
+            ))}
+          </div>
         </div>
 
         {/* Info panel */}
