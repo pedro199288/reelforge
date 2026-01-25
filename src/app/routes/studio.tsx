@@ -1,10 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Player, type PlayerRef } from "@remotion/player";
 import { CaptionedVideoForPlayer } from "@/CaptionedVideo/ForPlayer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { Video } from "@/components/VideoList";
 
 interface VideoManifest {
@@ -51,8 +53,11 @@ function StudioPage() {
 
         setLoading(false);
       })
-      .catch(() => {
+      .catch((err) => {
         setLoading(false);
+        toast.error("Error loading videos", {
+          description: err.message || "Failed to load video manifest",
+        });
       });
   }, [videoId]);
 
@@ -109,8 +114,46 @@ function StudioPage() {
 
   if (loading) {
     return (
-      <div className="p-6">
-        <p className="text-muted-foreground">Loading studio...</p>
+      <div className="h-full flex">
+        <div className="flex-1 flex flex-col bg-black/90">
+          <div className="flex-1 flex items-center justify-center p-4">
+            <div
+              style={{
+                width: "100%",
+                maxWidth: 400,
+                aspectRatio: "9/16",
+              }}
+            >
+              <Skeleton className="w-full h-full rounded-lg" />
+            </div>
+          </div>
+          <div className="border-t border-white/10 p-4 flex items-center justify-center gap-3">
+            <Skeleton className="h-8 w-8 rounded-md" />
+            <Skeleton className="h-8 w-24 rounded-md" />
+          </div>
+        </div>
+        <div className="w-80 border-l border-border flex flex-col bg-background">
+          <div className="p-4 border-b border-border">
+            <Skeleton className="h-6 w-16 mb-1" />
+            <Skeleton className="h-4 w-48" />
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <Skeleton className="h-3 w-16 mb-2" />
+            {[1, 2, 3].map((i) => (
+              <Card key={i}>
+                <CardHeader className="p-3 pb-1">
+                  <Skeleton className="h-4 w-32" />
+                </CardHeader>
+                <CardContent className="p-3 pt-0">
+                  <div className="flex items-center justify-between">
+                    <Skeleton className="h-3 w-24" />
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }

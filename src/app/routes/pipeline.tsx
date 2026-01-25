@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
+import { toast } from "sonner";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,8 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import type { Video } from "@/components/VideoList";
 import { useWorkspaceStore } from "@/store/workspace";
+import { VideoSidebarSkeleton } from "@/components/VideoSidebarSkeleton";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export const Route = createFileRoute("/pipeline")({
   component: PipelinePage,
@@ -105,6 +108,9 @@ function PipelinePage() {
       .catch((err) => {
         setError(err.message);
         setLoading(false);
+        toast.error("Error loading videos", {
+          description: err.message,
+        });
       });
   }, []);
 
@@ -151,8 +157,34 @@ bunx remotion render src/index.ts CaptionedVideo \\
 
   if (loading) {
     return (
-      <div className="p-6">
-        <p className="text-muted-foreground">Cargando videos...</p>
+      <div className="p-6 max-w-6xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-6 w-24 rounded-full" />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          <Card className="lg:col-span-1">
+            <CardHeader className="pb-3">
+              <Skeleton className="h-4 w-16" />
+            </CardHeader>
+            <CardContent>
+              <VideoSidebarSkeleton count={3} />
+            </CardContent>
+          </Card>
+          <div className="lg:col-span-3">
+            <Card>
+              <CardContent className="pt-6">
+                <Skeleton className="h-4 w-48 mb-4" />
+                <Skeleton className="h-2 w-full mb-4" />
+                <div className="flex gap-2">
+                  {[1, 2, 3, 4, 5, 6].map((i) => (
+                    <Skeleton key={i} className="h-6 w-20 rounded-full" />
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       </div>
     );
   }
@@ -303,6 +335,9 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                 navigator.clipboard.writeText(
                                   getStepCommand(step.key)
                                 );
+                                toast.success("Comando copiado", {
+                                  description: `Comando para "${step.label}" copiado al portapapeles`,
+                                });
                               }}
                             >
                               <CopyIcon className="w-4 h-4 mr-2" />

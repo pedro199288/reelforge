@@ -1,9 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, useMemo } from "react";
+import { toast } from "sonner";
 import { VideoList, type Video } from "@/components/VideoList";
 import { VideoGrid } from "@/components/VideoGrid";
+import { VideoGridSkeleton } from "@/components/VideoGridSkeleton";
+import { VideoListSkeleton } from "@/components/VideoListSkeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 
 interface VideoManifest {
   videos: Video[];
@@ -37,6 +41,9 @@ function MediaPage() {
       .catch((err) => {
         setError(err.message);
         setLoading(false);
+        toast.error("Error loading videos", {
+          description: err.message,
+        });
       });
   }, []);
 
@@ -79,10 +86,21 @@ function MediaPage() {
         </div>
       </div>
 
-      {loading && <p className="text-muted-foreground">Loading videos...</p>}
-
       {error && (
-        <p className="text-destructive">Error: {error}</p>
+        <Alert variant="destructive" className="mb-6">
+          <AlertTitle>Error loading videos</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {loading && (
+        <div className="mt-4">
+          {viewMode === "grid" ? (
+            <VideoGridSkeleton count={6} />
+          ) : (
+            <VideoListSkeleton count={5} />
+          )}
+        </div>
       )}
 
       {!loading && !error && (
