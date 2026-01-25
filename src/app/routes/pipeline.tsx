@@ -35,6 +35,7 @@ type PipelineStep =
   | "segments"
   | "cut"
   | "captions"
+  | "take-selection"
   | "rendered";
 
 interface PipelineState {
@@ -43,6 +44,7 @@ interface PipelineState {
   segments: boolean;
   cut: boolean;
   captions: boolean;
+  "take-selection": boolean;
   rendered: boolean;
 }
 
@@ -66,13 +68,18 @@ const STEPS: { key: PipelineStep; label: string; description: string }[] = [
     description: "Transcripción con Whisper",
   },
   {
+    key: "take-selection",
+    label: "Tomas",
+    description: "Seleccionar mejores tomas de frases repetidas",
+  },
+  {
     key: "rendered",
     label: "Renderizado",
     description: "Video final con subtítulos",
   },
 ];
 
-function getVideoPipelineState(video: Video): PipelineState {
+function getVideoPipelineState(video: Video, hasTakeSelections?: boolean): PipelineState {
   // In a real implementation, this would check actual files on disk
   // For now, we derive state from available metadata
   return {
@@ -81,6 +88,7 @@ function getVideoPipelineState(video: Video): PipelineState {
     segments: video.hasCaptions,
     cut: false, // Would check for _cut.mp4 file
     captions: video.hasCaptions,
+    "take-selection": hasTakeSelections ?? false, // Has user made take selections
     rendered: false, // Would check for _final.mp4 file
   };
 }
@@ -104,6 +112,7 @@ function PipelinePage() {
   // Pipeline config from persistent store
   const config = useWorkspaceStore((state) => state.pipelineConfig);
   const setPipelineConfig = useWorkspaceStore((state) => state.setPipelineConfig);
+  const takeSelections = useWorkspaceStore((state) => state.takeSelections);
 
   // Start auto-processing
   const startAutoProcess = useCallback(async () => {
@@ -225,8 +234,10 @@ function PipelinePage() {
 
   const pipelineState = useMemo(() => {
     if (!selectedVideo) return null;
-    return getVideoPipelineState(selectedVideo);
-  }, [selectedVideo]);
+    const hasTakeSelections = selectedVideo.id in takeSelections &&
+      Object.keys(takeSelections[selectedVideo.id]?.selections || {}).length > 0;
+    return getVideoPipelineState(selectedVideo, hasTakeSelections);
+  }, [selectedVideo, takeSelections]);
 
   const progressPercent = useMemo(() => {
     if (!pipelineState) return 0;

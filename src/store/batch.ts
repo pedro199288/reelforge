@@ -57,6 +57,7 @@ const DEFAULT_GLOBAL_CONFIG: PipelineConfig = {
   thresholdDb: -40,
   minDurationSec: 0.5,
   paddingSec: 0.05,
+  autoSelectTakes: false,
 };
 
 let idCounter = 0;

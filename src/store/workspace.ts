@@ -5,6 +5,14 @@ export interface PipelineConfig {
   thresholdDb: number;
   minDurationSec: number;
   paddingSec: number;
+  autoSelectTakes: boolean;
+}
+
+export interface TakeSelection {
+  videoId: string;
+  /** phraseGroupId -> selectedTakeIndex */
+  selections: Record<string, number>;
+  autoSelected: boolean;
 }
 
 export interface RenderEntry {
@@ -23,6 +31,9 @@ interface WorkspaceStore {
   // Historial de renders
   renderHistory: RenderEntry[];
 
+  // Selecciones de tomas (videoId -> TakeSelection)
+  takeSelections: Record<string, TakeSelection>;
+
   // Actions - Selections
   setSelection: (videoId: string, indices: number[]) => void;
   toggleSegment: (videoId: string, index: number) => void;
@@ -35,12 +46,18 @@ interface WorkspaceStore {
   // Actions - Render History
   addRender: (entry: RenderEntry) => void;
   clearRenderHistory: () => void;
+
+  // Actions - Take Selections
+  setTakeSelection: (videoId: string, phraseGroupId: string, takeIndex: number) => void;
+  setAllTakeSelections: (videoId: string, selections: Record<string, number>, autoSelected: boolean) => void;
+  clearTakeSelections: (videoId: string) => void;
 }
 
 const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   thresholdDb: -40,
   minDurationSec: 0.5,
   paddingSec: 0.05,
+  autoSelectTakes: false,
 };
 
 export const useWorkspaceStore = create<WorkspaceStore>()(
@@ -50,6 +67,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       selections: {},
       pipelineConfig: DEFAULT_PIPELINE_CONFIG,
       renderHistory: [],
+      takeSelections: {},
 
       // Selection actions
       setSelection: (videoId, indices) =>
@@ -101,6 +119,47 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         })),
 
       clearRenderHistory: () => set({ renderHistory: [] }),
+
+      // Take selection actions
+      setTakeSelection: (videoId, phraseGroupId, takeIndex) =>
+        set((state) => {
+          const current = state.takeSelections[videoId] || {
+            videoId,
+            selections: {},
+            autoSelected: false,
+          };
+          return {
+            takeSelections: {
+              ...state.takeSelections,
+              [videoId]: {
+                ...current,
+                selections: {
+                  ...current.selections,
+                  [phraseGroupId]: takeIndex,
+                },
+                autoSelected: false,
+              },
+            },
+          };
+        }),
+
+      setAllTakeSelections: (videoId, selections, autoSelected) =>
+        set((state) => ({
+          takeSelections: {
+            ...state.takeSelections,
+            [videoId]: {
+              videoId,
+              selections,
+              autoSelected,
+            },
+          },
+        })),
+
+      clearTakeSelections: (videoId) =>
+        set((state) => {
+          const { [videoId]: _, ...rest } = state.takeSelections;
+          return { takeSelections: rest };
+        }),
     }),
     {
       name: "reelforge-workspace",
@@ -117,3 +176,6 @@ export const usePipelineConfig = () =>
 
 export const useRenderHistory = () =>
   useWorkspaceStore((state) => state.renderHistory);
+
+export const useTakeSelections = (videoId: string) =>
+  useWorkspaceStore((state) => state.takeSelections[videoId]);
