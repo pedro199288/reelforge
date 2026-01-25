@@ -48,7 +48,7 @@ export interface AlignmentResult {
 /**
  * Levenshtein distance between two strings
  */
-function levenshtein(a: string, b: string): number {
+export function levenshtein(a: string, b: string): number {
   const matrix: number[][] = [];
 
   for (let i = 0; i <= b.length; i++) {
@@ -78,7 +78,7 @@ function levenshtein(a: string, b: string): number {
 /**
  * Normalize text for comparison
  */
-function normalize(text: string): string {
+export function normalize(text: string): string {
   return text
     .toLowerCase()
     .normalize("NFD")
@@ -91,7 +91,7 @@ function normalize(text: string): string {
 /**
  * Calculate similarity ratio between two strings (0-1)
  */
-function similarity(a: string, b: string): number {
+export function similarity(a: string, b: string): number {
   const normA = normalize(a);
   const normB = normalize(b);
 
