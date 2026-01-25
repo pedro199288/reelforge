@@ -14,20 +14,11 @@ export const App: React.FC = () => {
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+    <div className="flex flex-col h-screen">
       {/* Header con tabs */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          padding: "0 16px",
-          height: 48,
-          borderBottom: "1px solid #333",
-          gap: 8,
-        }}
-      >
-        <span style={{ fontWeight: 600, marginRight: 24 }}>ReelForge</span>
-        <nav style={{ display: "flex", gap: 4 }}>
+      <header className="flex items-center px-4 h-12 border-b border-border gap-2">
+        <span className="font-semibold mr-6">ReelForge</span>
+        <nav className="flex gap-1">
           {tabs.map((tab) =>
             tab.external ? (
               <a
@@ -35,34 +26,20 @@ export const App: React.FC = () => {
                 href={tab.external}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{
-                  padding: "8px 16px",
-                  borderRadius: 6,
-                  background: "transparent",
-                  color: "#888",
-                  textDecoration: "none",
-                  fontSize: 14,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                }}
+                className="px-4 py-2 rounded-md bg-transparent text-muted-foreground no-underline text-sm flex items-center gap-1 hover:text-foreground transition-colors"
               >
                 {tab.label}
-                <span style={{ fontSize: 10 }}>↗</span>
+                <span className="text-[10px]">↗</span>
               </a>
             ) : (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                style={{
-                  padding: "8px 16px",
-                  borderRadius: 6,
-                  border: "none",
-                  background: activeTab === tab.id ? "#333" : "transparent",
-                  color: activeTab === tab.id ? "#fff" : "#888",
-                  cursor: "pointer",
-                  fontSize: 14,
-                }}
+                className={`px-4 py-2 rounded-md border-none cursor-pointer text-sm transition-colors ${
+                  activeTab === tab.id
+                    ? "bg-muted text-foreground"
+                    : "bg-transparent text-muted-foreground hover:text-foreground"
+                }`}
               >
                 {tab.label}
               </button>
@@ -72,7 +49,7 @@ export const App: React.FC = () => {
       </header>
 
       {/* Content */}
-      <main style={{ flex: 1, overflow: "hidden" }}>
+      <main className="flex-1 overflow-hidden">
         {activeTab === "selector" && <SelectorView />}
         {activeTab === "preview" && <PreviewView />}
       </main>

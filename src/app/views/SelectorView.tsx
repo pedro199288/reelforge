@@ -140,25 +140,13 @@ export const SelectorView: React.FC = () => {
     .reduce((sum, s) => sum + s.duration, 0);
 
   return (
-    <div style={{ display: "flex", height: "100%" }}>
+    <div className="flex h-full">
       {/* Sidebar - Lista de segmentos */}
-      <div
-        style={{
-          width: 360,
-          borderRight: "1px solid #333",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <div
-          style={{
-            padding: "16px",
-            borderBottom: "1px solid #333",
-          }}
-        >
-          <h1 style={{ margin: 0, fontSize: 18 }}>Selector de Tomas</h1>
+      <div className="w-[360px] border-r border-border flex flex-col">
+        <div className="p-4 border-b border-border">
+          <h1 className="m-0 text-lg">Selector de Tomas</h1>
         </div>
-        <div style={{ flex: 1, overflow: "hidden" }}>
+        <div className="flex-1 overflow-hidden">
           <SegmentList
             segments={segments}
             selectedSegments={selectedSegments}
@@ -172,22 +160,8 @@ export const SelectorView: React.FC = () => {
       </div>
 
       {/* Main - Player */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
-          }}
-        >
+      <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex items-center justify-center p-6">
           <SegmentPlayer
             videoSrc={videoSrc}
             segment={activeSegment}
@@ -197,33 +171,20 @@ export const SelectorView: React.FC = () => {
         </div>
 
         {/* Footer - Acciones */}
-        <div
-          style={{
-            padding: "16px 24px",
-            borderTop: "1px solid #333",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <div style={{ color: "#888" }}>
+        <div className="px-6 py-4 border-t border-border flex justify-between items-center">
+          <div className="text-muted-foreground">
             {selectedCount} segmentos seleccionados (
             {selectedDuration.toFixed(1)}s)
           </div>
-          <div style={{ display: "flex", gap: 12 }}>
+          <div className="flex gap-3">
             <button
               onClick={handleSave}
               disabled={selectedCount === 0}
-              style={{
-                padding: "10px 20px",
-                background: selectedCount > 0 ? "#2563eb" : "#333",
-                border: "none",
-                borderRadius: 6,
-                color: "white",
-                cursor: selectedCount > 0 ? "pointer" : "not-allowed",
-                fontSize: 14,
-                fontWeight: 500,
-              }}
+              className={`px-5 py-2.5 border-none rounded-md text-white text-sm font-medium transition-colors ${
+                selectedCount > 0
+                  ? "bg-primary cursor-pointer hover:bg-primary/90"
+                  : "bg-muted cursor-not-allowed"
+              }`}
             >
               Guardar seleccion
             </button>

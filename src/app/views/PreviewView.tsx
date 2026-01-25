@@ -4,28 +4,18 @@ const VIDEO_SRC = "/sample-video.mp4";
 
 export const PreviewView: React.FC = () => {
   return (
-    <div
-      style={{
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-        gap: 16,
-      }}
-    >
-      <h2 style={{ margin: 0, fontSize: 18, color: "#888" }}>
+    <div className="h-full flex flex-col items-center justify-center p-6 gap-4">
+      <h2 className="m-0 text-lg text-muted-foreground">
         Preview del Video
       </h2>
       <VideoPlayer src={VIDEO_SRC} width={360} height={640} />
-      <p style={{ color: "#666", fontSize: 14 }}>
+      <p className="text-muted-foreground text-sm">
         Para renderizar el video final, abre{" "}
         <a
           href="http://localhost:3001"
           target="_blank"
           rel="noopener noreferrer"
-          style={{ color: "#2563eb" }}
+          className="text-primary hover:underline"
         >
           Remotion Studio
         </a>

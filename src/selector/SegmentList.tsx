@@ -25,56 +25,32 @@ export const SegmentList: React.FC<SegmentListProps> = ({
     .reduce((sum, s) => sum + s.duration, 0);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div
-        style={{
-          padding: "12px 16px",
-          borderBottom: "1px solid #333",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-3 border-b border-border flex justify-between items-center">
         <div>
           <strong>{selectedSegments.size}</strong> de {segments.length}{" "}
           seleccionados
-          <span style={{ color: "#888", marginLeft: 8 }}>
+          <span className="text-muted-foreground ml-2">
             ({selectedDuration.toFixed(1)}s / {totalDuration.toFixed(1)}s)
           </span>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="flex gap-2">
           <button
             onClick={onSelectAll}
-            style={{
-              padding: "4px 8px",
-              background: "#2563eb",
-              border: "none",
-              borderRadius: 4,
-              color: "white",
-              cursor: "pointer",
-              fontSize: 12,
-            }}
+            className="px-2 py-1 bg-primary border-none rounded text-white cursor-pointer text-xs hover:bg-primary/90 transition-colors"
           >
             Todos
           </button>
           <button
             onClick={onDeselectAll}
-            style={{
-              padding: "4px 8px",
-              background: "#4b5563",
-              border: "none",
-              borderRadius: 4,
-              color: "white",
-              cursor: "pointer",
-              fontSize: 12,
-            }}
+            className="px-2 py-1 bg-muted border-none rounded text-white cursor-pointer text-xs hover:bg-muted/80 transition-colors"
           >
             Ninguno
           </button>
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto" }}>
+      <div className="flex-1 overflow-y-auto">
         {segments.map((segment) => {
           const isSelected = selectedSegments.has(segment.index);
           const isActive = activeSegmentIndex === segment.index;
@@ -83,25 +59,9 @@ export const SegmentList: React.FC<SegmentListProps> = ({
             <div
               key={segment.index}
               onClick={() => onSelectSegment(segment.index)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                padding: "10px 16px",
-                borderBottom: "1px solid #222",
-                cursor: "pointer",
-                backgroundColor: isActive ? "#1e3a5f" : "transparent",
-                transition: "background-color 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                if (!isActive) {
-                  e.currentTarget.style.backgroundColor = "#2a2a2a";
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!isActive) {
-                  e.currentTarget.style.backgroundColor = "transparent";
-                }
-              }}
+              className={`flex items-center px-4 py-2.5 border-b border-border/50 cursor-pointer transition-colors ${
+                isActive ? "bg-primary/20" : "hover:bg-muted/50"
+              }`}
             >
               <input
                 type="checkbox"
@@ -110,28 +70,20 @@ export const SegmentList: React.FC<SegmentListProps> = ({
                   e.stopPropagation();
                   onToggleSegment(segment.index);
                 }}
-                style={{
-                  width: 18,
-                  height: 18,
-                  marginRight: 12,
-                  accentColor: "#2563eb",
-                  cursor: "pointer",
-                }}
+                className="w-[18px] h-[18px] mr-3 accent-primary cursor-pointer"
               />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 500 }}>
+              <div className="flex-1">
+                <div className="font-medium">
                   Segmento #{segment.index + 1}
                 </div>
-                <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
+                <div className="text-xs text-muted-foreground mt-0.5">
                   {formatTime(segment.startTime)} - {formatTime(segment.endTime)}
                 </div>
               </div>
               <div
-                style={{
-                  fontSize: 14,
-                  color: isSelected ? "#60a5fa" : "#666",
-                  fontWeight: isSelected ? 500 : 400,
-                }}
+                className={`text-sm ${
+                  isSelected ? "text-primary font-medium" : "text-muted-foreground"
+                }`}
               >
                 {segment.duration.toFixed(2)}s
               </div>
