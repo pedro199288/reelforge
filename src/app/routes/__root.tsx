@@ -1,12 +1,17 @@
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { Toaster } from "@/components/ui/sonner";
 import { GlobalProgressBar } from "@/components/GlobalProgressBar";
+import { QuickActionsPanel } from "@/components/QuickActionsPanel";
+import { useUndoRedoKeyboard } from "@/hooks/useUndoRedoKeyboard";
 
 export const Route = createRootRoute({
   component: RootLayout,
 });
 
 function RootLayout() {
+  // Enable global Ctrl+Z / Ctrl+Shift+Z keyboard shortcuts
+  useUndoRedoKeyboard();
+
   return (
     <div className="flex flex-col h-screen">
       <header className="flex items-center px-4 h-12 border-b border-border gap-2">
@@ -23,6 +28,7 @@ function RootLayout() {
         <Outlet />
       </main>
       <GlobalProgressBar />
+      <QuickActionsPanel />
       <Toaster position="bottom-right" richColors />
     </div>
   );

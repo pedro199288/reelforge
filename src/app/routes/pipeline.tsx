@@ -13,6 +13,12 @@ import { useWorkspaceStore } from "@/store/workspace";
 import { VideoSidebarSkeleton } from "@/components/VideoSidebarSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PipelineResetActions } from "@/components/PipelineResetActions";
+import {
+  ProcessingStatusPanel,
+  ProcessingStatusInline,
+  type ProcessingStepInfo,
+  type ProcessingStatus,
+} from "@/components/ProcessingStatusPanel";
 
 const API_URL = "http://localhost:3003";
 
@@ -96,6 +102,29 @@ function getVideoPipelineState(video: Video, hasTakeSelections?: boolean): Pipel
 
 function getCompletedSteps(state: PipelineState): number {
   return Object.values(state).filter(Boolean).length;
+}
+
+function pipelineStateToStepInfo(
+  state: PipelineState,
+  currentProcessingStep?: string
+): ProcessingStepInfo[] {
+  return STEPS.map((step) => {
+    let status: ProcessingStatus = "pending";
+
+    if (state[step.key]) {
+      status = "completed";
+    } else if (currentProcessingStep === step.key) {
+      status = "processing";
+    }
+
+    return {
+      key: step.key,
+      label: step.label,
+      status,
+      // In the future, timestamps can be added when the backend provides them
+      completedAt: state[step.key] ? new Date() : undefined,
+    };
+  });
 }
 
 function PipelinePage() {
@@ -245,6 +274,13 @@ function PipelinePage() {
     return Math.round((getCompletedSteps(pipelineState) / STEPS.length) * 100);
   }, [pipelineState]);
 
+  // Convert pipeline state to step info for visual indicators
+  const stepInfoList = useMemo(() => {
+    if (!pipelineState) return [];
+    const currentStep = processProgress?.step;
+    return pipelineStateToStepInfo(pipelineState, currentStep);
+  }, [pipelineState, processProgress?.step]);
+
   const getStepCommand = (step: PipelineStep): string => {
     if (!selectedVideo) return "";
     const videoPath = `public/videos/${selectedVideo.filename}`;
@@ -363,8 +399,11 @@ bunx remotion render src/index.ts CaptionedVideo \\
           </CardHeader>
           <CardContent className="space-y-2">
             {videos.map((video) => {
-              const state = getVideoPipelineState(video);
+              const hasTakes = video.id in takeSelections &&
+                Object.keys(takeSelections[video.id]?.selections || {}).length > 0;
+              const state = getVideoPipelineState(video, hasTakes);
               const completed = getCompletedSteps(state);
+              const videoStepInfo = pipelineStateToStepInfo(state);
               return (
                 <button
                   key={video.id}
@@ -378,11 +417,9 @@ bunx remotion render src/index.ts CaptionedVideo \\
                   <div className="font-medium text-sm truncate">
                     {video.title}
                   </div>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center justify-between gap-2 mt-2">
                     <Progress value={(completed / STEPS.length) * 100} className="h-1 flex-1" />
-                    <span className="text-xs text-muted-foreground">
-                      {completed}/{STEPS.length}
-                    </span>
+                    <ProcessingStatusInline steps={videoStepInfo} />
                   </div>
                 </button>
               );
@@ -428,28 +465,8 @@ bunx remotion render src/index.ts CaptionedVideo \\
                       <Progress value={progressPercent} />
                     </div>
                   </div>
-                  <div className="flex gap-2 flex-wrap">
-                    {STEPS.map((step) => (
-                      <Badge
-                        key={step.key}
-                        variant={
-                          pipelineState[step.key] ? "default" : "outline"
-                        }
-                        className={
-                          pipelineState[step.key]
-                            ? "bg-green-600"
-                            : "text-muted-foreground"
-                        }
-                      >
-                        {pipelineState[step.key] ? (
-                          <CheckIcon className="w-3 h-3 mr-1" />
-                        ) : (
-                          <CircleIcon className="w-3 h-3 mr-1" />
-                        )}
-                        {step.label}
-                      </Badge>
-                    ))}
-                  </div>
+                  {/* Visual Processing Status Indicators */}
+                  <ProcessingStatusPanel steps={stepInfoList} />
                 </CardContent>
               </Card>
 

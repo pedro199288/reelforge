@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { temporal, type TemporalState } from "zundo";
 
 export interface PipelineConfig {
   thresholdDb: number;
@@ -62,110 +63,141 @@ const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
 
 export const useWorkspaceStore = create<WorkspaceStore>()(
   persist(
-    (set) => ({
-      // Initial state
-      selections: {},
-      pipelineConfig: DEFAULT_PIPELINE_CONFIG,
-      renderHistory: [],
-      takeSelections: {},
+    temporal(
+      (set) => ({
+        // Initial state
+        selections: {},
+        pipelineConfig: DEFAULT_PIPELINE_CONFIG,
+        renderHistory: [],
+        takeSelections: {},
 
-      // Selection actions
-      setSelection: (videoId, indices) =>
-        set((state) => ({
-          selections: {
-            ...state.selections,
-            [videoId]: indices,
-          },
-        })),
-
-      toggleSegment: (videoId, index) =>
-        set((state) => {
-          const current = state.selections[videoId] || [];
-          const exists = current.includes(index);
-          const updated = exists
-            ? current.filter((i) => i !== index)
-            : [...current, index].sort((a, b) => a - b);
-
-          return {
+        // Selection actions
+        setSelection: (videoId, indices) =>
+          set((state) => ({
             selections: {
               ...state.selections,
-              [videoId]: updated,
+              [videoId]: indices,
             },
-          };
-        }),
+          })),
 
-      clearSelection: (videoId) =>
-        set((state) => {
-          const { [videoId]: _, ...rest } = state.selections;
-          return { selections: rest };
-        }),
+        toggleSegment: (videoId, index) =>
+          set((state) => {
+            const current = state.selections[videoId] || [];
+            const exists = current.includes(index);
+            const updated = exists
+              ? current.filter((i) => i !== index)
+              : [...current, index].sort((a, b) => a - b);
 
-      // Pipeline config actions
-      setPipelineConfig: (config) =>
-        set((state) => ({
-          pipelineConfig: {
-            ...state.pipelineConfig,
-            ...config,
-          },
-        })),
+            return {
+              selections: {
+                ...state.selections,
+                [videoId]: updated,
+              },
+            };
+          }),
 
-      resetPipelineConfig: () =>
-        set({ pipelineConfig: DEFAULT_PIPELINE_CONFIG }),
+        clearSelection: (videoId) =>
+          set((state) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [videoId]: _removed, ...rest } = state.selections;
+            return { selections: rest };
+          }),
 
-      // Render history actions
-      addRender: (entry) =>
-        set((state) => ({
-          renderHistory: [...state.renderHistory, entry],
-        })),
+        // Pipeline config actions
+        setPipelineConfig: (config) =>
+          set((state) => ({
+            pipelineConfig: {
+              ...state.pipelineConfig,
+              ...config,
+            },
+          })),
 
-      clearRenderHistory: () => set({ renderHistory: [] }),
+        resetPipelineConfig: () =>
+          set({ pipelineConfig: DEFAULT_PIPELINE_CONFIG }),
 
-      // Take selection actions
-      setTakeSelection: (videoId, phraseGroupId, takeIndex) =>
-        set((state) => {
-          const current = state.takeSelections[videoId] || {
-            videoId,
-            selections: {},
-            autoSelected: false,
-          };
-          return {
+        // Render history actions
+        addRender: (entry) =>
+          set((state) => ({
+            renderHistory: [...state.renderHistory, entry],
+          })),
+
+        clearRenderHistory: () => set({ renderHistory: [] }),
+
+        // Take selection actions
+        setTakeSelection: (videoId, phraseGroupId, takeIndex) =>
+          set((state) => {
+            const current = state.takeSelections[videoId] || {
+              videoId,
+              selections: {},
+              autoSelected: false,
+            };
+            return {
+              takeSelections: {
+                ...state.takeSelections,
+                [videoId]: {
+                  ...current,
+                  selections: {
+                    ...current.selections,
+                    [phraseGroupId]: takeIndex,
+                  },
+                  autoSelected: false,
+                },
+              },
+            };
+          }),
+
+        setAllTakeSelections: (videoId, selections, autoSelected) =>
+          set((state) => ({
             takeSelections: {
               ...state.takeSelections,
               [videoId]: {
-                ...current,
-                selections: {
-                  ...current.selections,
-                  [phraseGroupId]: takeIndex,
-                },
-                autoSelected: false,
+                videoId,
+                selections,
+                autoSelected,
               },
             },
-          };
-        }),
+          })),
 
-      setAllTakeSelections: (videoId, selections, autoSelected) =>
-        set((state) => ({
-          takeSelections: {
-            ...state.takeSelections,
-            [videoId]: {
-              videoId,
-              selections,
-              autoSelected,
-            },
-          },
-        })),
-
-      clearTakeSelections: (videoId) =>
-        set((state) => {
-          const { [videoId]: _, ...rest } = state.takeSelections;
-          return { takeSelections: rest };
+        clearTakeSelections: (videoId) =>
+          set((state) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [videoId]: _removed, ...rest } = state.takeSelections;
+            return { takeSelections: rest };
+          }),
+      }),
+      {
+        // Limit history to 50 actions
+        limit: 50,
+        // Only track changes to selections and takeSelections (user-reversible actions)
+        // Exclude pipelineConfig and renderHistory from undo/redo
+        partialize: (state) => ({
+          selections: state.selections,
+          takeSelections: state.takeSelections,
         }),
-    }),
+        // Equality check to avoid duplicate history entries
+        equality: (pastState, currentState) =>
+          JSON.stringify(pastState) === JSON.stringify(currentState),
+      }
+    ),
     {
       name: "reelforge-workspace",
     }
   )
 );
+
+// Temporal store hook for undo/redo
+export const useTemporalStore = <T>(
+  selector: (state: TemporalState<Pick<WorkspaceStore, "selections" | "takeSelections">>) => T
+) => useWorkspaceStore.temporal(selector);
+
+// Convenience hooks for undo/redo
+export const useUndo = () => useTemporalStore((state) => state.undo);
+export const useRedo = () => useTemporalStore((state) => state.redo);
+export const useCanUndo = () =>
+  useTemporalStore((state) => state.pastStates.length > 0);
+export const useCanRedo = () =>
+  useTemporalStore((state) => state.futureStates.length > 0);
+export const useClearHistory = () => useTemporalStore((state) => state.clear);
 
 // Selector helpers
 export const useSelection = (videoId: string) =>

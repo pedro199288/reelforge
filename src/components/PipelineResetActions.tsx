@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { toast } from "sonner";
 import { useWorkspaceStore } from "@/store/workspace";
 import {
@@ -8,10 +9,34 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Settings,
+  ChevronDown,
+  Trash2,
+  RotateCcw,
+  AlertTriangle,
+} from "lucide-react";
 
 interface PipelineResetActionsProps {
   videoId: string;
   disabled?: boolean;
+}
+
+interface ResetOptions {
+  selections: boolean;
+  takeSelections: boolean;
 }
 
 export function PipelineResetActions({ videoId, disabled }: PipelineResetActionsProps) {
@@ -19,6 +44,12 @@ export function PipelineResetActions({ videoId, disabled }: PipelineResetActions
   const clearTakeSelections = useWorkspaceStore((state) => state.clearTakeSelections);
   const selections = useWorkspaceStore((state) => state.selections[videoId]);
   const takeSelections = useWorkspaceStore((state) => state.takeSelections[videoId]);
+
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [resetOptions, setResetOptions] = useState<ResetOptions>({
+    selections: true,
+    takeSelections: true,
+  });
 
   const hasSelections = selections && selections.length > 0;
   const hasTakeSelections = takeSelections && Object.keys(takeSelections.selections || {}).length > 0;
@@ -32,12 +63,10 @@ export function PipelineResetActions({ videoId, disabled }: PipelineResetActions
       return;
     }
 
-    if (window.confirm("¿Limpiar la selección de cortes? Esta acción no se puede deshacer.")) {
-      clearSelection(videoId);
-      toast.success("Selección limpiada", {
-        description: "Se ha limpiado la selección de cortes",
-      });
-    }
+    clearSelection(videoId);
+    toast.success("Selección limpiada", {
+      description: "Se ha limpiado la selección de cortes",
+    });
   };
 
   const handleClearTakeSelections = () => {
@@ -48,151 +77,173 @@ export function PipelineResetActions({ videoId, disabled }: PipelineResetActions
       return;
     }
 
-    if (window.confirm("¿Limpiar la selección de tomas? Esta acción no se puede deshacer.")) {
-      clearTakeSelections(videoId);
-      toast.success("Tomas limpiadas", {
-        description: "Se ha limpiado la selección de tomas",
-      });
-    }
+    clearTakeSelections(videoId);
+    toast.success("Tomas limpiadas", {
+      description: "Se ha limpiado la selección de tomas",
+    });
   };
 
-  const handleResetAll = () => {
+  const handleOpenResetDialog = () => {
     if (!hasAnyData) {
       toast.info("Sin datos", {
         description: "No hay datos para resetear",
       });
       return;
     }
+    // Pre-select only options that have data
+    setResetOptions({
+      selections: hasSelections,
+      takeSelections: hasTakeSelections,
+    });
+    setResetDialogOpen(true);
+  };
 
-    const message = [
-      "¿Resetear todos los procesados? Esto incluye:",
-      hasSelections ? "- Selección de cortes" : null,
-      hasTakeSelections ? "- Selección de tomas" : null,
-      "",
-      "Nota: Los archivos de captions (.srt) permanecerán en disco.",
-    ]
-      .filter(Boolean)
-      .join("\n");
+  const handleResetAll = () => {
+    let resetCount = 0;
 
-    if (window.confirm(message)) {
-      if (hasSelections) clearSelection(videoId);
-      if (hasTakeSelections) clearTakeSelections(videoId);
+    if (resetOptions.selections && hasSelections) {
+      clearSelection(videoId);
+      resetCount++;
+    }
+    if (resetOptions.takeSelections && hasTakeSelections) {
+      clearTakeSelections(videoId);
+      resetCount++;
+    }
+
+    setResetDialogOpen(false);
+
+    if (resetCount > 0) {
       toast.success("Reset completado", {
-        description: "Se han limpiado todos los procesados del video",
+        description: `Se han limpiado ${resetCount} tipo${resetCount > 1 ? "s" : ""} de datos`,
       });
     }
   };
 
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" disabled={disabled} className="gap-2">
-          <SettingsIcon className="w-4 h-4" />
-          Acciones
-          <ChevronDownIcon className="w-4 h-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={handleClearSelections} disabled={!hasSelections}>
-          <TrashIcon className="w-4 h-4 mr-2" />
-          Limpiar selección de cortes
-          {hasSelections && (
-            <span className="ml-auto text-xs text-muted-foreground">
-              ({selections.length})
-            </span>
-          )}
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={handleClearTakeSelections} disabled={!hasTakeSelections}>
-          <TrashIcon className="w-4 h-4 mr-2" />
-          Limpiar selección de tomas
-          {hasTakeSelections && (
-            <span className="ml-auto text-xs text-muted-foreground">
-              ({Object.keys(takeSelections.selections).length})
-            </span>
-          )}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={handleResetAll}
-          disabled={!hasAnyData}
-          className="text-destructive focus:text-destructive"
-        >
-          <RotateCcwIcon className="w-4 h-4 mr-2" />
-          Reset todo
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
+  const canReset = (resetOptions.selections && hasSelections) ||
+                   (resetOptions.takeSelections && hasTakeSelections);
 
-function SettingsIcon({ className }: { className?: string }) {
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" disabled={disabled} className="gap-2">
+            <Settings className="w-4 h-4" />
+            Acciones
+            <ChevronDown className="w-4 h-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={handleClearSelections} disabled={!hasSelections}>
+            <Trash2 className="w-4 h-4 mr-2" />
+            Limpiar selección de cortes
+            {hasSelections && (
+              <span className="ml-auto text-xs text-muted-foreground">
+                ({selections.length})
+              </span>
+            )}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleClearTakeSelections} disabled={!hasTakeSelections}>
+            <Trash2 className="w-4 h-4 mr-2" />
+            Limpiar selección de tomas
+            {hasTakeSelections && (
+              <span className="ml-auto text-xs text-muted-foreground">
+                ({Object.keys(takeSelections.selections).length})
+              </span>
+            )}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={handleOpenResetDialog}
+            disabled={!hasAnyData}
+            className="text-destructive focus:text-destructive"
+          >
+            <RotateCcw className="w-4 h-4 mr-2" />
+            Reset todo...
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
-function ChevronDownIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
-  );
-}
+      {/* Reset All Dialog */}
+      <AlertDialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
+                <AlertTriangle className="h-5 w-5 text-destructive" />
+              </div>
+              <AlertDialogTitle>Resetear procesado</AlertDialogTitle>
+            </div>
+            <AlertDialogDescription>
+              Selecciona qué datos deseas eliminar. Esta acción se puede deshacer con Ctrl+Z.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
 
-function TrashIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="M3 6h18" />
-      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-    </svg>
-  );
-}
+          <div className="py-4 space-y-4">
+            <div className="space-y-3">
+              <div className="flex items-center space-x-3">
+                <Checkbox
+                  id="reset-selections"
+                  checked={resetOptions.selections}
+                  onCheckedChange={(checked) =>
+                    setResetOptions((prev) => ({ ...prev, selections: checked === true }))
+                  }
+                  disabled={!hasSelections}
+                />
+                <Label
+                  htmlFor="reset-selections"
+                  className={`flex-1 ${!hasSelections ? "text-muted-foreground" : ""}`}
+                >
+                  <div className="font-medium">Selección de cortes</div>
+                  <div className="text-sm text-muted-foreground">
+                    {hasSelections
+                      ? `${selections.length} segmentos seleccionados`
+                      : "Sin datos"}
+                  </div>
+                </Label>
+              </div>
 
-function RotateCcwIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-      <path d="M3 3v5h5" />
-    </svg>
+              <div className="flex items-center space-x-3">
+                <Checkbox
+                  id="reset-takes"
+                  checked={resetOptions.takeSelections}
+                  onCheckedChange={(checked) =>
+                    setResetOptions((prev) => ({ ...prev, takeSelections: checked === true }))
+                  }
+                  disabled={!hasTakeSelections}
+                />
+                <Label
+                  htmlFor="reset-takes"
+                  className={`flex-1 ${!hasTakeSelections ? "text-muted-foreground" : ""}`}
+                >
+                  <div className="font-medium">Selección de tomas</div>
+                  <div className="text-sm text-muted-foreground">
+                    {hasTakeSelections
+                      ? `${Object.keys(takeSelections.selections).length} tomas seleccionadas`
+                      : "Sin datos"}
+                  </div>
+                </Label>
+              </div>
+            </div>
+
+            {/* Note about files */}
+            <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+              <strong>Nota:</strong> Los archivos en disco (captions .srt, etc.) no se eliminarán.
+            </div>
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleResetAll}
+              disabled={!canReset}
+              variant="destructive"
+            >
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Resetear seleccionado
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
