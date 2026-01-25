@@ -52,6 +52,7 @@
     "render": "remotionb bundle",
     "upgrade": "remotionb upgrade",
     "lint": "eslint src && tsc",
+    "typecheck": "tsc --noEmit",
     "create-subtitles": "node sub.mjs",
     "server": "bun server/api.ts",
     "process": "bun process-video.ts"
