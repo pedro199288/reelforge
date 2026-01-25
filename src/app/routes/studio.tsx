@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Video } from "@/components/VideoList";
 import { useSubtitleStore, HIGHLIGHT_COLORS, AVAILABLE_FONTS } from "@/store/subtitles";
+import { useTimelineShortcuts, TIMELINE_SHORTCUTS } from "@/hooks/useTimelineShortcuts";
+import { useHotkeys } from "react-hotkeys-hook";
 
 interface VideoManifest {
   videos: Video[];
@@ -31,8 +33,30 @@ function StudioPage() {
   const [loading, setLoading] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   const { highlightColor, setHighlightColor, fontFamily, setFontFamily } = useSubtitleStore();
+
+  const fps = 30;
+  const durationInFrames = videoDuration ? Math.floor(videoDuration * fps) : 0;
+
+  // Timeline keyboard shortcuts
+  useTimelineShortcuts({
+    playerRef,
+    durationInFrames,
+    fps,
+    enabled: !!selectedVideo && !!videoDuration && !showShortcuts,
+  });
+
+  // Show shortcuts help with '?'
+  useHotkeys("shift+/", () => setShowShortcuts((prev) => !prev), {
+    enabled: !!selectedVideo,
+  });
+
+  // Close shortcuts modal with Escape
+  useHotkeys("escape", () => setShowShortcuts(false), {
+    enabled: showShortcuts,
+  });
 
   // Load video manifest
   useEffect(() => {
@@ -201,10 +225,10 @@ function StudioPage() {
                   highlightColor,
                   fontFamily,
                 }}
-                durationInFrames={Math.floor(videoDuration * 30)}
+                durationInFrames={durationInFrames}
                 compositionWidth={1080}
                 compositionHeight={1920}
-                fps={30}
+                fps={fps}
                 controls
                 loop
                 style={{
@@ -248,6 +272,60 @@ function StudioPage() {
                 </>
               )}
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowShortcuts(true)}
+              title="Keyboard shortcuts (?)"
+              className="text-white/60 hover:text-white"
+            >
+              <KeyboardIcon />
+            </Button>
+          </div>
+        )}
+
+        {/* Keyboard shortcuts modal */}
+        {showShortcuts && (
+          <div
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            onClick={() => setShowShortcuts(false)}
+          >
+            <div
+              className="bg-background rounded-lg p-6 max-w-sm w-full mx-4 shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">Keyboard Shortcuts</h2>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowShortcuts(false)}
+                  className="h-8 w-8 p-0"
+                >
+                  <CloseIcon />
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {TIMELINE_SHORTCUTS.map((shortcut) => (
+                  <div
+                    key={shortcut.key}
+                    className="flex items-center justify-between py-1"
+                  >
+                    <span className="text-sm text-muted-foreground">
+                      {shortcut.description}
+                    </span>
+                    <kbd className="px-2 py-1 bg-muted rounded text-xs font-mono">
+                      {shortcut.key}
+                    </kbd>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground mt-4">
+                Press <kbd className="px-1 bg-muted rounded">?</kbd> to toggle
+                this panel or <kbd className="px-1 bg-muted rounded">Esc</kbd>{" "}
+                to close
+              </p>
+            </div>
           </div>
         )}
       </div>
@@ -411,6 +489,50 @@ function SkipBackIcon() {
     >
       <polygon points="19 20 9 12 19 4 19 20" />
       <line x1="5" y1="19" x2="5" y2="5" />
+    </svg>
+  );
+}
+
+function KeyboardIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="2" y="4" width="20" height="16" rx="2" ry="2" />
+      <line x1="6" y1="8" x2="6" y2="8" />
+      <line x1="10" y1="8" x2="10" y2="8" />
+      <line x1="14" y1="8" x2="14" y2="8" />
+      <line x1="18" y1="8" x2="18" y2="8" />
+      <line x1="6" y1="12" x2="6" y2="12" />
+      <line x1="18" y1="12" x2="18" y2="12" />
+      <line x1="8" y1="16" x2="16" y2="16" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
   );
 }
