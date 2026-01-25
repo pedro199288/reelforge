@@ -77,3 +77,30 @@ export const DEFAULT_QUEUE_ITEM: Omit<QueueItem, "id" | "videoId" | "filename"> 
   progress: 0,
   currentStep: "silence-detection",
 };
+
+/**
+ * Log level for processing events
+ */
+export type LogLevel = "info" | "warn" | "error";
+
+/**
+ * A single log entry for batch processing
+ */
+export interface LogEntry {
+  /** Unique identifier for this log entry */
+  id: string;
+  /** Reference to the queue item */
+  videoId: string;
+  /** Display name of the video */
+  filename: string;
+  /** When the log was created */
+  timestamp: Date;
+  /** Severity level */
+  level: LogLevel;
+  /** Pipeline step that generated this log */
+  step: PipelineStep;
+  /** Main log message */
+  message: string;
+  /** Additional details (stack trace, debug info) */
+  details?: string;
+}
