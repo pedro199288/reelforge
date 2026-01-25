@@ -52,7 +52,9 @@
     "render": "remotionb bundle",
     "upgrade": "remotionb upgrade",
     "lint": "eslint src && tsc",
-    "create-subtitles": "node sub.mjs"
+    "create-subtitles": "node sub.mjs",
+    "server": "bun server/api.ts",
+    "process": "bun process-video.ts"
   },
   "sideEffects": [
     "*.css"

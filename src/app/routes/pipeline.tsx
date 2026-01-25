@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -12,6 +12,14 @@ import type { Video } from "@/components/VideoList";
 import { useWorkspaceStore } from "@/store/workspace";
 import { VideoSidebarSkeleton } from "@/components/VideoSidebarSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
+
+const API_URL = "http://localhost:3003";
+
+interface ProcessProgress {
+  step: string;
+  progress: number;
+  message: string;
+}
 
 export const Route = createFileRoute("/pipeline")({
   component: PipelinePage,
@@ -88,9 +96,110 @@ function PipelinePage() {
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [activeStep, setActiveStep] = useState<PipelineStep>("raw");
 
+  // Auto-process state
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processProgress, setProcessProgress] = useState<ProcessProgress | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   // Pipeline config from persistent store
   const config = useWorkspaceStore((state) => state.pipelineConfig);
   const setPipelineConfig = useWorkspaceStore((state) => state.setPipelineConfig);
+
+  // Start auto-processing
+  const startAutoProcess = useCallback(async () => {
+    if (!selectedVideo || isProcessing) return;
+
+    setIsProcessing(true);
+    setProcessProgress({ step: "starting", progress: 0, message: "Iniciando..." });
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    try {
+      const response = await fetch(`${API_URL}/api/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          video: selectedVideo.filename,
+          config: {
+            thresholdDb: config.thresholdDb,
+            minDurationSec: config.minDurationSec,
+            paddingSec: config.paddingSec,
+          },
+        }),
+        signal: abortController.signal,
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Error connecting to server");
+      }
+
+      // Read SSE stream
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response body");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const chunk of lines) {
+          if (!chunk.trim()) continue;
+
+          const eventMatch = chunk.match(/event: (\w+)/);
+          const dataMatch = chunk.match(/data: (.+)/);
+
+          if (eventMatch && dataMatch) {
+            const eventType = eventMatch[1];
+            const data = JSON.parse(dataMatch[1]);
+
+            switch (eventType) {
+              case "progress":
+                setProcessProgress(data);
+                break;
+              case "complete":
+                toast.success("Procesamiento completado", {
+                  description: `Video guardado en ${data.outputPath}`,
+                });
+                setIsProcessing(false);
+                setProcessProgress(null);
+                break;
+              case "error":
+                throw new Error(data.message);
+              case "log":
+                console.log("[Process]", data.message);
+                break;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        toast.info("Procesamiento cancelado");
+      } else {
+        toast.error("Error en el procesamiento", {
+          description: err instanceof Error ? err.message : "Error desconocido",
+        });
+      }
+      setIsProcessing(false);
+      setProcessProgress(null);
+    }
+  }, [selectedVideo, isProcessing, config]);
+
+  // Cancel processing
+  const cancelProcess = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     fetch("/videos.manifest.json")
@@ -204,11 +313,33 @@ bunx remotion render src/index.ts CaptionedVideo \\
     <div className="p-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Pipeline Dashboard</h1>
-        {selectedVideo && (
-          <Badge variant="outline" className="text-sm">
-            {progressPercent}% completado
-          </Badge>
-        )}
+        <div className="flex items-center gap-3">
+          {selectedVideo && (
+            <>
+              <Badge variant="outline" className="text-sm">
+                {progressPercent}% completado
+              </Badge>
+              {isProcessing ? (
+                <Button
+                  variant="destructive"
+                  onClick={cancelProcess}
+                  className="gap-2"
+                >
+                  <StopIcon className="w-4 h-4" />
+                  Cancelar
+                </Button>
+              ) : (
+                <Button
+                  onClick={startAutoProcess}
+                  className="gap-2 bg-green-600 hover:bg-green-700"
+                >
+                  <ZapIcon className="w-4 h-4" />
+                  Procesar Todo
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -250,6 +381,29 @@ bunx remotion render src/index.ts CaptionedVideo \\
         <div className="lg:col-span-3 space-y-6">
           {selectedVideo && pipelineState && (
             <>
+              {/* Auto-Process Progress */}
+              {isProcessing && processProgress && (
+                <Card className="border-green-500/50 bg-green-500/5">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center gap-3 mb-3">
+                      <LoaderIcon className="w-5 h-5 animate-spin text-green-600" />
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-green-700">
+                          Procesando automáticamente...
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {processProgress.message}
+                        </div>
+                      </div>
+                      <Badge variant="outline" className="text-green-600 border-green-500">
+                        {processProgress.progress}%
+                      </Badge>
+                    </div>
+                    <Progress value={processProgress.progress} className="h-2" />
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Progress Overview */}
               <Card>
                 <CardContent className="pt-6">
@@ -526,6 +680,64 @@ function CopyIcon({ className }: { className?: string }) {
     >
       <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function ZapIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  );
+}
+
+function StopIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+    </svg>
+  );
+}
+
+function LoaderIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <line x1="12" y1="2" x2="12" y2="6" />
+      <line x1="12" y1="18" x2="12" y2="22" />
+      <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" />
+      <line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
+      <line x1="2" y1="12" x2="6" y2="12" />
+      <line x1="18" y1="12" x2="22" y2="12" />
+      <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" />
+      <line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
     </svg>
   );
 }
