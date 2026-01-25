@@ -253,3 +253,14 @@ export const usePendingCount = () =>
   useBatchStore((state) => state.queue.filter((i) => i.status === "pending").length);
 export const useCompletedCount = () =>
   useBatchStore((state) => state.queue.filter((i) => i.status === "completed").length);
+
+/**
+ * Returns global progress (0-100) for all enabled items in the queue
+ */
+export const useGlobalProgress = () =>
+  useBatchStore((state) => {
+    const enabled = state.queue.filter((i) => i.enabled);
+    if (enabled.length === 0) return 0;
+    const total = enabled.reduce((sum, i) => sum + i.progress, 0);
+    return Math.round(total / enabled.length);
+  });

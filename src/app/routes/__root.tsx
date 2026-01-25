@@ -1,5 +1,6 @@
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { Toaster } from "@/components/ui/sonner";
+import { GlobalProgressBar } from "@/components/GlobalProgressBar";
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -20,6 +21,7 @@ function RootLayout() {
       <main className="flex-1 overflow-hidden">
         <Outlet />
       </main>
+      <GlobalProgressBar />
       <Toaster position="bottom-right" richColors />
     </div>
   );
