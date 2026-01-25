@@ -1,25 +1,46 @@
 import { continueRender, delayRender, staticFile } from "remotion";
 
-export const TheBoldFont = `TheBoldFont`;
+export const AVAILABLE_FONTS = [
+  { id: "TheBoldFont", name: "The Bold Font", file: "fonts/theboldfont.ttf" },
+  { id: "Montserrat", name: "Montserrat", file: "fonts/Montserrat-Bold.ttf" },
+  { id: "Oswald", name: "Oswald", file: "fonts/Oswald-Bold.ttf" },
+  { id: "Poppins", name: "Poppins", file: "fonts/Poppins-Bold.ttf" },
+] as const;
 
-let loaded = false;
+export type FontId = (typeof AVAILABLE_FONTS)[number]["id"];
 
-export const loadFont = async (): Promise<void> => {
-  if (loaded) {
+export const DEFAULT_FONT: FontId = "TheBoldFont";
+
+// Legacy export for backwards compatibility
+export const TheBoldFont = "TheBoldFont";
+
+const loadedFonts = new Set<string>();
+
+export const loadFont = async (fontId: FontId = DEFAULT_FONT): Promise<void> => {
+  if (loadedFonts.has(fontId)) {
     return Promise.resolve();
   }
 
-  const waitForFont = delayRender();
+  const fontConfig = AVAILABLE_FONTS.find((f) => f.id === fontId);
+  if (!fontConfig) {
+    console.warn(`Font "${fontId}" not found, falling back to default`);
+    return loadFont(DEFAULT_FONT);
+  }
 
-  loaded = true;
+  const waitForFont = delayRender();
+  loadedFonts.add(fontId);
 
   const font = new FontFace(
-    TheBoldFont,
-    `url('${staticFile("theboldfont.ttf")}') format('truetype')`,
+    fontConfig.id,
+    `url('${staticFile(fontConfig.file)}') format('truetype')`,
   );
 
   await font.load();
   document.fonts.add(font);
 
   continueRender(waitForFont);
+};
+
+export const loadAllFonts = async (): Promise<void> => {
+  await Promise.all(AVAILABLE_FONTS.map((f) => loadFont(f.id)));
 };

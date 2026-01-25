@@ -13,7 +13,7 @@ import {
 import { z } from "zod";
 import SubtitlePage from "./SubtitlePage";
 import { getVideoMetadata } from "@remotion/media-utils";
-import { loadFont } from "../load-font";
+import { loadFont, type FontId, DEFAULT_FONT } from "../load-font";
 import { NoCaptionFile } from "./NoCaptionFile";
 import { Caption, createTikTokStyleCaptions } from "@remotion/captions";
 import { ZoomLayer } from "./ZoomLayer";
@@ -57,7 +57,8 @@ const SWITCH_CAPTIONS_EVERY_MS = 1200;
 export const CaptionedVideo: React.FC<{
   src: string;
   highlightColor?: string;
-}> = ({ src, highlightColor }) => {
+  fontFamily?: FontId;
+}> = ({ src, highlightColor, fontFamily = DEFAULT_FONT }) => {
   const [subtitles, setSubtitles] = useState<Caption[]>([]);
   const [zoomEvents, setZoomEvents] = useState<AlignedEvent[]>([]);
   const { delayRender, continueRender } = useDelayRender();
@@ -78,7 +79,7 @@ export const CaptionedVideo: React.FC<{
 
   const fetchSubtitles = useCallback(async () => {
     try {
-      await loadFont();
+      await loadFont(fontFamily);
       const res = await fetch(subtitlesFile);
       const data = (await res.json()) as Caption[];
       setSubtitles(data);
@@ -86,7 +87,7 @@ export const CaptionedVideo: React.FC<{
       // Subtitles are optional, don't cancel render
       console.warn("Could not load subtitles:", e);
     }
-  }, [subtitlesFile]);
+  }, [subtitlesFile, fontFamily]);
 
   const fetchZoomEvents = useCallback(async () => {
     try {
@@ -157,7 +158,7 @@ export const CaptionedVideo: React.FC<{
             from={subtitleStartFrame}
             durationInFrames={durationInFrames}
           >
-            <SubtitlePage key={index} page={page} highlightColor={highlightColor} />;
+            <SubtitlePage key={index} page={page} highlightColor={highlightColor} fontFamily={fontFamily} />;
           </Sequence>
         );
       })}

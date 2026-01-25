@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Video } from "@/components/VideoList";
-import { useSubtitleStore, HIGHLIGHT_COLORS } from "@/store/subtitles";
+import { useSubtitleStore, HIGHLIGHT_COLORS, AVAILABLE_FONTS } from "@/store/subtitles";
 
 interface VideoManifest {
   videos: Video[];
@@ -32,7 +32,7 @@ function StudioPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
 
-  const { highlightColor, setHighlightColor } = useSubtitleStore();
+  const { highlightColor, setHighlightColor, fontFamily, setFontFamily } = useSubtitleStore();
 
   // Load video manifest
   useEffect(() => {
@@ -199,6 +199,7 @@ function StudioPage() {
                 inputProps={{
                   src: `/${selectedVideo.filename}`,
                   highlightColor,
+                  fontFamily,
                 }}
                 durationInFrames={Math.floor(videoDuration * 30)}
                 compositionWidth={1080}
@@ -289,6 +290,28 @@ function StudioPage() {
               </CardContent>
             </Card>
           ))}
+        </div>
+
+        {/* Font selector */}
+        <div className="border-t border-border p-4 space-y-3">
+          <h3 className="text-sm font-medium">Font</h3>
+          <div className="flex flex-col gap-1">
+            {AVAILABLE_FONTS.map((font) => (
+              <button
+                key={font.id}
+                type="button"
+                className={`px-3 py-2 text-left rounded-md transition-all ${
+                  fontFamily === font.id
+                    ? "bg-primary text-primary-foreground"
+                    : "hover:bg-accent"
+                }`}
+                style={{ fontFamily: font.id }}
+                onClick={() => setFontFamily(font.id)}
+              >
+                {font.name}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Highlight color selector */}

@@ -1,5 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { AVAILABLE_FONTS, DEFAULT_FONT, type FontId } from "../load-font";
+
+export { AVAILABLE_FONTS, type FontId };
 
 export const HIGHLIGHT_COLORS = [
   { name: "Verde Lima", value: "#39E508" },
@@ -16,14 +19,18 @@ export const DEFAULT_HIGHLIGHT_COLOR = "#39E508";
 
 interface SubtitleStore {
   highlightColor: string;
+  fontFamily: FontId;
   setHighlightColor: (color: string) => void;
+  setFontFamily: (font: FontId) => void;
 }
 
 export const useSubtitleStore = create<SubtitleStore>()(
   persist(
     (set) => ({
       highlightColor: DEFAULT_HIGHLIGHT_COLOR,
+      fontFamily: DEFAULT_FONT,
       setHighlightColor: (color) => set({ highlightColor: color }),
+      setFontFamily: (font) => set({ fontFamily: font }),
     }),
     {
       name: "reelforge-subtitles",
@@ -33,3 +40,6 @@ export const useSubtitleStore = create<SubtitleStore>()(
 
 export const useHighlightColor = () =>
   useSubtitleStore((state) => state.highlightColor);
+
+export const useFontFamily = () =>
+  useSubtitleStore((state) => state.fontFamily);

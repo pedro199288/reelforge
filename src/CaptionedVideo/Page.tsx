@@ -5,12 +5,10 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { TheBoldFont } from "../load-font";
+import { DEFAULT_FONT, type FontId } from "../load-font";
 import { fitText } from "@remotion/layout-utils";
 import { makeTransform, scale, translateY } from "@remotion/animation-utils";
 import { TikTokPage } from "@remotion/captions";
-
-const fontFamily = TheBoldFont;
 
 const container: React.CSSProperties = {
   justifyContent: "center",
@@ -27,7 +25,8 @@ export const Page: React.FC<{
   readonly enterProgress: number;
   readonly page: TikTokPage;
   readonly highlightColor?: string;
-}> = ({ enterProgress, page, highlightColor = DEFAULT_HIGHLIGHT_COLOR }) => {
+  readonly fontFamily?: FontId;
+}> = ({ enterProgress, page, highlightColor = DEFAULT_HIGHLIGHT_COLOR, fontFamily = DEFAULT_FONT }) => {
   const frame = useCurrentFrame();
   const { width, fps } = useVideoConfig();
   const timeInMs = (frame / fps) * 1000;

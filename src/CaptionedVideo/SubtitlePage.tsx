@@ -7,11 +7,13 @@ import {
 } from "remotion";
 import { Page } from "./Page";
 import { TikTokPage } from "@remotion/captions";
+import type { FontId } from "../load-font";
 
 const SubtitlePage: React.FC<{
   readonly page: TikTokPage;
   readonly highlightColor?: string;
-}> = ({ page, highlightColor }) => {
+  readonly fontFamily?: FontId;
+}> = ({ page, highlightColor, fontFamily }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -26,7 +28,7 @@ const SubtitlePage: React.FC<{
 
   return (
     <AbsoluteFill>
-      <Page enterProgress={enter} page={page} highlightColor={highlightColor} />
+      <Page enterProgress={enter} page={page} highlightColor={highlightColor} fontFamily={fontFamily} />
     </AbsoluteFill>
   );
 };
