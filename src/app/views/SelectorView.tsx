@@ -1,7 +1,8 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { SegmentPlayer } from "@/components/SegmentPlayer";
 import { SegmentList } from "@/components/SegmentList";
 import type { Segment } from "@/core/silence/segments";
+import { useWorkspaceStore } from "@/store/workspace";
 
 interface SelectionData {
   videoSrc: string;
@@ -25,36 +26,63 @@ export const SelectorView: React.FC = () => {
   const segments = exampleSegments;
   const videoSrc = VIDEO_SRC;
 
-  const [selectedSegments, setSelectedSegments] = useState<Set<number>>(
-    () => new Set(segments.map((s) => s.index))
+  // Derive videoId from videoSrc for store key
+  const videoId = useMemo(
+    () => videoSrc.replace(/^\//, "").replace(/\.[^.]+$/, ""),
+    [videoSrc]
   );
+
+  // Use persistent store for selections
+  const storedSelection = useWorkspaceStore(
+    (state) => state.selections[videoId]
+  );
+  const setSelection = useWorkspaceStore((state) => state.setSelection);
+  const toggleSegment = useWorkspaceStore((state) => state.toggleSegment);
+
+  // Convert array to Set for component compatibility
+  const selectedSegments = useMemo(() => {
+    // If no stored selection, default to all segments selected
+    if (!storedSelection) {
+      return new Set(segments.map((s) => s.index));
+    }
+    return new Set(storedSelection);
+  }, [storedSelection, segments]);
+
+  // Initialize selection on first load if not stored
+  useEffect(() => {
+    if (!storedSelection) {
+      setSelection(
+        videoId,
+        segments.map((s) => s.index)
+      );
+    }
+  }, [videoId, storedSelection, segments, setSelection]);
+
   const [activeSegmentIndex, setActiveSegmentIndex] = useState<number | null>(
     segments.length > 0 ? 0 : null
   );
 
-  const handleToggleSegment = useCallback((index: number) => {
-    setSelectedSegments((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) {
-        next.delete(index);
-      } else {
-        next.add(index);
-      }
-      return next;
-    });
-  }, []);
+  const handleToggleSegment = useCallback(
+    (index: number) => {
+      toggleSegment(videoId, index);
+    },
+    [videoId, toggleSegment]
+  );
 
   const handleSelectSegment = useCallback((index: number) => {
     setActiveSegmentIndex(index);
   }, []);
 
   const handleSelectAll = useCallback(() => {
-    setSelectedSegments(new Set(segments.map((s) => s.index)));
-  }, [segments]);
+    setSelection(
+      videoId,
+      segments.map((s) => s.index)
+    );
+  }, [videoId, segments, setSelection]);
 
   const handleDeselectAll = useCallback(() => {
-    setSelectedSegments(new Set());
-  }, []);
+    setSelection(videoId, []);
+  }, [videoId, setSelection]);
 
   const handleSave = useCallback(() => {
     const selectionData: SelectionData = {

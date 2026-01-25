@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import type { Video } from "@/components/VideoList";
+import { useWorkspaceStore } from "@/store/workspace";
 
 export const Route = createFileRoute("/pipeline")({
   component: PipelinePage,
@@ -34,17 +35,6 @@ interface PipelineState {
   rendered: boolean;
 }
 
-interface PipelineConfig {
-  thresholdDb: number;
-  minDurationSec: number;
-  paddingSec: number;
-}
-
-const DEFAULT_CONFIG: PipelineConfig = {
-  thresholdDb: -40,
-  minDurationSec: 0.5,
-  paddingSec: 0.05,
-};
 
 const STEPS: { key: PipelineStep; label: string; description: string }[] = [
   { key: "raw", label: "Raw", description: "Video original importado" },
@@ -93,8 +83,11 @@ function PipelinePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
-  const [config, setConfig] = useState<PipelineConfig>(DEFAULT_CONFIG);
   const [activeStep, setActiveStep] = useState<PipelineStep>("raw");
+
+  // Pipeline config from persistent store
+  const config = useWorkspaceStore((state) => state.pipelineConfig);
+  const setPipelineConfig = useWorkspaceStore((state) => state.setPipelineConfig);
 
   useEffect(() => {
     fetch("/videos.manifest.json")
@@ -353,10 +346,9 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                     type="number"
                                     value={config.thresholdDb}
                                     onChange={(e) =>
-                                      setConfig((c) => ({
-                                        ...c,
+                                      setPipelineConfig({
                                         thresholdDb: Number(e.target.value),
-                                      }))
+                                      })
                                     }
                                     className="mt-1"
                                   />
@@ -374,10 +366,9 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                     step="0.1"
                                     value={config.minDurationSec}
                                     onChange={(e) =>
-                                      setConfig((c) => ({
-                                        ...c,
+                                      setPipelineConfig({
                                         minDurationSec: Number(e.target.value),
-                                      }))
+                                      })
                                     }
                                     className="mt-1"
                                   />
@@ -399,10 +390,9 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                   step="0.01"
                                   value={config.paddingSec}
                                   onChange={(e) =>
-                                    setConfig((c) => ({
-                                      ...c,
+                                    setPipelineConfig({
                                       paddingSec: Number(e.target.value),
-                                    }))
+                                    })
                                   }
                                   className="mt-1"
                                 />
