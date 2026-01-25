@@ -12,6 +12,7 @@ import type { Video } from "@/components/VideoList";
 import { useWorkspaceStore } from "@/store/workspace";
 import { VideoSidebarSkeleton } from "@/components/VideoSidebarSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PipelineResetActions } from "@/components/PipelineResetActions";
 
 const API_URL = "http://localhost:3003";
 
@@ -330,6 +331,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
               <Badge variant="outline" className="text-sm">
                 {progressPercent}% completado
               </Badge>
+              <PipelineResetActions videoId={selectedVideo.id} disabled={isProcessing} />
               {isProcessing ? (
                 <Button
                   variant="destructive"
