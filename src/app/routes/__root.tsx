@@ -14,6 +14,7 @@ function RootLayout() {
         <nav className="flex gap-1">
           <NavLink to="/">Media</NavLink>
           <NavLink to="/pipeline">Pipeline</NavLink>
+          <NavLink to="/batch">Batch</NavLink>
           <NavLink to="/studio">Studio</NavLink>
         </nav>
       </header>

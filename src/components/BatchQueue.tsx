@@ -24,27 +24,39 @@ interface BatchQueueProps {
   className?: string;
   onAddVideos?: () => void;
   onOpenSettings?: () => void;
+  onStartProcessing?: () => void;
+  onPauseProcessing?: () => void;
+  onResumeProcessing?: () => void;
+  onStopProcessing?: () => void;
 }
 
 export function BatchQueue({
   className,
   onAddVideos,
   onOpenSettings,
+  onStartProcessing,
+  onPauseProcessing,
+  onResumeProcessing,
+  onStopProcessing,
 }: BatchQueueProps) {
   const {
     queue,
     isProcessing,
     isPaused,
-    maxParallel,
     reorderQueue,
     toggleEnabled,
     removeFromQueue,
     clearCompleted,
-    startProcessing,
-    pauseProcessing,
-    resumeProcessing,
-    stopProcessing,
+    startProcessing: storeStartProcessing,
+    pauseProcessing: storePauseProcessing,
+    resumeProcessing: storeResumeProcessing,
+    stopProcessing: storeStopProcessing,
   } = useBatchStore();
+
+  const startProcessing = onStartProcessing ?? storeStartProcessing;
+  const pauseProcessing = onPauseProcessing ?? storePauseProcessing;
+  const resumeProcessing = onResumeProcessing ?? storeResumeProcessing;
+  const stopProcessing = onStopProcessing ?? storeStopProcessing;
 
   const sensors = useSensors(
     useSensor(PointerSensor),
