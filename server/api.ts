@@ -586,6 +586,100 @@ async function handleRequest(req: Request): Promise<Response> {
     );
   }
 
+  // Reset pipeline data endpoint
+  if (path === "/api/reset" && req.method === "POST") {
+    try {
+      const body = await req.json();
+      const { videoId, phases } = body as {
+        videoId: string;
+        phases: ("cut" | "captions" | "metadata" | "all")[];
+      };
+
+      if (!videoId) {
+        return new Response(JSON.stringify({ error: "Missing videoId" }), {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      const deleted: string[] = [];
+      const videosDir = join(process.cwd(), "public", "videos");
+      const subsDir = join(process.cwd(), "public", "subs");
+      const metadataDir = join(process.cwd(), "public", "metadata");
+
+      // Find the video in manifest to get filename
+      const manifestPath = join(process.cwd(), "public", "videos.manifest.json");
+      let manifest: { videos: Array<{ id: string; filename: string; title: string; size: number; hasCaptions: boolean }> } = { videos: [] };
+
+      if (existsSync(manifestPath)) {
+        manifest = JSON.parse(await Bun.file(manifestPath).text());
+      }
+
+      const video = manifest.videos.find((v) => v.id === videoId);
+      if (!video) {
+        return new Response(JSON.stringify({ error: `Video not found: ${videoId}` }), {
+          status: 404,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      const ext = extname(video.filename);
+      const nameWithoutExt = basename(video.filename, ext);
+
+      const shouldReset = (phase: "cut" | "captions" | "metadata") =>
+        phases.includes(phase) || phases.includes("all");
+
+      // Delete cut video
+      if (shouldReset("cut")) {
+        const cutVideoPath = join(videosDir, `${nameWithoutExt}-cut${ext}`);
+        if (existsSync(cutVideoPath)) {
+          await Bun.write(cutVideoPath, ""); // Clear file first
+          const { unlinkSync } = await import("node:fs");
+          unlinkSync(cutVideoPath);
+          deleted.push(`videos/${nameWithoutExt}-cut${ext}`);
+        }
+      }
+
+      // Delete captions/subs
+      if (shouldReset("captions")) {
+        const subsJsonPath = join(subsDir, `${nameWithoutExt}-cut.json`);
+        if (existsSync(subsJsonPath)) {
+          const { unlinkSync } = await import("node:fs");
+          unlinkSync(subsJsonPath);
+          deleted.push(`subs/${nameWithoutExt}-cut.json`);
+        }
+
+        // Update manifest hasCaptions
+        const videoIndex = manifest.videos.findIndex((v) => v.id === videoId);
+        if (videoIndex >= 0) {
+          manifest.videos[videoIndex].hasCaptions = false;
+          await Bun.write(manifestPath, JSON.stringify(manifest, null, 2));
+        }
+      }
+
+      // Delete metadata
+      if (shouldReset("metadata")) {
+        const metadataJsonPath = join(metadataDir, `${nameWithoutExt}-cut.json`);
+        if (existsSync(metadataJsonPath)) {
+          const { unlinkSync } = await import("node:fs");
+          unlinkSync(metadataJsonPath);
+          deleted.push(`metadata/${nameWithoutExt}-cut.json`);
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, deleted }),
+        { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return new Response(JSON.stringify({ error: message }), {
+        status: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   // Waveform extraction endpoint
   if (path === "/api/waveform" && req.method === "POST") {
     try {
@@ -683,7 +777,10 @@ console.log("  POST /api/batch/resume - Resume batch processing");
 console.log("  GET  /api/batch/status - Get batch processing status");
 console.log("");
 console.log("Audio:");
-console.log("  POST /api/waveform     - Extract waveform from video\n");
+console.log("  POST /api/waveform     - Extract waveform from video");
+console.log("");
+console.log("Pipeline reset:");
+console.log("  POST /api/reset        - Reset pipeline phases (cut, captions, metadata)\n");
 
 Bun.serve({
   port: PORT,

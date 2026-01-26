@@ -240,26 +240,47 @@ function PipelinePage() {
     }
   }, []);
 
-  useEffect(() => {
-    fetch("/videos.manifest.json")
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to load video manifest");
-        return res.json() as Promise<VideoManifest>;
-      })
-      .then((data) => {
-        setVideos(data.videos);
-        if (data.videos.length > 0) {
-          setSelectedVideo(data.videos[0]);
+  // Load videos from manifest - extracted to allow refresh after reset
+  const loadVideos = useCallback(async (isInitialLoad = false) => {
+    try {
+      const res = await fetch("/videos.manifest.json");
+      if (!res.ok) throw new Error("Failed to load video manifest");
+      const data = (await res.json()) as VideoManifest;
+
+      setVideos(data.videos);
+
+      // On initial load, select first video; on refresh, update selected video data
+      if (isInitialLoad && data.videos.length > 0) {
+        setSelectedVideo(data.videos[0]);
+      } else if (selectedVideo) {
+        // Update selectedVideo with fresh data from manifest
+        const updated = data.videos.find((v) => v.id === selectedVideo.id);
+        if (updated) {
+          setSelectedVideo(updated);
         }
+      }
+
+      if (isInitialLoad) {
         setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      if (isInitialLoad) {
+        setError(message);
         setLoading(false);
-        toast.error("Error loading videos", {
-          description: err.message,
-        });
-      });
+      }
+      toast.error("Error loading videos", { description: message });
+    }
+  }, [selectedVideo]);
+
+  // Refresh callback for reset actions
+  const handleRefresh = useCallback(() => {
+    loadVideos(false);
+  }, [loadVideos]);
+
+  useEffect(() => {
+    loadVideos(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const pipelineState = useMemo(() => {
@@ -367,7 +388,12 @@ bunx remotion render src/index.ts CaptionedVideo \\
               <Badge variant="outline" className="text-sm">
                 {progressPercent}% completado
               </Badge>
-              <PipelineResetActions videoId={selectedVideo.id} disabled={isProcessing} />
+              <PipelineResetActions
+                videoId={selectedVideo.id}
+                disabled={isProcessing}
+                hasCaptions={selectedVideo.hasCaptions}
+                onReset={handleRefresh}
+              />
               {isProcessing ? (
                 <Button
                   variant="destructive"
