@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import { persist } from "zustand/middleware";
 import { temporal, type TemporalState } from "zundo";
 import { nanoid } from "nanoid";
@@ -162,8 +163,8 @@ function createEmptyTimeline(videoId: string): TimelineState {
 }
 
 export const useTimelineStore = create<TimelineStore>()(
-  persist(
-    temporal(
+  temporal(
+    persist(
       (set, get) => ({
         // Initial state
         playheadMs: 0,
@@ -568,29 +569,29 @@ export const useTimelineStore = create<TimelineStore>()(
         },
       }),
       {
-        // Undo/redo config - only track editable content changes
-        limit: 50,
+        name: "reelforge-timeline",
+        // Only persist timelines data, not transient view state
         partialize: (state) => ({
           timelines: state.timelines,
         }),
-        equality: (pastState, currentState) =>
-          JSON.stringify(pastState) === JSON.stringify(currentState),
       }
     ),
     {
-      name: "reelforge-timeline",
-      // Only persist timelines data, not transient view state
+      // Undo/redo config - only track editable content changes
+      limit: 50,
       partialize: (state) => ({
         timelines: state.timelines,
       }),
+      equality: (pastState, currentState) =>
+        JSON.stringify(pastState) === JSON.stringify(currentState),
     }
   )
 );
 
-// Temporal store hook for undo/redo
+// Temporal store hook for undo/redo (reactive)
 export const useTimelineTemporalStore = <T>(
   selector: (state: TemporalState<Pick<TimelineStore, "timelines">>) => T
-) => useTimelineStore.temporal(selector);
+) => useStoreWithEqualityFn(useTimelineStore.temporal, selector);
 
 // Convenience hooks for undo/redo
 export const useTimelineUndo = () => useTimelineTemporalStore((state) => state.undo);

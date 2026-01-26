@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import { persist } from "zustand/middleware";
 import { temporal, type TemporalState } from "zundo";
 
@@ -172,8 +173,8 @@ let profileIdCounter = 0;
 const generateProfileId = () => `profile-${Date.now()}-${++profileIdCounter}`;
 
 export const useWorkspaceStore = create<WorkspaceStore>()(
-  persist(
-    temporal(
+  temporal(
+    persist(
       (set, get) => ({
         // Initial state
         selections: {},
@@ -357,29 +358,29 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         },
       }),
       {
-        // Limit history to 50 actions
-        limit: 50,
-        // Only track changes to selections and takeSelections (user-reversible actions)
-        // Exclude pipelineConfig and renderHistory from undo/redo
-        partialize: (state) => ({
-          selections: state.selections,
-          takeSelections: state.takeSelections,
-        }),
-        // Equality check to avoid duplicate history entries
-        equality: (pastState, currentState) =>
-          JSON.stringify(pastState) === JSON.stringify(currentState),
+        name: "reelforge-workspace",
       }
     ),
     {
-      name: "reelforge-workspace",
+      // Limit history to 50 actions
+      limit: 50,
+      // Only track changes to selections and takeSelections (user-reversible actions)
+      // Exclude pipelineConfig and renderHistory from undo/redo
+      partialize: (state) => ({
+        selections: state.selections,
+        takeSelections: state.takeSelections,
+      }),
+      // Equality check to avoid duplicate history entries
+      equality: (pastState, currentState) =>
+        JSON.stringify(pastState) === JSON.stringify(currentState),
     }
   )
 );
 
-// Temporal store hook for undo/redo
+// Temporal store hook for undo/redo (reactive)
 export const useTemporalStore = <T>(
   selector: (state: TemporalState<Pick<WorkspaceStore, "selections" | "takeSelections">>) => T
-) => useWorkspaceStore.temporal(selector);
+) => useStoreWithEqualityFn(useWorkspaceStore.temporal, selector);
 
 // Convenience hooks for undo/redo
 export const useUndo = () => useTemporalStore((state) => state.undo);
