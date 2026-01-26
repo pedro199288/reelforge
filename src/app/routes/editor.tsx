@@ -40,6 +40,9 @@ import {
   useVideoSegments,
   useVideoSilences,
 } from "@/store/timeline";
+import { useScript } from "@/store/workspace";
+import { analyzeSemanticCuts, semanticToSegments, getSemanticStats } from "@/core/semantic";
+import type { Caption } from "@/core/script/align";
 
 interface VideoManifest {
   videos: Video[];
@@ -49,6 +52,8 @@ interface SilenceDetectionParams {
   thresholdDb: number;
   minDurationSec: number;
 }
+
+type CutMode = "silence" | "semantic";
 
 export const Route = createFileRoute("/editor")({
   component: EditorPage,
@@ -71,6 +76,13 @@ function EditorPage() {
     thresholdDb: -40,
     minDurationSec: 0.5,
   });
+  const [cutMode, setCutMode] = useState<CutMode>("silence");
+  const [captions, setCaptions] = useState<Caption[]>([]);
+  const [semanticStats, setSemanticStats] = useState<{
+    sentenceCount: number;
+    semanticCutCount: number;
+    naturalPauseCount: number;
+  } | null>(null);
 
   // Refs
   const contentRef = useRef<HTMLDivElement>(null);
@@ -94,6 +106,7 @@ function EditorPage() {
   const selection = useTimelineSelection();
   const segments = useVideoSegments(selectedVideo?.id ?? "");
   const silences = useVideoSilences(selectedVideo?.id ?? "");
+  const scriptState = useScript(selectedVideo?.id ?? "");
 
   // Store actions
   const {
@@ -107,6 +120,7 @@ function EditorPage() {
     setActiveVideo,
     select,
     importSilences,
+    importSemanticSegments,
     toggleSegment,
     resizeSegment,
     clearSegments,
@@ -119,6 +133,27 @@ function EditorPage() {
     }
     return () => setActiveVideo(null);
   }, [selectedVideo, setActiveVideo]);
+
+  // Load captions for selected video
+  useEffect(() => {
+    if (!selectedVideo) {
+      setCaptions([]);
+      return;
+    }
+
+    const basename = selectedVideo.filename.replace(/\.[^/.]+$/, "");
+    fetch(`/videos/${basename}.json`)
+      .then((res) => {
+        if (!res.ok) throw new Error("No captions found");
+        return res.json() as Promise<Caption[]>;
+      })
+      .then((data) => {
+        setCaptions(data);
+      })
+      .catch(() => {
+        setCaptions([]);
+      });
+  }, [selectedVideo]);
 
   // Load video manifest
   useEffect(() => {
@@ -232,7 +267,24 @@ function EditorPage() {
   const handleDetectSilences = useCallback(async () => {
     if (!selectedVideo || !videoDuration) return;
 
+    // Validate semantic mode requirements
+    if (cutMode === "semantic") {
+      if (!scriptState?.rawScript) {
+        toast.error("Modo semántico requiere guión", {
+          description: "Importa un guión en el panel de Script Alignment primero",
+        });
+        return;
+      }
+      if (captions.length === 0) {
+        toast.error("Modo semántico requiere transcripción", {
+          description: "Genera los captions primero con Whisper",
+        });
+        return;
+      }
+    }
+
     setDetecting(true);
+    setSemanticStats(null);
 
     try {
       const response = await fetch("/api/detect-silences", {
@@ -250,12 +302,34 @@ function EditorPage() {
       }
 
       const data = await response.json();
+      const durationMs = videoDuration * 1000;
 
-      importSilences(selectedVideo.id, data.silences, videoDuration * 1000);
+      if (cutMode === "semantic" && scriptState?.rawScript && captions.length > 0) {
+        // Semantic mode: only cut between sentences
+        const analysis = analyzeSemanticCuts(
+          scriptState.rawScript,
+          captions,
+          data.silences,
+          { minSilenceDurationMs: detectionParams.minDurationSec * 1000 }
+        );
 
-      toast.success("Silencios detectados", {
-        description: `${data.silences.length} silencios encontrados`,
-      });
+        const semanticSegs = semanticToSegments(analysis, durationMs);
+        const stats = getSemanticStats(analysis);
+
+        importSemanticSegments(selectedVideo.id, semanticSegs, data.silences);
+        setSemanticStats(stats);
+
+        toast.success("Cortes semánticos generados", {
+          description: `${stats.semanticCutCount} cortes entre oraciones, ${stats.naturalPauseCount} pausas naturales conservadas`,
+        });
+      } else {
+        // Standard silence mode: cut all silences
+        importSilences(selectedVideo.id, data.silences, durationMs);
+
+        toast.success("Silencios detectados", {
+          description: `${data.silences.length} silencios encontrados`,
+        });
+      }
     } catch (error) {
       toast.error("Error detectando silencios", {
         description: error instanceof Error ? error.message : "Unknown error",
@@ -263,7 +337,7 @@ function EditorPage() {
     } finally {
       setDetecting(false);
     }
-  }, [selectedVideo, videoDuration, detectionParams, importSilences]);
+  }, [selectedVideo, videoDuration, detectionParams, cutMode, scriptState, captions, importSilences, importSemanticSegments]);
 
   // Handle scroll
   const handleScroll = useCallback(
@@ -633,7 +707,43 @@ function EditorPage() {
         {/* Detection settings */}
         <div className="border-t p-4 space-y-3">
           <h3 className="text-sm font-medium">Configuracion</h3>
-          <div className="space-y-2">
+          <div className="space-y-3">
+            {/* Cut mode selector */}
+            <div className="space-y-1">
+              <span className="text-xs text-muted-foreground">Modo de corte</span>
+              <div className="flex gap-1">
+                <Button
+                  variant={cutMode === "silence" ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setCutMode("silence")}
+                  className="flex-1 h-7 text-xs"
+                >
+                  Silencios
+                </Button>
+                <Button
+                  variant={cutMode === "semantic" ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setCutMode("semantic")}
+                  className="flex-1 h-7 text-xs"
+                  disabled={!scriptState?.rawScript || captions.length === 0}
+                  title={
+                    !scriptState?.rawScript
+                      ? "Requiere guión"
+                      : captions.length === 0
+                        ? "Requiere transcripción"
+                        : "Cortar solo entre oraciones"
+                  }
+                >
+                  Semántico
+                </Button>
+              </div>
+              {cutMode === "semantic" && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Solo corta entre oraciones del guión
+                </p>
+              )}
+            </div>
+
             <label className="flex flex-col gap-1">
               <span className="text-xs text-muted-foreground">
                 Umbral (dB): {detectionParams.thresholdDb}
@@ -695,6 +805,23 @@ function EditorPage() {
                 <span>Ahorro:</span>
                 <span className="text-primary">{stats.savingsPercent}%</span>
               </div>
+              {semanticStats && (
+                <>
+                  <div className="border-t my-2" />
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Oraciones:</span>
+                    <span>{semanticStats.sentenceCount}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Cortes entre oraciones:</span>
+                    <span className="text-red-600">{semanticStats.semanticCutCount}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Pausas conservadas:</span>
+                    <span className="text-green-600">{semanticStats.naturalPauseCount}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}

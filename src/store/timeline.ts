@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { persist } from "zustand/middleware";
 import { temporal, type TemporalState } from "zundo";
+import { shallow } from "zustand/shallow";
 import { nanoid } from "nanoid";
 import type { AlignedEvent, ZoomEvent, HighlightEvent } from "@/core/script/align";
 import type { SilenceRange } from "@/core/silence/detect";
@@ -123,6 +124,11 @@ interface TimelineStore {
     videoId: string,
     silences: SilenceRange[],
     durationMs: number
+  ) => void;
+  importSemanticSegments: (
+    videoId: string,
+    segments: Array<{ startMs: number; endMs: number }>,
+    silences: SilenceRange[]
   ) => void;
   toggleSegment: (videoId: string, id: string) => void;
   resizeSegment: (
@@ -411,6 +417,30 @@ export const useTimelineStore = create<TimelineStore>()(
           });
         },
 
+        // Import segments from semantic analysis (cuts only between sentences)
+        importSemanticSegments: (videoId, semanticSegments, silences) => {
+          const segments: TimelineSegment[] = semanticSegments.map((seg) => ({
+            id: nanoid(8),
+            startMs: seg.startMs,
+            endMs: seg.endMs,
+            enabled: true,
+          }));
+
+          set((state) => {
+            const timeline = state.timelines[videoId] || createEmptyTimeline(videoId);
+            return {
+              timelines: {
+                ...state.timelines,
+                [videoId]: {
+                  ...timeline,
+                  segments: segments.sort((a, b) => a.startMs - b.startMs),
+                  silences,
+                },
+              },
+            };
+          });
+        },
+
         toggleSegment: (videoId, id) =>
           set((state) => {
             const timeline = state.timelines[videoId];
@@ -611,50 +641,88 @@ export const useViewportStart = () => useTimelineStore((state) => state.viewport
 export const useTimelineSelection = () => useTimelineStore((state) => state.selection);
 export const useActiveVideoId = () => useTimelineStore((state) => state.activeVideoId);
 
+// Stable empty values to avoid creating new references on each render
+const EMPTY_TIMELINE: TimelineState = {
+  videoId: "",
+  zooms: [],
+  highlights: [],
+  segments: [],
+  silences: [],
+};
+const EMPTY_ZOOMS: TimelineZoom[] = [];
+const EMPTY_HIGHLIGHTS: TimelineHighlight[] = [];
+const EMPTY_SEGMENTS: TimelineSegment[] = [];
+const EMPTY_SILENCES: SilenceRange[] = [];
+
 export const useVideoTimeline = (videoId: string) =>
-  useTimelineStore((state) => state.timelines[videoId] || createEmptyTimeline(videoId));
+  useStoreWithEqualityFn(
+    useTimelineStore,
+    (state) => state.timelines[videoId] || EMPTY_TIMELINE,
+    shallow
+  );
 
 export const useVideoZooms = (videoId: string) =>
-  useTimelineStore((state) => state.timelines[videoId]?.zooms || []);
+  useStoreWithEqualityFn(
+    useTimelineStore,
+    (state) => state.timelines[videoId]?.zooms || EMPTY_ZOOMS,
+    shallow
+  );
 
 export const useVideoHighlights = (videoId: string) =>
-  useTimelineStore((state) => state.timelines[videoId]?.highlights || []);
+  useStoreWithEqualityFn(
+    useTimelineStore,
+    (state) => state.timelines[videoId]?.highlights || EMPTY_HIGHLIGHTS,
+    shallow
+  );
 
 export const useVideoSegments = (videoId: string) =>
-  useTimelineStore((state) => state.timelines[videoId]?.segments || []);
+  useStoreWithEqualityFn(
+    useTimelineStore,
+    (state) => state.timelines[videoId]?.segments || EMPTY_SEGMENTS,
+    shallow
+  );
 
 export const useVideoSilences = (videoId: string) =>
-  useTimelineStore((state) => state.timelines[videoId]?.silences || []);
+  useStoreWithEqualityFn(
+    useTimelineStore,
+    (state) => state.timelines[videoId]?.silences || EMPTY_SILENCES,
+    shallow
+  );
 
 // Actions hooks (stable references)
 export const useTimelineActions = () =>
-  useTimelineStore((state) => ({
-    setPlayhead: state.setPlayhead,
-    play: state.play,
-    pause: state.pause,
-    togglePlayback: state.togglePlayback,
-    setZoomLevel: state.setZoomLevel,
-    scrollTo: state.scrollTo,
-    zoomIn: state.zoomIn,
-    zoomOut: state.zoomOut,
-    fitToView: state.fitToView,
-    setActiveVideo: state.setActiveVideo,
-    addZoom: state.addZoom,
-    updateZoom: state.updateZoom,
-    deleteZoom: state.deleteZoom,
-    moveZoom: state.moveZoom,
-    addHighlight: state.addHighlight,
-    updateHighlight: state.updateHighlight,
-    deleteHighlight: state.deleteHighlight,
-    select: state.select,
-    clearSelection: state.clearSelection,
-    deleteSelected: state.deleteSelected,
-    importSilences: state.importSilences,
-    toggleSegment: state.toggleSegment,
-    resizeSegment: state.resizeSegment,
-    clearTimeline: state.clearTimeline,
-    clearSegments: state.clearSegments,
-    importFromEvents: state.importFromEvents,
-    exportToEvents: state.exportToEvents,
-    getTimeline: state.getTimeline,
-  }));
+  useStoreWithEqualityFn(
+    useTimelineStore,
+    (state) => ({
+      setPlayhead: state.setPlayhead,
+      play: state.play,
+      pause: state.pause,
+      togglePlayback: state.togglePlayback,
+      setZoomLevel: state.setZoomLevel,
+      scrollTo: state.scrollTo,
+      zoomIn: state.zoomIn,
+      zoomOut: state.zoomOut,
+      fitToView: state.fitToView,
+      setActiveVideo: state.setActiveVideo,
+      addZoom: state.addZoom,
+      updateZoom: state.updateZoom,
+      deleteZoom: state.deleteZoom,
+      moveZoom: state.moveZoom,
+      addHighlight: state.addHighlight,
+      updateHighlight: state.updateHighlight,
+      deleteHighlight: state.deleteHighlight,
+      select: state.select,
+      clearSelection: state.clearSelection,
+      deleteSelected: state.deleteSelected,
+      importSilences: state.importSilences,
+      importSemanticSegments: state.importSemanticSegments,
+      toggleSegment: state.toggleSegment,
+      resizeSegment: state.resizeSegment,
+      clearTimeline: state.clearTimeline,
+      clearSegments: state.clearSegments,
+      importFromEvents: state.importFromEvents,
+      exportToEvents: state.exportToEvents,
+      getTimeline: state.getTimeline,
+    }),
+    shallow
+  );
