@@ -158,14 +158,14 @@ function BatchPage() {
 
                   {/* Threshold dB */}
                   <div className="space-y-2">
-                    <Label>Umbral de silencio: {globalConfig.thresholdDb} dB</Label>
+                    <Label>Umbral de silencio: {globalConfig.silence.thresholdDb} dB</Label>
                     <Slider
-                      value={[globalConfig.thresholdDb]}
+                      value={[globalConfig.silence.thresholdDb]}
                       min={-60}
                       max={-20}
                       step={1}
                       onValueChange={([value]) =>
-                        setGlobalConfig({ thresholdDb: value })
+                        setGlobalConfig({ silence: { ...globalConfig.silence, thresholdDb: value } })
                       }
                     />
                     <p className="text-xs text-muted-foreground">
@@ -176,15 +176,15 @@ function BatchPage() {
                   {/* Min Duration */}
                   <div className="space-y-2">
                     <Label>
-                      Duración mínima: {globalConfig.minDurationSec}s
+                      Duración mínima: {globalConfig.silence.minDurationSec}s
                     </Label>
                     <Slider
-                      value={[globalConfig.minDurationSec]}
+                      value={[globalConfig.silence.minDurationSec]}
                       min={0.1}
                       max={2}
                       step={0.1}
                       onValueChange={([value]) =>
-                        setGlobalConfig({ minDurationSec: value })
+                        setGlobalConfig({ silence: { ...globalConfig.silence, minDurationSec: value } })
                       }
                     />
                     <p className="text-xs text-muted-foreground">
@@ -194,14 +194,14 @@ function BatchPage() {
 
                   {/* Padding */}
                   <div className="space-y-2">
-                    <Label>Padding: {globalConfig.paddingSec}s</Label>
+                    <Label>Padding: {globalConfig.silence.paddingSec}s</Label>
                     <Slider
-                      value={[globalConfig.paddingSec]}
+                      value={[globalConfig.silence.paddingSec]}
                       min={0}
                       max={0.5}
                       step={0.01}
                       onValueChange={([value]) =>
-                        setGlobalConfig({ paddingSec: value })
+                        setGlobalConfig({ silence: { ...globalConfig.silence, paddingSec: value } })
                       }
                     />
                     <p className="text-xs text-muted-foreground">

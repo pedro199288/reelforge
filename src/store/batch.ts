@@ -54,10 +54,22 @@ interface BatchStore {
 }
 
 const DEFAULT_GLOBAL_CONFIG: PipelineConfig = {
-  thresholdDb: -40,
-  minDurationSec: 0.5,
-  paddingSec: 0.05,
-  autoSelectTakes: false,
+  silence: {
+    thresholdDb: -40,
+    minDurationSec: 0.5,
+    paddingSec: 0.05,
+  },
+  takes: {
+    minSimilarity: 80,
+    autoSelectBest: false,
+    selectionCriteria: "clarity",
+  },
+  output: {
+    maxDurationSec: null,
+    resolution: "1080x1920",
+    fps: 30,
+    quality: "high",
+  },
 };
 
 let idCounter = 0;

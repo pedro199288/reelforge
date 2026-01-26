@@ -2,11 +2,43 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { temporal, type TemporalState } from "zundo";
 
-export interface PipelineConfig {
+export interface SilenceDetectionConfig {
   thresholdDb: number;
   minDurationSec: number;
   paddingSec: number;
-  autoSelectTakes: boolean;
+}
+
+export type TakeSelectionCriteria = "clarity" | "fluency" | "energy" | "duration";
+
+export interface TakeDetectionConfig {
+  minSimilarity: number;
+  autoSelectBest: boolean;
+  selectionCriteria: TakeSelectionCriteria;
+}
+
+export type Resolution = "1080x1920" | "1080x1080" | "1920x1080";
+export type FPS = 24 | 30 | 60;
+export type RenderQuality = "low" | "medium" | "high";
+
+export interface OutputConfig {
+  maxDurationSec: number | null;
+  resolution: Resolution;
+  fps: FPS;
+  quality: RenderQuality;
+}
+
+export interface PipelineConfig {
+  silence: SilenceDetectionConfig;
+  takes: TakeDetectionConfig;
+  output: OutputConfig;
+  /** @deprecated Use silence.thresholdDb */
+  thresholdDb?: number;
+  /** @deprecated Use silence.minDurationSec */
+  minDurationSec?: number;
+  /** @deprecated Use silence.paddingSec */
+  paddingSec?: number;
+  /** @deprecated Use takes.autoSelectBest */
+  autoSelectTakes?: boolean;
 }
 
 export interface TakeSelection {
@@ -55,10 +87,22 @@ interface WorkspaceStore {
 }
 
 const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
-  thresholdDb: -40,
-  minDurationSec: 0.5,
-  paddingSec: 0.05,
-  autoSelectTakes: false,
+  silence: {
+    thresholdDb: -40,
+    minDurationSec: 0.5,
+    paddingSec: 0.05,
+  },
+  takes: {
+    minSimilarity: 80,
+    autoSelectBest: false,
+    selectionCriteria: "clarity",
+  },
+  output: {
+    maxDurationSec: null,
+    resolution: "1080x1920",
+    fps: 30,
+    quality: "high",
+  },
 };
 
 export const useWorkspaceStore = create<WorkspaceStore>()(

@@ -1,13 +1,15 @@
+import { useState } from "react";
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { Toaster } from "@/components/ui/sonner";
 import { GlobalProgressBar } from "@/components/GlobalProgressBar";
 import { QuickActionsPanel } from "@/components/QuickActionsPanel";
 import { CommandPalette } from "@/components/CommandPalette";
+import { ConfigPanel } from "@/components/ConfigPanel";
 import { useUndoRedoKeyboard } from "@/hooks/useUndoRedoKeyboard";
 import { useNavigationShortcuts } from "@/hooks/useNavigationShortcuts";
 import { useTheme, useSetTheme } from "@/hooks/useTheme";
 import { Button } from "@/components/ui/button";
-import { Sun, Moon, Monitor, Command } from "lucide-react";
+import { Sun, Moon, Monitor, Command, Settings } from "lucide-react";
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -41,6 +43,7 @@ function RootLayout() {
   // Enable global keyboard shortcuts
   useUndoRedoKeyboard();
   useNavigationShortcuts();
+  const [configOpen, setConfigOpen] = useState(false);
 
   return (
     <div className="flex flex-col h-screen">
@@ -72,6 +75,15 @@ function RootLayout() {
               <span className="text-xs">⌘</span>K
             </kbd>
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setConfigOpen(true)}
+            className="h-8 w-8 p-0"
+            title="Configuracion"
+          >
+            <Settings className="h-4 w-4" />
+          </Button>
           <ThemeToggle />
         </div>
       </header>
@@ -82,6 +94,7 @@ function RootLayout() {
       <GlobalProgressBar />
       <QuickActionsPanel />
       <CommandPalette />
+      <ConfigPanel open={configOpen} onClose={() => setConfigOpen(false)} />
       <Toaster position="bottom-right" richColors />
     </div>
   );
