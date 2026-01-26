@@ -44,6 +44,10 @@ function StudioPage() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [captions, setCaptions] = useState<Caption[]>([]);
 
+  // Refs to prevent sync loops
+  const isSyncingFromPlayer = useRef(false);
+  const isSyncingToPlayer = useRef(false);
+
   const { highlightColor, setHighlightColor, fontFamily, setFontFamily } = useSubtitleStore();
 
   // Timeline store integration
@@ -176,11 +180,18 @@ function StudioPage() {
     const player = playerRef.current;
     if (!player || !videoDuration) return;
 
+    // Skip if this change came from the player itself
+    if (isSyncingFromPlayer.current) {
+      isSyncingFromPlayer.current = false;
+      return;
+    }
+
     const targetFrame = Math.round((timelinePlayhead / 1000) * fps);
     const currentFrame = player.getCurrentFrame();
 
     // Only seek if difference is significant (avoid feedback loops)
     if (Math.abs(targetFrame - currentFrame) > 1) {
+      isSyncingToPlayer.current = true;
       player.seekTo(targetFrame);
     }
   }, [timelinePlayhead, videoDuration, fps]);
@@ -205,6 +216,7 @@ function StudioPage() {
     const handleFrameUpdate = () => {
       const currentFrame = player.getCurrentFrame();
       const currentMs = (currentFrame / fps) * 1000;
+      isSyncingFromPlayer.current = true;
       setPlayhead(currentMs);
     };
 
@@ -249,8 +261,14 @@ function StudioPage() {
       timelinePause();
     };
     const onSeeked = () => {
+      // Skip if this seek was initiated from the store
+      if (isSyncingToPlayer.current) {
+        isSyncingToPlayer.current = false;
+        return;
+      }
       const frame = player.getCurrentFrame();
       const ms = (frame / fps) * 1000;
+      isSyncingFromPlayer.current = true;
       setPlayhead(ms);
     };
 

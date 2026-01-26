@@ -76,6 +76,10 @@ function EditorPage() {
   const contentRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  // Refs to prevent sync loops
+  const isSyncingFromVideo = useRef(false);
+  const isSyncingToVideo = useRef(false);
+
   // Waveform data
   const videoPath = selectedVideo ? `public/${selectedVideo.filename}` : null;
   const { data: waveformData, loading: waveformLoading } = useWaveform(videoPath, {
@@ -166,6 +170,8 @@ function EditorPage() {
     if (!video || !videoDuration) return;
 
     const handleTimeUpdate = () => {
+      // Mark that this update is coming from the video
+      isSyncingFromVideo.current = true;
       const ms = video.currentTime * 1000;
       setPlayhead(ms);
     };
@@ -179,8 +185,15 @@ function EditorPage() {
     const video = videoRef.current;
     if (!video || !videoDuration) return;
 
+    // Skip if this change came from the video itself
+    if (isSyncingFromVideo.current) {
+      isSyncingFromVideo.current = false;
+      return;
+    }
+
     const targetTime = playheadMs / 1000;
     if (Math.abs(video.currentTime - targetTime) > 0.1) {
+      isSyncingToVideo.current = true;
       video.currentTime = targetTime;
     }
   }, [playheadMs, videoDuration]);
