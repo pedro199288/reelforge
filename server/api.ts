@@ -779,6 +779,62 @@ async function handleRequest(req: Request): Promise<Response> {
     }
   }
 
+  // POST /api/timeline/save - Save zoom events to .zoom.json file
+  if (path === "/api/timeline/save" && req.method === "POST") {
+    try {
+      const body = await req.json();
+      const { videoId, filename, events } = body as {
+        videoId: string;
+        filename?: string; // Optional: base name of cut video (e.g., "sample-video-cut")
+        events: Array<{
+          type: "zoom" | "highlight";
+          // Zoom fields
+          style?: "punch" | "slow";
+          timestampMs?: number;
+          durationMs?: number;
+          // Highlight fields
+          word?: string;
+          startMs?: number;
+          endMs?: number;
+          confidence: number;
+        }>;
+      };
+
+      if (!videoId || !Array.isArray(events)) {
+        return new Response(JSON.stringify({ error: "Missing videoId or events" }), {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      // Determine base name for the zoom file
+      // If filename provided, use it; otherwise derive from videoId
+      const baseName = filename || `${videoId}-cut`;
+
+      // Save to public/videos/ alongside the cut video
+      const videosDir = join(process.cwd(), "public", "videos");
+      if (!existsSync(videosDir)) {
+        mkdirSync(videosDir, { recursive: true });
+      }
+
+      const zoomPath = join(videosDir, `${baseName}.zoom.json`);
+      await Bun.write(zoomPath, JSON.stringify(events, null, 2));
+
+      return new Response(JSON.stringify({
+        success: true,
+        path: `videos/${baseName}.zoom.json`,
+        eventsCount: events.length,
+      }), {
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: String(error) }), {
+        status: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   // Pipeline individual step endpoints
   // GET /api/pipeline/status - Get pipeline status for a video
   if (path === "/api/pipeline/status" && req.method === "GET") {
@@ -1129,6 +1185,7 @@ console.log("Pipeline steps:");
 console.log("  GET  /api/pipeline/status  - Get pipeline status for a video");
 console.log("  POST /api/pipeline/step    - Execute single step (SSE stream)");
 console.log("  GET  /api/pipeline/result  - Get result of a step");
+console.log("  POST /api/timeline/save    - Save zoom events to .zoom.json");
 console.log("");
 console.log("Audio:");
 console.log("  POST /api/waveform     - Extract waveform from video");

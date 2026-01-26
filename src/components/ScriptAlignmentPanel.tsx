@@ -18,6 +18,7 @@ import { toast } from "sonner";
 interface ScriptAlignmentPanelProps {
   videoId: string;
   captions: Caption[];
+  cutFilename?: string; // Base name of cut video file (e.g., "sample-video-cut")
 }
 
 function formatTime(ms: number): string {
@@ -30,12 +31,16 @@ function formatTime(ms: number): string {
 export function ScriptAlignmentPanel({
   videoId,
   captions,
+  cutFilename,
 }: ScriptAlignmentPanelProps) {
   const scriptState = useScript(videoId);
   const setScript = useWorkspaceStore((state) => state.setScript);
   const clearScript = useWorkspaceStore((state) => state.clearScript);
   const importFromEvents = useTimelineStore((state) => state.importFromEvents);
+  const exportToEvents = useTimelineStore((state) => state.exportToEvents);
   const timeline = useTimelineStore((state) => state.timelines[videoId]);
+
+  const [isSaving, setIsSaving] = useState(false);
 
   const [alignmentResult, setAlignmentResult] =
     useState<AlignmentResult | null>(null);
@@ -103,6 +108,42 @@ export function ScriptAlignmentPanel({
     clearScript(videoId);
     setAlignmentResult(null);
   }, [videoId, clearScript]);
+
+  const handleSave = useCallback(async () => {
+    const events = exportToEvents(videoId);
+    if (events.length === 0) {
+      toast.error("No hay eventos para guardar");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const response = await fetch("http://localhost:3012/api/timeline/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          videoId,
+          filename: cutFilename,
+          events,
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || "Error al guardar");
+      }
+
+      toast.success("Eventos guardados", {
+        description: `${result.eventsCount} evento(s) guardados en ${result.path}`,
+      });
+    } catch (error) {
+      toast.error("Error al guardar eventos", {
+        description: error instanceof Error ? error.message : "Error desconocido",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  }, [videoId, cutFilename, exportToEvents]);
 
   // Check if we already have events in the timeline
   const hasExistingEvents =
@@ -206,16 +247,22 @@ Hola a todos [zoom] bienvenidos a este video donde vamos a hablar de {React} y c
                   ))}
                 </div>
 
-                {/* Import Button */}
+                {/* Import and Save Buttons */}
                 <div className="flex items-center gap-3 pt-2 border-t">
                   <Button onClick={handleImport}>
                     <ImportIcon className="w-4 h-4 mr-2" />
                     Importar al Timeline
                   </Button>
                   {hasExistingEvents && (
-                    <span className="text-xs text-muted-foreground">
-                      Nota: Esto reemplazara los eventos existentes
-                    </span>
+                    <>
+                      <Button onClick={handleSave} disabled={isSaving} variant="secondary">
+                        <SaveIcon className="w-4 h-4 mr-2" />
+                        {isSaving ? "Guardando..." : "Guardar Eventos"}
+                      </Button>
+                      <span className="text-xs text-muted-foreground">
+                        Nota: Importar reemplaza eventos existentes
+                      </span>
+                    </>
                   )}
                 </div>
               </>
@@ -227,7 +274,7 @@ Hola a todos [zoom] bienvenidos a este video donde vamos a hablar de {React} y c
       {/* Existing Events Info */}
       {hasExistingEvents && !alignmentResult && (
         <Card className="border-green-200 bg-green-50/50">
-          <CardContent className="pt-4">
+          <CardContent className="pt-4 space-y-3">
             <div className="flex items-center gap-2 text-sm text-green-700">
               <CheckIcon className="w-4 h-4" />
               <span>
@@ -235,6 +282,10 @@ Hola a todos [zoom] bienvenidos a este video donde vamos a hablar de {React} y c
                 {timeline.highlights.length} highlight(s)
               </span>
             </div>
+            <Button onClick={handleSave} disabled={isSaving} size="sm">
+              <SaveIcon className="w-4 h-4 mr-2" />
+              {isSaving ? "Guardando..." : "Guardar para Render"}
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -344,6 +395,25 @@ function CheckIcon({ className }: { className?: string }) {
       className={className}
     >
       <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function SaveIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
     </svg>
   );
 }

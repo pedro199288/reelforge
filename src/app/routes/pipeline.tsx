@@ -1132,6 +1132,16 @@ bunx remotion render src/index.ts CaptionedVideo \\
                               <ScriptAlignmentPanel
                                 videoId={selectedVideo.id}
                                 captions={captions}
+                                cutFilename={(() => {
+                                  // Extract base name from cut video output path
+                                  const cutResult = stepResults.cut as CutResult | undefined;
+                                  if (cutResult?.outputPath) {
+                                    // outputPath is like "public/videos/name-cut.mp4"
+                                    const match = cutResult.outputPath.match(/([^/]+)\.(mp4|mkv|mov|webm)$/i);
+                                    return match ? match[1] : undefined;
+                                  }
+                                  return undefined;
+                                })()}
                               />
                             )}
 
