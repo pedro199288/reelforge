@@ -9,6 +9,27 @@ import { spawn, type Subprocess } from "bun";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, basename, extname, dirname } from "node:path";
 
+import {
+  getPipelineStatus,
+  updatePipelineStatus,
+  updateStepStatus,
+  canExecuteStep,
+  saveStepResult,
+  loadStepResult,
+  type PipelineStep,
+  type SilencesResult,
+  type SegmentsResult,
+  type CutResult,
+  type CaptionsResult,
+} from "./pipeline-utils";
+import {
+  detectSilences,
+  getVideoDuration,
+  silencesToSegments,
+  getTotalDuration,
+} from "../src/core/silence";
+import { cutVideo } from "../src/core/cut";
+
 const PORT = 3012;
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -758,6 +779,333 @@ async function handleRequest(req: Request): Promise<Response> {
     }
   }
 
+  // Pipeline individual step endpoints
+  // GET /api/pipeline/status - Get pipeline status for a video
+  if (path === "/api/pipeline/status" && req.method === "GET") {
+    const videoId = url.searchParams.get("videoId");
+    const filename = url.searchParams.get("filename");
+
+    if (!videoId || !filename) {
+      return new Response(JSON.stringify({ error: "Missing videoId or filename" }), {
+        status: 400,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    const status = getPipelineStatus(videoId, filename);
+    return new Response(JSON.stringify(status), {
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    });
+  }
+
+  // GET /api/pipeline/result - Get result of a specific step
+  if (path === "/api/pipeline/result" && req.method === "GET") {
+    const videoId = url.searchParams.get("videoId");
+    const step = url.searchParams.get("step") as PipelineStep | null;
+
+    if (!videoId || !step) {
+      return new Response(JSON.stringify({ error: "Missing videoId or step" }), {
+        status: 400,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    const result = loadStepResult(videoId, step);
+    if (!result) {
+      return new Response(JSON.stringify({ error: "Result not found" }), {
+        status: 404,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify(result), {
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    });
+  }
+
+  // POST /api/pipeline/step - Execute a single pipeline step (SSE)
+  if (path === "/api/pipeline/step" && req.method === "POST") {
+    const body = await req.json();
+    const { videoId, filename, step, config } = body as {
+      videoId: string;
+      filename: string;
+      step: PipelineStep;
+      config?: {
+        thresholdDb?: number;
+        minDurationSec?: number;
+        paddingSec?: number;
+        codecCopy?: boolean;
+        crf?: number;
+      };
+    };
+
+    if (!videoId || !filename || !step) {
+      return new Response(JSON.stringify({ error: "Missing videoId, filename, or step" }), {
+        status: 400,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    // Validate step name
+    const validSteps: PipelineStep[] = ["silences", "segments", "cut", "captions"];
+    if (!validSteps.includes(step)) {
+      return new Response(JSON.stringify({ error: `Invalid step: ${step}` }), {
+        status: 400,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    // Check dependencies
+    const status = getPipelineStatus(videoId, filename);
+    const { canExecute, missingDeps } = canExecuteStep(status, step);
+
+    if (!canExecute) {
+      return new Response(
+        JSON.stringify({
+          error: "Dependencies not satisfied",
+          missingDeps,
+        }),
+        {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // SSE stream for progress
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+    });
+
+    const sendEvent = (event: string, data: object) => {
+      const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+      try {
+        controller.enqueue(encoder.encode(message));
+      } catch {
+        // Stream closed
+      }
+    };
+
+    // Execute step in background
+    (async () => {
+      const videoPath = join(process.cwd(), "public", "videos", filename);
+
+      try {
+        // Mark step as running
+        updateStepStatus(videoId, step, {
+          status: "running",
+          startedAt: new Date().toISOString(),
+          error: undefined,
+        });
+
+        sendEvent("start", { step, videoId, timestamp: new Date().toISOString() });
+
+        switch (step) {
+          case "silences": {
+            sendEvent("progress", { step, progress: 10, message: "Obteniendo duración del video..." });
+            const duration = await getVideoDuration(videoPath);
+
+            sendEvent("progress", { step, progress: 30, message: "Detectando silencios..." });
+            const silences = await detectSilences(videoPath, {
+              thresholdDb: config?.thresholdDb ?? -35,
+              minDurationSec: config?.minDurationSec ?? 0.5,
+            });
+
+            sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
+            const result: SilencesResult = {
+              silences,
+              videoDuration: duration,
+              config: {
+                thresholdDb: config?.thresholdDb ?? -35,
+                minDurationSec: config?.minDurationSec ?? 0.5,
+              },
+              createdAt: new Date().toISOString(),
+            };
+
+            const resultPath = saveStepResult(videoId, step, result);
+            updateStepStatus(videoId, step, {
+              status: "completed",
+              completedAt: new Date().toISOString(),
+              resultFile: resultPath,
+            });
+            updatePipelineStatus(videoId, { videoDuration: duration });
+
+            sendEvent("complete", { step, result });
+            break;
+          }
+
+          case "segments": {
+            sendEvent("progress", { step, progress: 10, message: "Cargando silencios..." });
+            const silencesResult = loadStepResult<SilencesResult>(videoId, "silences");
+
+            if (!silencesResult) {
+              throw new Error("Silences result not found");
+            }
+
+            sendEvent("progress", { step, progress: 50, message: "Calculando segmentos..." });
+            const segments = silencesToSegments(
+              silencesResult.silences,
+              silencesResult.videoDuration,
+              { paddingSec: config?.paddingSec ?? 0.05 }
+            );
+
+            const editedDuration = getTotalDuration(segments);
+            const timeSaved = silencesResult.videoDuration - editedDuration;
+
+            sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
+            const result: SegmentsResult = {
+              segments,
+              totalDuration: silencesResult.videoDuration,
+              editedDuration,
+              timeSaved,
+              percentSaved: (timeSaved / silencesResult.videoDuration) * 100,
+              config: {
+                paddingSec: config?.paddingSec ?? 0.05,
+              },
+              createdAt: new Date().toISOString(),
+            };
+
+            const resultPath = saveStepResult(videoId, step, result);
+            updateStepStatus(videoId, step, {
+              status: "completed",
+              completedAt: new Date().toISOString(),
+              resultFile: resultPath,
+            });
+
+            sendEvent("complete", { step, result });
+            break;
+          }
+
+          case "cut": {
+            sendEvent("progress", { step, progress: 10, message: "Cargando segmentos..." });
+            const segmentsResult = loadStepResult<SegmentsResult>(videoId, "segments");
+
+            if (!segmentsResult) {
+              throw new Error("Segments result not found");
+            }
+
+            const ext = extname(filename);
+            const name = basename(filename, ext);
+            const outputPath = join(process.cwd(), "public", "videos", `${name}-cut${ext}`);
+
+            sendEvent("progress", { step, progress: 20, message: "Cortando video..." });
+            await cutVideo(videoPath, segmentsResult.segments, outputPath, {
+              codecCopy: config?.codecCopy ?? false,
+              crf: config?.crf ?? 18,
+            });
+
+            sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
+            const result: CutResult = {
+              outputPath: outputPath.replace(process.cwd() + "/", ""),
+              originalDuration: segmentsResult.totalDuration,
+              editedDuration: segmentsResult.editedDuration,
+              segmentsCount: segmentsResult.segments.length,
+              createdAt: new Date().toISOString(),
+            };
+
+            const resultPath = saveStepResult(videoId, step, result);
+            updateStepStatus(videoId, step, {
+              status: "completed",
+              completedAt: new Date().toISOString(),
+              resultFile: resultPath,
+            });
+
+            sendEvent("complete", { step, result });
+            break;
+          }
+
+          case "captions": {
+            sendEvent("progress", { step, progress: 10, message: "Verificando video cortado..." });
+            const cutResult = loadStepResult<CutResult>(videoId, "cut");
+
+            if (!cutResult) {
+              throw new Error("Cut result not found");
+            }
+
+            const cutVideoPath = join(process.cwd(), cutResult.outputPath);
+            if (!existsSync(cutVideoPath)) {
+              throw new Error(`Cut video not found: ${cutResult.outputPath}`);
+            }
+
+            sendEvent("progress", { step, progress: 20, message: "Generando subtítulos con Whisper..." });
+
+            // Run sub.mjs as a subprocess
+            const proc = spawn(["node", "sub.mjs", cutVideoPath], {
+              cwd: process.cwd(),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+
+            // Wait for completion
+            const exitCode = await proc.exited;
+
+            if (exitCode !== 0) {
+              throw new Error(`Subtitle generation failed with code ${exitCode}`);
+            }
+
+            // Determine output subs path
+            const ext = extname(cutResult.outputPath);
+            const name = basename(cutResult.outputPath, ext);
+            const subsPath = join("public", "subs", `${name}.json`);
+
+            sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
+
+            // Count captions
+            let captionsCount = 0;
+            const fullSubsPath = join(process.cwd(), subsPath);
+            if (existsSync(fullSubsPath)) {
+              try {
+                const captions = JSON.parse(await Bun.file(fullSubsPath).text());
+                captionsCount = Array.isArray(captions) ? captions.length : 0;
+              } catch {
+                // Ignore parse errors
+              }
+            }
+
+            const result: CaptionsResult = {
+              captionsPath: subsPath,
+              captionsCount,
+              createdAt: new Date().toISOString(),
+            };
+
+            const resultPath = saveStepResult(videoId, step, result);
+            updateStepStatus(videoId, step, {
+              status: "completed",
+              completedAt: new Date().toISOString(),
+              resultFile: resultPath,
+            });
+
+            sendEvent("complete", { step, result });
+            break;
+          }
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        updateStepStatus(videoId, step, {
+          status: "error",
+          error: errorMessage,
+        });
+        sendEvent("error", { step, error: errorMessage });
+      } finally {
+        controller.close();
+      }
+    })();
+
+    return new Response(stream, {
+      headers: {
+        ...CORS_HEADERS,
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
   return new Response("Not Found", { status: 404, headers: CORS_HEADERS });
 }
 
@@ -775,6 +1123,11 @@ console.log("  POST /api/batch/stop   - Stop all batch processing");
 console.log("  POST /api/batch/pause  - Pause batch processing");
 console.log("  POST /api/batch/resume - Resume batch processing");
 console.log("  GET  /api/batch/status - Get batch processing status");
+console.log("");
+console.log("Pipeline steps:");
+console.log("  GET  /api/pipeline/status  - Get pipeline status for a video");
+console.log("  POST /api/pipeline/step    - Execute single step (SSE stream)");
+console.log("  GET  /api/pipeline/result  - Get result of a step");
 console.log("");
 console.log("Audio:");
 console.log("  POST /api/waveform     - Extract waveform from video");

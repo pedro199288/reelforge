@@ -28,6 +28,69 @@ interface ProcessProgress {
   message: string;
 }
 
+// Pipeline step execution types
+type StepStatus = "pending" | "running" | "completed" | "error";
+
+interface StepState {
+  status: StepStatus;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  resultFile?: string;
+}
+
+interface BackendPipelineStatus {
+  videoId: string;
+  filename: string;
+  videoDuration?: number;
+  steps: Record<PipelineStep, StepState>;
+  updatedAt: string;
+}
+
+interface SilencesResult {
+  silences: Array<{ start: number; end: number; duration: number }>;
+  videoDuration: number;
+  config: { thresholdDb: number; minDurationSec: number };
+  createdAt: string;
+}
+
+interface SegmentsResult {
+  segments: Array<{ startTime: number; endTime: number; duration: number; index: number }>;
+  totalDuration: number;
+  editedDuration: number;
+  timeSaved: number;
+  percentSaved: number;
+  config: { paddingSec: number };
+  createdAt: string;
+}
+
+interface CutResult {
+  outputPath: string;
+  originalDuration: number;
+  editedDuration: number;
+  segmentsCount: number;
+  createdAt: string;
+}
+
+interface CaptionsResult {
+  captionsPath: string;
+  captionsCount: number;
+  createdAt: string;
+}
+
+type StepResult = SilencesResult | SegmentsResult | CutResult | CaptionsResult;
+
+// Step dependencies
+const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
+  raw: [],
+  silences: [],
+  segments: ["silences"],
+  cut: ["segments"],
+  captions: ["cut"],
+  "take-selection": ["captions"],
+  rendered: ["take-selection"],
+};
+
 export const Route = createFileRoute("/pipeline")({
   component: PipelinePage,
 });
@@ -86,17 +149,33 @@ const STEPS: { key: PipelineStep; label: string; description: string }[] = [
   },
 ];
 
-function getVideoPipelineState(video: Video, hasTakeSelections?: boolean): PipelineState {
-  // In a real implementation, this would check actual files on disk
-  // For now, we derive state from available metadata
+function getVideoPipelineState(
+  video: Video,
+  hasTakeSelections?: boolean,
+  backendStatus?: BackendPipelineStatus | null
+): PipelineState {
+  // Use backend status if available, otherwise derive from video metadata
+  if (backendStatus) {
+    return {
+      raw: true,
+      silences: backendStatus.steps.silences?.status === "completed",
+      segments: backendStatus.steps.segments?.status === "completed",
+      cut: backendStatus.steps.cut?.status === "completed",
+      captions: backendStatus.steps.captions?.status === "completed" || video.hasCaptions,
+      "take-selection": hasTakeSelections ?? false,
+      rendered: false,
+    };
+  }
+
+  // Fallback: derive state from available metadata
   return {
-    raw: true, // Video exists if it's in the manifest
-    silences: video.hasCaptions, // Assume silences were detected if captions exist
+    raw: true,
+    silences: video.hasCaptions,
     segments: video.hasCaptions,
-    cut: false, // Would check for _cut.mp4 file
+    cut: false,
     captions: video.hasCaptions,
-    "take-selection": hasTakeSelections ?? false, // Has user made take selections
-    rendered: false, // Would check for _final.mp4 file
+    "take-selection": hasTakeSelections ?? false,
+    rendered: false,
   };
 }
 
@@ -139,10 +218,155 @@ function PipelinePage() {
   const [processProgress, setProcessProgress] = useState<ProcessProgress | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // Individual step execution state
+  const [backendStatus, setBackendStatus] = useState<BackendPipelineStatus | null>(null);
+  const [stepProcessing, setStepProcessing] = useState<PipelineStep | null>(null);
+  const [stepProgress, setStepProgress] = useState<ProcessProgress | null>(null);
+  const [stepResults, setStepResults] = useState<Record<string, StepResult>>({});
+
   // Pipeline config from persistent store
   const config = useWorkspaceStore((state) => state.pipelineConfig);
   const setPipelineConfig = useWorkspaceStore((state) => state.setPipelineConfig);
   const takeSelections = useWorkspaceStore((state) => state.takeSelections);
+
+  // Load result of a specific step
+  const loadStepResult = useCallback(async (videoId: string, step: PipelineStep) => {
+    try {
+      const res = await fetch(
+        `${API_URL}/api/pipeline/result?videoId=${encodeURIComponent(videoId)}&step=${step}`
+      );
+      if (res.ok) {
+        const result = await res.json() as StepResult;
+        setStepResults((prev) => ({ ...prev, [step]: result }));
+      }
+    } catch (err) {
+      console.error(`Error loading ${step} result:`, err);
+    }
+  }, []);
+
+  // Load backend pipeline status
+  const loadPipelineStatus = useCallback(async (videoId: string, filename: string) => {
+    try {
+      const res = await fetch(
+        `${API_URL}/api/pipeline/status?videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(filename)}`
+      );
+      if (res.ok) {
+        const status = await res.json() as BackendPipelineStatus;
+        setBackendStatus(status);
+
+        // Load results for completed steps
+        const completedSteps = Object.entries(status.steps)
+          .filter(([, state]) => state.status === "completed")
+          .map(([step]) => step as PipelineStep);
+
+        for (const step of completedSteps) {
+          loadStepResult(videoId, step);
+        }
+      }
+    } catch (err) {
+      console.error("Error loading pipeline status:", err);
+    }
+  }, [loadStepResult]);
+
+  // Check if a step can be executed
+  const canExecuteStepCheck = useCallback((step: PipelineStep, state: PipelineState): { canExecute: boolean; missingDeps: PipelineStep[] } => {
+    const deps = STEP_DEPENDENCIES[step];
+    const missingDeps = deps.filter((dep) => !state[dep]);
+    return { canExecute: missingDeps.length === 0, missingDeps };
+  }, []);
+
+  // Execute a single pipeline step
+  const executeStep = useCallback(async (step: PipelineStep) => {
+    if (!selectedVideo || stepProcessing) return;
+
+    const videoId = selectedVideo.id;
+    const filename = selectedVideo.filename;
+
+    setStepProcessing(step);
+    setStepProgress({ step, progress: 0, message: "Iniciando..." });
+
+    try {
+      const response = await fetch(`${API_URL}/api/pipeline/step`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          videoId,
+          filename,
+          step,
+          config: {
+            thresholdDb: config.thresholdDb,
+            minDurationSec: config.minDurationSec,
+            paddingSec: config.paddingSec,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Error al ejecutar el paso");
+      }
+
+      // Read SSE stream
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response body");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const chunk of lines) {
+          if (!chunk.trim()) continue;
+
+          const eventMatch = chunk.match(/event: (\w+)/);
+          const dataMatch = chunk.match(/data: (.+)/);
+
+          if (eventMatch && dataMatch) {
+            const eventType = eventMatch[1];
+            const data = JSON.parse(dataMatch[1]);
+
+            switch (eventType) {
+              case "progress":
+                setStepProgress(data);
+                break;
+              case "complete":
+                toast.success(`${step} completado`, {
+                  description: `Paso "${step}" ejecutado correctamente`,
+                });
+                setStepResults((prev) => ({ ...prev, [step]: data.result }));
+                // Reload pipeline status
+                await loadPipelineStatus(videoId, filename);
+                break;
+              case "error":
+                throw new Error(data.error);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      toast.error(`Error en ${step}`, {
+        description: err instanceof Error ? err.message : "Error desconocido",
+      });
+    } finally {
+      setStepProcessing(null);
+      setStepProgress(null);
+    }
+  }, [selectedVideo, stepProcessing, config, loadPipelineStatus]);
+
+  // Load pipeline status when video changes
+  useEffect(() => {
+    if (selectedVideo) {
+      setBackendStatus(null);
+      setStepResults({});
+      loadPipelineStatus(selectedVideo.id, selectedVideo.filename);
+    }
+  }, [selectedVideo, loadPipelineStatus]);
 
   // Start auto-processing
   const startAutoProcess = useCallback(async () => {
@@ -243,7 +467,8 @@ function PipelinePage() {
   // Load videos from manifest - extracted to allow refresh after reset
   const loadVideos = useCallback(async (isInitialLoad = false) => {
     try {
-      const res = await fetch("/videos.manifest.json");
+      // Add cache-busting timestamp to ensure fresh data after resets
+      const res = await fetch(`/videos.manifest.json?t=${Date.now()}`);
       if (!res.ok) throw new Error("Failed to load video manifest");
       const data = (await res.json()) as VideoManifest;
 
@@ -287,8 +512,8 @@ function PipelinePage() {
     if (!selectedVideo) return null;
     const hasTakeSelections = selectedVideo.id in takeSelections &&
       Object.keys(takeSelections[selectedVideo.id]?.selections || {}).length > 0;
-    return getVideoPipelineState(selectedVideo, hasTakeSelections);
-  }, [selectedVideo, takeSelections]);
+    return getVideoPipelineState(selectedVideo, hasTakeSelections, backendStatus);
+  }, [selectedVideo, takeSelections, backendStatus]);
 
   const progressPercent = useMemo(() => {
     if (!pipelineState) return 0;
@@ -518,7 +743,13 @@ bunx remotion render src/index.ts CaptionedVideo \\
                   ))}
                 </TabsList>
 
-                {STEPS.map((step) => (
+                {STEPS.map((step) => {
+                  const isExecutableStep = ["silences", "segments", "cut", "captions"].includes(step.key);
+                  const { canExecute, missingDeps } = canExecuteStepCheck(step.key, pipelineState);
+                  const isStepRunning = stepProcessing === step.key;
+                  const stepResult = stepResults[step.key];
+
+                  return (
                   <TabsContent key={step.key} value={step.key}>
                     <Card>
                       <CardHeader>
@@ -534,29 +765,83 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                   Completado
                                 </Badge>
                               )}
+                              {backendStatus?.steps[step.key as keyof typeof backendStatus.steps]?.status === "error" && (
+                                <Badge variant="destructive">Error</Badge>
+                              )}
                             </CardTitle>
                             <p className="text-sm text-muted-foreground mt-1">
                               {step.description}
                             </p>
                           </div>
-                          {step.key !== "raw" && !pipelineState[step.key] && (
-                            <Button
-                              onClick={() => {
-                                navigator.clipboard.writeText(
-                                  getStepCommand(step.key)
-                                );
-                                toast.success("Comando copiado", {
-                                  description: `Comando para "${step.label}" copiado al portapapeles`,
-                                });
-                              }}
-                            >
-                              <CopyIcon className="w-4 h-4 mr-2" />
-                              Copiar comando
-                            </Button>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {/* Execute button for executable steps */}
+                            {isExecutableStep && (
+                              <>
+                                {!canExecute && missingDeps.length > 0 && (
+                                  <span className="text-xs text-muted-foreground">
+                                    Requiere: {missingDeps.join(", ")}
+                                  </span>
+                                )}
+                                <Button
+                                  onClick={() => executeStep(step.key)}
+                                  disabled={!canExecute || isStepRunning || isProcessing || !!stepProcessing}
+                                  variant={pipelineState[step.key] ? "outline" : "default"}
+                                  className="gap-2"
+                                >
+                                  {isStepRunning ? (
+                                    <>
+                                      <LoaderIcon className="w-4 h-4 animate-spin" />
+                                      Ejecutando...
+                                    </>
+                                  ) : pipelineState[step.key] ? (
+                                    <>
+                                      <RefreshIcon className="w-4 h-4" />
+                                      Re-ejecutar
+                                    </>
+                                  ) : (
+                                    <>
+                                      <PlayIcon className="w-4 h-4" />
+                                      Ejecutar
+                                    </>
+                                  )}
+                                </Button>
+                              </>
+                            )}
+                            {step.key !== "raw" && !pipelineState[step.key] && !isExecutableStep && (
+                              <Button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(
+                                    getStepCommand(step.key)
+                                  );
+                                  toast.success("Comando copiado", {
+                                    description: `Comando para "${step.label}" copiado al portapapeles`,
+                                  });
+                                }}
+                              >
+                                <CopyIcon className="w-4 h-4 mr-2" />
+                                Copiar comando
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </CardHeader>
                       <CardContent>
+                        {/* Step progress indicator */}
+                        {isStepRunning && stepProgress && (
+                          <div className="mb-4 p-4 border rounded-lg bg-blue-50 border-blue-200">
+                            <div className="flex items-center gap-3 mb-2">
+                              <LoaderIcon className="w-4 h-4 animate-spin text-blue-600" />
+                              <span className="text-sm font-medium text-blue-700">
+                                {stepProgress.message}
+                              </span>
+                              <Badge variant="outline" className="ml-auto text-blue-600 border-blue-300">
+                                {stepProgress.progress}%
+                              </Badge>
+                            </div>
+                            <Progress value={stepProgress.progress} className="h-2" />
+                          </div>
+                        )}
+
                         {step.key === "raw" ? (
                           <div className="space-y-2">
                             <div className="grid grid-cols-2 gap-4 text-sm">
@@ -596,6 +881,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                       })
                                     }
                                     className="mt-1"
+                                    disabled={isStepRunning}
                                   />
                                   <p className="text-xs text-muted-foreground mt-1">
                                     Nivel de ruido para detectar silencio
@@ -616,6 +902,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                       })
                                     }
                                     className="mt-1"
+                                    disabled={isStepRunning}
                                   />
                                   <p className="text-xs text-muted-foreground mt-1">
                                     Mínimo de segundos para considerar silencio
@@ -640,6 +927,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                     })
                                   }
                                   className="mt-1"
+                                  disabled={isStepRunning}
                                 />
                                 <p className="text-xs text-muted-foreground mt-1">
                                   Espacio adicional antes/después de cada
@@ -648,21 +936,29 @@ bunx remotion render src/index.ts CaptionedVideo \\
                               </div>
                             )}
 
-                            {/* Command preview */}
-                            <div>
-                              <label className="text-sm font-medium">
-                                Comando
-                              </label>
-                              <pre className="mt-2 p-4 bg-muted rounded-lg text-sm font-mono overflow-x-auto whitespace-pre-wrap">
-                                {getStepCommand(step.key)}
-                              </pre>
-                            </div>
+                            {/* Step results display */}
+                            {stepResult && (
+                              <StepResultDisplay step={step.key} result={stepResult} />
+                            )}
+
+                            {/* Command preview (collapsed if result exists) */}
+                            {!stepResult && (
+                              <div>
+                                <label className="text-sm font-medium">
+                                  Comando equivalente
+                                </label>
+                                <pre className="mt-2 p-4 bg-muted rounded-lg text-sm font-mono overflow-x-auto whitespace-pre-wrap">
+                                  {getStepCommand(step.key)}
+                                </pre>
+                              </div>
+                            )}
                           </div>
                         )}
                       </CardContent>
                     </Card>
                   </TabsContent>
-                ))}
+                  );
+                })}
               </Tabs>
             </>
           )}
@@ -795,5 +1091,155 @@ function LoaderIcon({ className }: { className?: string }) {
       <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" />
       <line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
     </svg>
+  );
+}
+
+function PlayIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <polygon points="5 3 19 12 5 21 5 3" />
+    </svg>
+  );
+}
+
+function RefreshIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+      <path d="M16 21h5v-5" />
+    </svg>
+  );
+}
+
+function StepResultDisplay({ step, result }: { step: PipelineStep; result: StepResult }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const renderSummary = () => {
+    switch (step) {
+      case "silences": {
+        const r = result as SilencesResult;
+        return (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <span className="text-muted-foreground">Silencios:</span>
+              <span className="ml-2 font-medium">{r.silences.length}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Duracion:</span>
+              <span className="ml-2 font-medium">{r.videoDuration.toFixed(2)}s</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Threshold:</span>
+              <span className="ml-2 font-medium">{r.config.thresholdDb}dB</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Min duracion:</span>
+              <span className="ml-2 font-medium">{r.config.minDurationSec}s</span>
+            </div>
+          </div>
+        );
+      }
+      case "segments": {
+        const r = result as SegmentsResult;
+        return (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <span className="text-muted-foreground">Segmentos:</span>
+              <span className="ml-2 font-medium">{r.segments.length}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Original:</span>
+              <span className="ml-2 font-medium">{r.totalDuration.toFixed(2)}s</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Editado:</span>
+              <span className="ml-2 font-medium">{r.editedDuration.toFixed(2)}s</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Ahorro:</span>
+              <span className="ml-2 font-medium text-green-600">{r.percentSaved.toFixed(1)}%</span>
+            </div>
+          </div>
+        );
+      }
+      case "cut": {
+        const r = result as CutResult;
+        return (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="col-span-2">
+              <span className="text-muted-foreground">Output:</span>
+              <span className="ml-2 font-mono text-xs">{r.outputPath}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Segmentos:</span>
+              <span className="ml-2 font-medium">{r.segmentsCount}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Duracion final:</span>
+              <span className="ml-2 font-medium">{r.editedDuration.toFixed(2)}s</span>
+            </div>
+          </div>
+        );
+      }
+      case "captions": {
+        const r = result as CaptionsResult;
+        return (
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="text-muted-foreground">Captions:</span>
+              <span className="ml-2 font-medium">{r.captionsCount}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Archivo:</span>
+              <span className="ml-2 font-mono text-xs">{r.captionsPath}</span>
+            </div>
+          </div>
+        );
+      }
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="border rounded-lg p-4 bg-green-50 border-green-200">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-medium text-green-700">Resultado</h4>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setExpanded(!expanded)}
+          className="text-xs"
+        >
+          {expanded ? "Ocultar JSON" : "Ver JSON"}
+        </Button>
+      </div>
+      {renderSummary()}
+      {expanded && (
+        <pre className="mt-4 p-3 bg-white rounded border text-xs font-mono overflow-auto max-h-64">
+          {JSON.stringify(result, null, 2)}
+        </pre>
+      )}
+    </div>
   );
 }
