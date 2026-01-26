@@ -11,6 +11,10 @@ interface ZoomMarkerProps {
   onMove?: (newStartMs: number) => void;
   onResize?: (newDurationMs: number) => void;
   onToggleType?: () => void;
+  /** Snap points (timestamps in ms) for snapping during drag */
+  snapPoints?: number[];
+  /** Snap threshold in pixels (default: 10) */
+  snapThreshold?: number;
 }
 
 type DragMode = "move" | "resize-start" | "resize-end" | null;
@@ -24,15 +28,45 @@ export function ZoomMarker({
   onMove,
   onResize,
   onToggleType,
+  snapPoints = [],
+  snapThreshold = 10,
 }: ZoomMarkerProps) {
   const markerRef = useRef<HTMLDivElement>(null);
   const [dragMode, setDragMode] = useState<DragMode>(null);
   const [dragStartX, setDragStartX] = useState(0);
   const [originalStartMs, setOriginalStartMs] = useState(0);
   const [originalDurationMs, setOriginalDurationMs] = useState(0);
+  const [isSnapped, setIsSnapped] = useState(false);
 
   // Calculate pixels per millisecond based on zoom level
   const pxPerMs = (100 * zoomLevel) / 1000;
+
+  // Snap helper: find closest snap point within threshold
+  // Returns { value, didSnap } to track whether snap occurred
+  const snapToClosest = useCallback(
+    (ms: number, skipSnap: boolean): { value: number; didSnap: boolean } => {
+      if (skipSnap || snapPoints.length === 0) {
+        return { value: ms, didSnap: false };
+      }
+
+      let closestPoint = ms;
+      let closestDistancePx = Infinity;
+
+      for (const point of snapPoints) {
+        const distanceMs = Math.abs(ms - point);
+        const distancePx = distanceMs * pxPerMs;
+
+        if (distancePx < snapThreshold && distancePx < closestDistancePx) {
+          closestDistancePx = distancePx;
+          closestPoint = point;
+        }
+      }
+
+      const didSnap = closestPoint !== ms;
+      return { value: closestPoint, didSnap };
+    },
+    [snapPoints, pxPerMs, snapThreshold]
+  );
 
   const x = (zoom.startMs - viewportStartMs) * pxPerMs;
   const width = Math.max(zoom.durationMs * pxPerMs, 20); // Minimum 20px width
@@ -69,21 +103,31 @@ export function ZoomMarker({
       const deltaMs = deltaX / pxPerMs;
 
       if (dragMode === "move" && onMove) {
-        const newStartMs = Math.max(0, Math.round(originalStartMs + deltaMs));
+        const rawStartMs = Math.max(0, Math.round(originalStartMs + deltaMs));
+        // Apply snap to start position (hold Shift to bypass snap)
+        const { value: newStartMs, didSnap } = snapToClosest(rawStartMs, e.shiftKey);
+        setIsSnapped(didSnap);
         onMove(newStartMs);
       } else if (dragMode === "resize-start" && onMove && onResize) {
         // Resize from start: move start position and adjust duration
-        const newStartMs = Math.max(0, Math.round(originalStartMs + deltaMs));
+        const rawStartMs = Math.max(0, Math.round(originalStartMs + deltaMs));
+        // Apply snap to start position (hold Shift to bypass snap)
+        const { value: newStartMs, didSnap } = snapToClosest(rawStartMs, e.shiftKey);
+        setIsSnapped(didSnap);
         const newDurationMs = Math.max(100, originalDurationMs - (newStartMs - originalStartMs));
         onMove(newStartMs);
         onResize(newDurationMs);
       } else if (dragMode === "resize-end" && onResize) {
         // Resize from end: just adjust duration
-        const newDurationMs = Math.max(100, Math.round(originalDurationMs + deltaMs));
+        const rawEndMs = originalStartMs + originalDurationMs + deltaMs;
+        // Apply snap to end position (hold Shift to bypass snap)
+        const { value: snappedEndMs, didSnap } = snapToClosest(rawEndMs, e.shiftKey);
+        setIsSnapped(didSnap);
+        const newDurationMs = Math.max(100, Math.round(snappedEndMs - originalStartMs));
         onResize(newDurationMs);
       }
     },
-    [dragMode, dragStartX, pxPerMs, originalStartMs, originalDurationMs, onMove, onResize]
+    [dragMode, dragStartX, pxPerMs, originalStartMs, originalDurationMs, onMove, onResize, snapToClosest]
   );
 
   // Handle drag end
@@ -92,6 +136,7 @@ export function ZoomMarker({
       if (dragMode) {
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
         setDragMode(null);
+        setIsSnapped(false);
       }
     },
     [dragMode]
@@ -123,7 +168,9 @@ export function ZoomMarker({
           ? "bg-orange-500/20 border-orange-500 text-orange-700 dark:text-orange-300"
           : "bg-blue-500/20 border-blue-500 text-blue-700 dark:text-blue-300",
         isSelected && "ring-2 ring-primary ring-offset-1",
-        dragMode && "cursor-grabbing opacity-80"
+        dragMode && "cursor-grabbing opacity-80",
+        // Visual feedback when snapped to a word boundary
+        isSnapped && "ring-2 ring-green-500 ring-offset-1 border-green-500"
       )}
       style={{
         left: x,

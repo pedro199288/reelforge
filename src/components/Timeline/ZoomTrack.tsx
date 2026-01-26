@@ -1,7 +1,8 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { TimelineTrack } from "./TimelineTrack";
 import { ZoomMarker } from "./ZoomMarker";
 import type { TimelineZoom, TimelineSelection } from "@/store/timeline";
+import type { Caption } from "@/core/script/align";
 
 interface ZoomTrackProps {
   zooms: TimelineZoom[];
@@ -14,6 +15,10 @@ interface ZoomTrackProps {
   onMoveZoom: (id: string, newStartMs: number) => void;
   onResizeZoom: (id: string, newDurationMs: number) => void;
   onToggleZoomType: (id: string) => void;
+  /** Captions for snap-to-word functionality */
+  captions?: Caption[];
+  /** Snap threshold in pixels (default: 10) */
+  snapThreshold?: number;
 }
 
 export function ZoomTrack({
@@ -27,11 +32,23 @@ export function ZoomTrack({
   onMoveZoom,
   onResizeZoom,
   onToggleZoomType,
+  captions = [],
+  snapThreshold = 10,
 }: ZoomTrackProps) {
   const trackRef = useRef<HTMLDivElement>(null);
 
   // Calculate pixels per millisecond based on zoom level
   const pxPerMs = (100 * zoomLevel) / 1000;
+
+  // Generate snap points from captions (start and end of each word)
+  const snapPoints = useMemo(() => {
+    const points = new Set<number>();
+    for (const caption of captions) {
+      points.add(caption.startMs);
+      points.add(caption.endMs);
+    }
+    return Array.from(points).sort((a, b) => a - b);
+  }, [captions]);
 
   // Handle click on empty area to create new zoom
   const handleTrackClick = useCallback(
@@ -106,6 +123,8 @@ export function ZoomTrack({
             onMove={(newStartMs) => onMoveZoom(zoom.id, newStartMs)}
             onResize={(newDurationMs) => onResizeZoom(zoom.id, newDurationMs)}
             onToggleType={() => onToggleZoomType(zoom.id)}
+            snapPoints={snapPoints}
+            snapThreshold={snapThreshold}
           />
         ))}
       </div>

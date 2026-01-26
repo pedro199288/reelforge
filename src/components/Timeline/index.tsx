@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useMemo, useState } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -539,6 +539,7 @@ export function Timeline({ videoId, videoPath, durationMs, captions }: TimelineP
             onMoveZoom={handleMoveZoom}
             onResizeZoom={handleResizeZoom}
             onToggleZoomType={handleToggleZoomType}
+            captions={captions}
           />
 
           {/* Highlights track */}
