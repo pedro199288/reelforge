@@ -39,7 +39,6 @@ function StudioPage() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [captions, setCaptions] = useState<Caption[]>([]);
@@ -50,10 +49,10 @@ function StudioPage() {
 
   const { highlightColor, setHighlightColor, fontFamily, setFontFamily } = useSubtitleStore();
 
-  // Timeline store integration
+  // Timeline store integration - use store as single source of truth for playback
   const { setPlayhead, play: timelinePlay, pause: timelinePause } = useTimelineStore();
   const timelinePlayhead = usePlayhead();
-  const timelineIsPlaying = useIsPlaying();
+  const isPlaying = useIsPlaying(); // Single source of truth for play state
   const timeline = useVideoTimeline(selectedVideo?.id ?? "");
 
   // Convert timeline store data to AlignedEvent[] for player
@@ -201,17 +200,27 @@ function StudioPage() {
     }
   }, [timelinePlayhead, videoDuration, fps, isPlaying]);
 
-  // Sync timeline play/pause state to player
+  // Sync store play/pause state to player
+  // Ref to track if we initiated the play/pause to avoid loops
+  const isSyncingPlayState = useRef(false);
+
   useEffect(() => {
     const player = playerRef.current;
     if (!player) return;
 
-    if (timelineIsPlaying && !isPlaying) {
+    // Skip if we're responding to a player event
+    if (isSyncingPlayState.current) {
+      isSyncingPlayState.current = false;
+      return;
+    }
+
+    // Sync store state to player
+    if (isPlaying && !player.isPlaying()) {
       player.play();
-    } else if (!timelineIsPlaying && isPlaying) {
+    } else if (!isPlaying && player.isPlaying()) {
       player.pause();
     }
-  }, [timelineIsPlaying, isPlaying]);
+  }, [isPlaying]);
 
   // Sync player frame updates to timeline (during playback only)
   // Track last synced value to avoid unnecessary store updates
@@ -247,14 +256,14 @@ function StudioPage() {
   const handleVideoSelect = useCallback(
     (video: Video) => {
       setSelectedVideo(video);
-      setIsPlaying(false);
+      timelinePause(); // Use store action instead of local state
       navigate({
         to: "/studio",
         search: { videoId: video.id },
         replace: true,
       });
     },
-    [navigate],
+    [navigate, timelinePause],
   );
 
   // Listen to player events and sync with timeline store
@@ -263,11 +272,11 @@ function StudioPage() {
     if (!player) return;
 
     const onPlay = () => {
-      setIsPlaying(true);
+      isSyncingPlayState.current = true;
       timelinePlay();
     };
     const onPause = () => {
-      setIsPlaying(false);
+      isSyncingPlayState.current = true;
       timelinePause();
     };
     const onSeeked = () => {
