@@ -587,6 +587,84 @@ async function handleRequest(req: Request): Promise<Response> {
     );
   }
 
+  // Waveform extraction endpoint
+  if (path === "/api/waveform" && req.method === "POST") {
+    try {
+      const body = await req.json();
+      const { videoPath, samplesPerSecond = 100 } = body as {
+        videoPath: string;
+        samplesPerSecond?: number;
+      };
+
+      const fullPath = join(process.cwd(), "public", "videos", videoPath);
+      if (!existsSync(fullPath)) {
+        return new Response(
+          JSON.stringify({ error: `Video not found: ${videoPath}` }),
+          { status: 404, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Extract audio samples using FFmpeg
+      // Output: mono, resampled to target rate, 32-bit float PCM
+      const proc = spawn([
+        "ffmpeg",
+        "-i", fullPath,
+        "-ac", "1",                          // Mono
+        "-ar", String(samplesPerSecond),     // Sample rate
+        "-f", "f32le",                        // 32-bit float little-endian
+        "-",                                  // Output to stdout
+      ], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const chunks: Uint8Array[] = [];
+      const reader = proc.stdout.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      await proc.exited;
+
+      // Combine chunks and convert to Float32Array
+      const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+      const buffer = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        buffer.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      const float32 = new Float32Array(buffer.buffer);
+      const samples = Array.from(float32);
+
+      // Normalize samples
+      let maxAbs = 0;
+      for (const s of samples) {
+        const abs = Math.abs(s);
+        if (abs > maxAbs) maxAbs = abs;
+      }
+      const normalized = maxAbs > 0 ? samples.map(s => s / maxAbs) : samples;
+
+      return new Response(
+        JSON.stringify({
+          samples: normalized,
+          sampleRate: samplesPerSecond,
+          duration: samples.length / samplesPerSecond,
+        }),
+        { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+      );
+    } catch (error) {
+      return new Response(
+        JSON.stringify({ error: String(error) }),
+        { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+      );
+    }
+  }
+
   return new Response("Not Found", { status: 404, headers: CORS_HEADERS });
 }
 
@@ -603,7 +681,10 @@ console.log("  POST /api/batch/start  - Start batch processing (SSE stream)");
 console.log("  POST /api/batch/stop   - Stop all batch processing");
 console.log("  POST /api/batch/pause  - Pause batch processing");
 console.log("  POST /api/batch/resume - Resume batch processing");
-console.log("  GET  /api/batch/status - Get batch processing status\n");
+console.log("  GET  /api/batch/status - Get batch processing status");
+console.log("");
+console.log("Audio:");
+console.log("  POST /api/waveform     - Extract waveform from video\n");
 
 Bun.serve({
   port: PORT,

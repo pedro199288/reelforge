@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -22,6 +22,9 @@ import { TimelinePlayhead } from "./TimelinePlayhead";
 import { ZoomTrack } from "./ZoomTrack";
 import { CaptionBlock } from "./CaptionBlock";
 import { HighlightMarker } from "./HighlightMarker";
+import { Waveform, WaveformPlaceholder } from "./Waveform";
+import { useWaveform } from "@/hooks/useWaveform";
+import { downsampleWaveform } from "@/core/audio/waveform";
 import {
   useTimelineStore,
   usePlayhead,
@@ -39,13 +42,20 @@ import type { Caption } from "@/core/script/align";
 
 interface TimelineProps {
   videoId: string;
+  videoPath?: string;
   durationMs: number;
   captions: Caption[];
 }
 
-export function Timeline({ videoId, durationMs, captions }: TimelineProps) {
+export function Timeline({ videoId, videoPath, durationMs, captions }: TimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+
+  // Waveform data
+  const { data: waveformData, loading: waveformLoading } = useWaveform(
+    videoPath ?? null,
+    { samplesPerSecond: 200 }
+  );
 
   // Store state
   const playheadMs = usePlayhead();
@@ -448,6 +458,30 @@ export function Timeline({ videoId, durationMs, captions }: TimelineProps) {
             viewportWidthPx={getViewportWidth()}
             onSeek={handleSeek}
           />
+
+          {/* Waveform track */}
+          <TimelineTrack name="Audio" height={48}>
+            {waveformLoading ? (
+              <WaveformPlaceholder
+                width={contentWidth}
+                height={40}
+                className="ml-[80px]"
+              />
+            ) : waveformData ? (
+              <div className="ml-[80px]">
+                <Waveform
+                  data={downsampleWaveform(
+                    { samples: waveformData, sampleRate: 200, duration: durationMs / 1000 },
+                    Math.min(waveformData.length, Math.floor(contentWidth / 2))
+                  )}
+                  width={contentWidth}
+                  height={40}
+                  color="rgb(74, 222, 128)"
+                  style="mirror"
+                />
+              </div>
+            ) : null}
+          </TimelineTrack>
 
           {/* Zooms track */}
           <ZoomTrack
