@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useMemo } from "react";
+import { useRef, useEffect, useCallback, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -15,6 +15,7 @@ import {
   Redo2,
   Crosshair,
   Trash2,
+  Wand2,
 } from "lucide-react";
 import { TimelineTrack } from "./TimelineTrack";
 import { TimelineRuler } from "./TimelineRuler";
@@ -23,8 +24,10 @@ import { ZoomTrack } from "./ZoomTrack";
 import { CaptionBlock } from "./CaptionBlock";
 import { HighlightMarker } from "./HighlightMarker";
 import { Waveform, WaveformPlaceholder } from "./Waveform";
+import { AutoDetectDialog } from "./AutoDetectDialog";
 import { useWaveform } from "@/hooks/useWaveform";
 import { downsampleWaveform } from "@/core/audio/waveform";
+import type { KeyMoment } from "@/core/timeline/auto-detect";
 import {
   useTimelineStore,
   usePlayhead,
@@ -52,10 +55,13 @@ export function Timeline({ videoId, videoPath, durationMs, captions }: TimelineP
   const contentRef = useRef<HTMLDivElement>(null);
 
   // Waveform data
-  const { data: waveformData, loading: waveformLoading } = useWaveform(
+  const { data: waveformData, rawData: waveformRawData, loading: waveformLoading } = useWaveform(
     videoPath ?? null,
     { samplesPerSecond: 200 }
   );
+
+  // Auto-detect dialog
+  const [autoDetectOpen, setAutoDetectOpen] = useState(false);
 
   // Store state
   const playheadMs = usePlayhead();
@@ -297,6 +303,27 @@ export function Timeline({ videoId, videoPath, durationMs, captions }: TimelineP
   const pxPerMs = (100 * zoomLevel) / 1000;
   const contentWidth = durationMs * pxPerMs;
 
+  // Handle applying auto-detected moments
+  const handleApplyAutoDetect = useCallback(
+    (moments: KeyMoment[]) => {
+      for (const moment of moments) {
+        if (moment.suggestedZoom === "punch" || moment.suggestedZoom === "slow") {
+          addZoom(videoId, moment.suggestedZoom, moment.timestampMs);
+        } else if (moment.suggestedZoom === "highlight" && moment.endMs) {
+          // Find the caption index for this moment
+          const captionIndex = captions.findIndex(
+            (c) => c.startMs <= moment.timestampMs && c.endMs >= moment.timestampMs
+          );
+          if (captionIndex >= 0) {
+            const caption = captions[captionIndex];
+            addHighlight(videoId, captionIndex, caption.text, caption.startMs, caption.endMs);
+          }
+        }
+      }
+    },
+    [addZoom, addHighlight, videoId, captions]
+  );
+
   return (
     <div
       ref={containerRef}
@@ -419,6 +446,23 @@ export function Timeline({ videoId, videoPath, durationMs, captions }: TimelineP
               </Button>
             </TooltipTrigger>
             <TooltipContent>Agregar zoom lento en playhead (S)</TooltipContent>
+          </Tooltip>
+
+          <div className="h-4 w-px bg-border" />
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setAutoDetectOpen(true)}
+                className="text-purple-600 border-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950"
+              >
+                <Wand2 className="h-4 w-4 mr-1" />
+                Auto
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Auto-detectar momentos clave</TooltipContent>
           </Tooltip>
 
           {selection && (
@@ -555,6 +599,16 @@ export function Timeline({ videoId, videoPath, durationMs, captions }: TimelineP
           Highlights: {timeline.highlights.length}
         </span>
       </div>
+
+      {/* Auto-detect dialog */}
+      <AutoDetectDialog
+        open={autoDetectOpen}
+        onClose={() => setAutoDetectOpen(false)}
+        onApply={handleApplyAutoDetect}
+        waveformSamples={waveformRawData?.samples ?? null}
+        waveformSampleRate={waveformRawData?.sampleRate ?? 200}
+        captions={captions}
+      />
     </div>
   );
 }
