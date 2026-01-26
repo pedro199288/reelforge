@@ -9,11 +9,12 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import type { Video } from "@/components/VideoList";
-import { useWorkspaceStore, SILENCE_DEFAULTS } from "@/store/workspace";
+import { useWorkspaceStore, useSelection, SILENCE_DEFAULTS } from "@/store/workspace";
 import { X } from "lucide-react";
 import { useTimelineStore } from "@/store/timeline";
 import { ScriptAlignmentPanel } from "@/components/ScriptAlignmentPanel";
 import { TakeDetectionPanel } from "@/components/TakeDetectionPanel";
+import { SegmentReviewPanel } from "@/components/SegmentReviewPanel";
 import type { Caption } from "@/core/script/align";
 import { VideoSidebarSkeleton } from "@/components/VideoSidebarSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -83,13 +84,34 @@ interface CaptionsResult {
   createdAt: string;
 }
 
-type StepResult = SilencesResult | SegmentsResult | CutResult | CaptionsResult;
+interface CaptionsRawResult {
+  captionsPath: string;
+  captionsCount: number;
+  sourceVideo: "raw";
+  createdAt: string;
+}
+
+interface SemanticResult {
+  sentenceCount: number;
+  semanticCutCount: number;
+  naturalPauseCount: number;
+  totalCuttableDurationMs: number;
+  totalPreservedPauseDurationMs: number;
+  overallConfidence: number;
+  createdAt: string;
+}
+
+type StepResult = SilencesResult | SegmentsResult | CutResult | CaptionsResult | CaptionsRawResult | SemanticResult;
 
 // Step dependencies
+// Note: captions-raw can run in parallel with silences (no dependencies)
+// semantic requires both captions-raw and silences to classify silences
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   raw: [],
   silences: [],
+  "captions-raw": [],
   segments: ["silences"],
+  semantic: ["captions-raw", "silences"],
   cut: ["segments"],
   captions: ["cut"],
   script: ["captions"],
@@ -108,7 +130,9 @@ interface VideoManifest {
 type PipelineStep =
   | "raw"
   | "silences"
+  | "captions-raw"
   | "segments"
+  | "semantic"
   | "cut"
   | "captions"
   | "script"
@@ -118,7 +142,9 @@ type PipelineStep =
 interface PipelineState {
   raw: boolean;
   silences: boolean;
+  "captions-raw": boolean;
   segments: boolean;
+  semantic: boolean;
   cut: boolean;
   captions: boolean;
   script: boolean;
@@ -127,7 +153,7 @@ interface PipelineState {
 }
 
 
-const STEPS: { key: PipelineStep; label: string; description: string }[] = [
+const STEPS: { key: PipelineStep; label: string; description: string; optional?: boolean }[] = [
   { key: "raw", label: "Raw", description: "Video original importado" },
   {
     key: "silences",
@@ -135,9 +161,21 @@ const STEPS: { key: PipelineStep; label: string; description: string }[] = [
     description: "Detectar silencios con FFmpeg",
   },
   {
+    key: "captions-raw",
+    label: "Transcripción (Raw)",
+    description: "Transcripción del video original (para análisis semántico)",
+    optional: true,
+  },
+  {
     key: "segments",
     label: "Segmentos",
     description: "Generar segmentos de contenido",
+  },
+  {
+    key: "semantic",
+    label: "Análisis Semántico",
+    description: "Clasificar silencios (inter vs intra-oración)",
+    optional: true,
   },
   { key: "cut", label: "Cortado", description: "Cortar video sin silencios" },
   {
@@ -173,7 +211,9 @@ function getVideoPipelineState(
     return {
       raw: true,
       silences: backendStatus.steps.silences?.status === "completed",
+      "captions-raw": backendStatus.steps["captions-raw"]?.status === "completed",
       segments: backendStatus.steps.segments?.status === "completed",
+      semantic: backendStatus.steps.semantic?.status === "completed",
       cut: backendStatus.steps.cut?.status === "completed",
       captions: backendStatus.steps.captions?.status === "completed" || video.hasCaptions,
       script: hasScriptEvents ?? false,
@@ -187,7 +227,9 @@ function getVideoPipelineState(
   return {
     raw: true,
     silences: false,
+    "captions-raw": false,
     segments: false,
+    semantic: false,
     cut: false,
     captions: false,
     script: hasScriptEvents ?? false,
@@ -247,6 +289,9 @@ function PipelinePage() {
   const setPipelineConfig = useWorkspaceStore((state) => state.setPipelineConfig);
   const takeSelections = useWorkspaceStore((state) => state.takeSelections);
   const timelines = useTimelineStore((state) => state.timelines);
+
+  // Segment selections for the current video
+  const segmentSelection = useSelection(selectedVideo?.id ?? "");
 
   // Captions state for script alignment
   const [captions, setCaptions] = useState<Caption[]>([]);
@@ -322,6 +367,8 @@ function PipelinePage() {
             minDurationSec: config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec,
             paddingSec: config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
           },
+          // Pass selected segment indices for the cut step
+          selectedSegments: step === "cut" && segmentSelection.length > 0 ? segmentSelection : undefined,
         }),
       });
 
@@ -1258,7 +1305,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
 
                             {/* Step results display */}
                             {stepResult && (
-                              <StepResultDisplay step={step.key} result={stepResult} />
+                              <StepResultDisplay step={step.key} result={stepResult} selectedVideo={selectedVideo} />
                             )}
 
                             {/* Command preview (collapsed if result exists) */}
@@ -1469,7 +1516,7 @@ function FastForwardIcon({ className }: { className?: string }) {
   );
 }
 
-function StepResultDisplay({ step, result }: { step: PipelineStep; result: StepResult }) {
+function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep; result: StepResult; selectedVideo?: Video | null }) {
   const [expanded, setExpanded] = useState(false);
 
   const renderSummary = () => {
@@ -1500,30 +1547,41 @@ function StepResultDisplay({ step, result }: { step: PipelineStep; result: StepR
       case "segments": {
         const r = result as SegmentsResult;
         return (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div>
-              <span className="text-muted-foreground">Segmentos:</span>
-              <span className="ml-2 font-medium">{r.segments.length}</span>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <span className="text-muted-foreground">Segmentos:</span>
+                <span className="ml-2 font-medium">{r.segments.length}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Original:</span>
+                <span className="ml-2 font-medium">{r.totalDuration.toFixed(2)}s</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Editado:</span>
+                <span className="ml-2 font-medium">{r.editedDuration.toFixed(2)}s</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Ahorro:</span>
+                <span className="ml-2 font-medium text-green-600">{r.percentSaved.toFixed(1)}%</span>
+              </div>
             </div>
-            <div>
-              <span className="text-muted-foreground">Original:</span>
-              <span className="ml-2 font-medium">{r.totalDuration.toFixed(2)}s</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Editado:</span>
-              <span className="ml-2 font-medium">{r.editedDuration.toFixed(2)}s</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Ahorro:</span>
-              <span className="ml-2 font-medium text-green-600">{r.percentSaved.toFixed(1)}%</span>
-            </div>
+            {selectedVideo && (
+              <SegmentReviewPanel
+                videoId={selectedVideo.id}
+                segments={r.segments}
+                totalDuration={r.totalDuration}
+              />
+            )}
           </div>
         );
       }
       case "cut": {
         const r = result as CutResult;
-        // Remove "public/" prefix from outputPath for the URL
-        const videoUrl = r.outputPath ? `/${r.outputPath.replace(/^public\//, "")}` : null;
+        // Use streaming endpoint for proper HTTP Range support (fixes video pausing issues)
+        const videoUrl = r.outputPath
+          ? `${API_URL}/api/stream/${r.outputPath.replace(/^public\//, "")}`
+          : null;
         return (
           <div className="space-y-3">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
@@ -1571,6 +1629,50 @@ function StepResultDisplay({ step, result }: { step: PipelineStep; result: StepR
             <div>
               <span className="text-muted-foreground">Archivo:</span>
               <span className="ml-2 font-mono text-xs">{r.captionsPath}</span>
+            </div>
+          </div>
+        );
+      }
+      case "captions-raw": {
+        const r = result as CaptionsRawResult;
+        return (
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="text-muted-foreground">Captions (video original):</span>
+              <span className="ml-2 font-medium">{r.captionsCount}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Archivo:</span>
+              <span className="ml-2 font-mono text-xs">{r.captionsPath}</span>
+            </div>
+          </div>
+        );
+      }
+      case "semantic": {
+        const r = result as SemanticResult;
+        return (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <span className="text-muted-foreground">Oraciones:</span>
+                <span className="ml-2 font-medium">{r.sentenceCount}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Cortes semánticos:</span>
+                <span className="ml-2 font-medium text-green-600">{r.semanticCutCount}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Pausas naturales:</span>
+                <span className="ml-2 font-medium text-blue-600">{r.naturalPauseCount}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Confianza:</span>
+                <span className="ml-2 font-medium">{(r.overallConfidence * 100).toFixed(0)}%</span>
+              </div>
+            </div>
+            <div className="text-sm text-muted-foreground">
+              Tiempo a cortar: {(r.totalCuttableDurationMs / 1000).toFixed(1)}s |
+              Pausas preservadas: {(r.totalPreservedPauseDurationMs / 1000).toFixed(1)}s
             </div>
           </div>
         );

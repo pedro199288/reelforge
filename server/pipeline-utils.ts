@@ -8,7 +8,7 @@ import { join, basename, extname } from "node:path";
 import type { SilenceRange } from "../src/core/silence/detect";
 import type { Segment } from "../src/core/silence/segments";
 
-export type PipelineStep = "silences" | "segments" | "cut" | "captions";
+export type PipelineStep = "silences" | "segments" | "cut" | "captions" | "captions-raw" | "semantic";
 
 export type StepStatus = "pending" | "running" | "completed" | "error";
 
@@ -64,12 +64,33 @@ export interface CaptionsResult {
   createdAt: string;
 }
 
+export interface CaptionsRawResult {
+  captionsPath: string;
+  captionsCount: number;
+  sourceVideo: "raw";
+  createdAt: string;
+}
+
+export interface SemanticResult {
+  sentenceCount: number;
+  semanticCutCount: number;
+  naturalPauseCount: number;
+  totalCuttableDurationMs: number;
+  totalPreservedPauseDurationMs: number;
+  overallConfidence: number;
+  createdAt: string;
+}
+
 // Step dependencies: step -> required preceding steps
+// Note: captions-raw has no dependencies (runs on raw video)
+// semantic requires captions-raw + silences to classify silences
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   silences: [],
+  "captions-raw": [],  // Can run in parallel with silences
   segments: ["silences"],
+  semantic: ["captions-raw", "silences"],  // Requires transcript + silences to classify
   cut: ["segments"],
-  captions: ["cut"],
+  captions: ["cut"],  // Post-cut captions (for backward compatibility)
 };
 
 /**
@@ -116,7 +137,9 @@ function getInitialStatus(videoId: string, filename: string): PipelineStatus {
     filename,
     steps: {
       silences: { ...emptyStep },
+      "captions-raw": { ...emptyStep },
       segments: { ...emptyStep },
+      semantic: { ...emptyStep },
       cut: { ...emptyStep },
       captions: { ...emptyStep },
     },

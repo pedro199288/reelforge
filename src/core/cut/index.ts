@@ -132,7 +132,7 @@ async function cutWithFilterComplex(
   execSync(cmd, {
     encoding: "utf-8",
     stdio: "pipe",
-    maxBuffer: 50 * 1024 * 1024,
+    maxBuffer: 200 * 1024 * 1024,
   });
 }
 
@@ -173,7 +173,7 @@ async function cutWithConcatDemuxer(
       execSync(cmd, {
         encoding: "utf-8",
         stdio: "pipe",
-        maxBuffer: 50 * 1024 * 1024,
+        maxBuffer: 200 * 1024 * 1024,
       });
     }
 
@@ -196,7 +196,7 @@ async function cutWithConcatDemuxer(
     execSync(concatCmd, {
       encoding: "utf-8",
       stdio: "pipe",
-      maxBuffer: 50 * 1024 * 1024,
+      maxBuffer: 200 * 1024 * 1024,
     });
   } finally {
     // Cleanup temp files

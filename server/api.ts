@@ -22,7 +22,14 @@ import {
   type SegmentsResult,
   type CutResult,
   type CaptionsResult,
+  type CaptionsRawResult,
+  type SemanticResult,
 } from "./pipeline-utils";
+import {
+  analyzeSemanticCuts,
+  getSemanticStats,
+} from "../src/core/semantic/segments";
+import type { Caption } from "../src/core/script/align";
 import {
   detectSilences,
   getVideoDuration,
@@ -894,7 +901,7 @@ async function handleRequest(req: Request): Promise<Response> {
   // POST /api/pipeline/step - Execute a single pipeline step (SSE)
   if (path === "/api/pipeline/step" && req.method === "POST") {
     const body = await req.json();
-    const { videoId, filename, step, config } = body as {
+    const { videoId, filename, step, config, selectedSegments } = body as {
       videoId: string;
       filename: string;
       step: PipelineStep;
@@ -905,6 +912,7 @@ async function handleRequest(req: Request): Promise<Response> {
         codecCopy?: boolean;
         crf?: number;
       };
+      selectedSegments?: number[];
     };
 
     if (!videoId || !filename || !step) {
@@ -915,7 +923,7 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     // Validate step name
-    const validSteps: PipelineStep[] = ["silences", "segments", "cut", "captions"];
+    const validSteps: PipelineStep[] = ["silences", "segments", "cut", "captions", "captions-raw", "semantic"];
     if (!validSteps.includes(step)) {
       return new Response(JSON.stringify({ error: `Invalid step: ${step}` }), {
         status: 400,
@@ -1057,23 +1065,44 @@ async function handleRequest(req: Request): Promise<Response> {
               throw new Error("Segments result not found");
             }
 
+            // Filter segments if selection is provided
+            let segmentsToUse = segmentsResult.segments;
+            if (selectedSegments && selectedSegments.length > 0) {
+              const selectedSet = new Set(selectedSegments);
+              segmentsToUse = segmentsResult.segments
+                .filter((s) => selectedSet.has(s.index))
+                .sort((a, b) => a.index - b.index);
+              sendEvent("progress", {
+                step,
+                progress: 15,
+                message: `Usando ${segmentsToUse.length} de ${segmentsResult.segments.length} segmentos seleccionados...`
+              });
+            }
+
+            if (segmentsToUse.length === 0) {
+              throw new Error("No hay segmentos seleccionados para cortar");
+            }
+
             const ext = extname(filename);
             const name = basename(filename, ext);
             const outputPath = join(process.cwd(), "public", "videos", `${name}-cut${ext}`);
 
             sendEvent("progress", { step, progress: 20, message: "Cortando video..." });
             // Use re-encoding (codecCopy=false) by default for precise frame-accurate cuts
-            await cutVideo(videoPath, segmentsResult.segments, outputPath, {
+            await cutVideo(videoPath, segmentsToUse, outputPath, {
               codecCopy: config?.codecCopy ?? false,
               crf: config?.crf ?? 18,
             });
+
+            // Calculate actual edited duration from selected segments
+            const editedDuration = segmentsToUse.reduce((sum, s) => sum + s.duration, 0);
 
             sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
             const result: CutResult = {
               outputPath: outputPath.replace(process.cwd() + "/", ""),
               originalDuration: segmentsResult.totalDuration,
-              editedDuration: segmentsResult.editedDuration,
-              segmentsCount: segmentsResult.segments.length,
+              editedDuration,
+              segmentsCount: segmentsToUse.length,
               createdAt: new Date().toISOString(),
             };
 
@@ -1152,6 +1181,124 @@ async function handleRequest(req: Request): Promise<Response> {
             sendEvent("complete", { step, result });
             break;
           }
+
+          case "captions-raw": {
+            // Generate captions from RAW video (before cutting)
+            sendEvent("progress", { step, progress: 10, message: "Preparando video original..." });
+
+            if (!existsSync(videoPath)) {
+              throw new Error(`Video not found: ${videoPath}`);
+            }
+
+            sendEvent("progress", { step, progress: 20, message: "Generando subtítulos con Whisper (video original)..." });
+
+            // Run sub.mjs on the raw video
+            const proc = spawn(["node", "sub.mjs", videoPath], {
+              cwd: process.cwd(),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+
+            const exitCode = await proc.exited;
+
+            if (exitCode !== 0) {
+              throw new Error(`Subtitle generation failed with code ${exitCode}`);
+            }
+
+            // Determine output subs path (raw video subs)
+            const ext = extname(filename);
+            const name = basename(filename, ext);
+            const subsPath = join("public", "subs", `${name}.json`);
+
+            sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
+
+            // Count captions
+            let captionsCount = 0;
+            const fullSubsPath = join(process.cwd(), subsPath);
+            if (existsSync(fullSubsPath)) {
+              try {
+                const captions = JSON.parse(await Bun.file(fullSubsPath).text());
+                captionsCount = Array.isArray(captions) ? captions.length : 0;
+              } catch {
+                // Ignore parse errors
+              }
+            }
+
+            const result: CaptionsRawResult = {
+              captionsPath: subsPath,
+              captionsCount,
+              sourceVideo: "raw",
+              createdAt: new Date().toISOString(),
+            };
+
+            const resultPath = saveStepResult(videoId, step, result);
+            updateStepStatus(videoId, step, {
+              status: "completed",
+              completedAt: new Date().toISOString(),
+              resultFile: resultPath,
+            });
+
+            sendEvent("complete", { step, result });
+            break;
+          }
+
+          case "semantic": {
+            // Analyze semantic cuts using script + captions
+            sendEvent("progress", { step, progress: 10, message: "Cargando captions..." });
+
+            // Load captions from raw video
+            const captionsRawResult = loadStepResult<CaptionsRawResult>(videoId, "captions-raw");
+            if (!captionsRawResult) {
+              throw new Error("Captions (raw) not found. Run captions-raw step first.");
+            }
+
+            const captionsPath = join(process.cwd(), captionsRawResult.captionsPath);
+            if (!existsSync(captionsPath)) {
+              throw new Error(`Captions file not found: ${captionsRawResult.captionsPath}`);
+            }
+
+            const captions: Caption[] = JSON.parse(await Bun.file(captionsPath).text());
+
+            sendEvent("progress", { step, progress: 30, message: "Cargando silencios..." });
+
+            // Load silences
+            const silencesResult = loadStepResult<SilencesResult>(videoId, "silences");
+            if (!silencesResult) {
+              throw new Error("Silences not found. Run silences step first.");
+            }
+
+            sendEvent("progress", { step, progress: 50, message: "Analizando estructura semántica..." });
+
+            // Get script from request body if provided, otherwise use full transcript
+            const scriptText = (body as { script?: string }).script ||
+              captions.map(c => c.text).join(" ");
+
+            // Analyze semantic cuts
+            const analysis = analyzeSemanticCuts(scriptText, captions, silencesResult.silences);
+            const stats = getSemanticStats(analysis);
+
+            sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
+
+            const result: SemanticResult = {
+              ...stats,
+              overallConfidence: analysis.overallConfidence,
+              createdAt: new Date().toISOString(),
+            };
+
+            // Also save the full analysis for use by the segments step
+            const analysisPath = join(getPipelineDir(videoId), "semantic-analysis.json");
+            await Bun.write(analysisPath, JSON.stringify(analysis, null, 2));
+
+            const resultPath = saveStepResult(videoId, step, result);
+            updateStepStatus(videoId, step, {
+              status: "completed",
+              completedAt: new Date().toISOString(),
+              resultFile: resultPath,
+            });
+
+            sendEvent("complete", { step, result });
+            break;
+          }
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -1171,6 +1318,75 @@ async function handleRequest(req: Request): Promise<Response> {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
+      },
+    });
+  }
+
+  // GET /api/stream/* - Stream video files with HTTP Range Request support
+  if (path.startsWith("/api/stream/") && req.method === "GET") {
+    const filePath = path.replace("/api/stream/", "");
+    const fullPath = join(process.cwd(), "public", filePath);
+
+    if (!existsSync(fullPath)) {
+      return new Response(JSON.stringify({ error: "File not found" }), {
+        status: 404,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    const file = Bun.file(fullPath);
+    const fileSize = file.size;
+    const mimeType = file.type || "video/mp4";
+
+    // Check for Range header
+    const rangeHeader = req.headers.get("range");
+
+    if (rangeHeader) {
+      // Parse Range header (e.g., "bytes=0-1023")
+      const match = rangeHeader.match(/bytes=(\d*)-(\d*)/);
+      if (match) {
+        const start = match[1] ? parseInt(match[1], 10) : 0;
+        const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+
+        // Validate range
+        if (start >= fileSize || end >= fileSize || start > end) {
+          return new Response("Range Not Satisfiable", {
+            status: 416,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Range": `bytes */${fileSize}`,
+            },
+          });
+        }
+
+        const chunkSize = end - start + 1;
+
+        // Read the specific range from the file
+        const slice = file.slice(start, end + 1);
+
+        return new Response(slice, {
+          status: 206,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": mimeType,
+            "Content-Length": String(chunkSize),
+            "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=3600",
+          },
+        });
+      }
+    }
+
+    // No Range header - return full file
+    return new Response(file, {
+      status: 200,
+      headers: {
+        ...CORS_HEADERS,
+        "Content-Type": mimeType,
+        "Content-Length": String(fileSize),
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "public, max-age=3600",
       },
     });
   }
@@ -1201,6 +1417,9 @@ console.log("  POST /api/timeline/save    - Save zoom events to .zoom.json");
 console.log("");
 console.log("Audio:");
 console.log("  POST /api/waveform     - Extract waveform from video");
+console.log("");
+console.log("Streaming:");
+console.log("  GET  /api/stream/*     - Stream video files with HTTP Range support");
 console.log("");
 console.log("Pipeline reset:");
 console.log("  POST /api/reset        - Reset pipeline phases (cut, captions, metadata)\n");
