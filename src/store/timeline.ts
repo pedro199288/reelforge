@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { temporal, type TemporalState } from "zundo";
 import { nanoid } from "nanoid";
 import type { AlignedEvent, ZoomEvent, HighlightEvent } from "@/core/script/align";
+import type { SilenceRange } from "@/core/silence/detect";
 
 /**
  * Timeline zoom (video zoom effect, not timeline zoom level)
@@ -26,11 +27,23 @@ export interface TimelineHighlight {
 }
 
 /**
+ * Timeline segment (part of video with audio content)
+ * Represents regions to keep (inverse of silences)
+ */
+export interface TimelineSegment {
+  id: string;
+  startMs: number;
+  endMs: number;
+  enabled: boolean; // When disabled, this segment will be cut too
+}
+
+/**
  * Selection state for timeline elements
  */
 export type TimelineSelection =
   | { type: "zoom"; id: string }
   | { type: "highlight"; id: string }
+  | { type: "segment"; id: string }
   | null;
 
 /**
@@ -40,6 +53,8 @@ export interface TimelineState {
   videoId: string;
   zooms: TimelineZoom[];
   highlights: TimelineHighlight[];
+  segments: TimelineSegment[];
+  silences: SilenceRange[];
 }
 
 interface TimelineStore {
@@ -102,8 +117,23 @@ interface TimelineStore {
   clearSelection: () => void;
   deleteSelected: (videoId: string) => void;
 
+  // Segment actions (for silence removal editing)
+  importSilences: (
+    videoId: string,
+    silences: SilenceRange[],
+    durationMs: number
+  ) => void;
+  toggleSegment: (videoId: string, id: string) => void;
+  resizeSegment: (
+    videoId: string,
+    id: string,
+    field: "startMs" | "endMs",
+    newValue: number
+  ) => void;
+
   // Bulk actions
   clearTimeline: (videoId: string) => void;
+  clearSegments: (videoId: string) => void;
 
   // Import/Export
   importFromEvents: (videoId: string, events: AlignedEvent[]) => void;
@@ -126,6 +156,8 @@ function createEmptyTimeline(videoId: string): TimelineState {
     videoId,
     zooms: [],
     highlights: [],
+    segments: [],
+    silences: [],
   };
 }
 
@@ -320,10 +352,109 @@ export const useTimelineStore = create<TimelineStore>()(
 
           if (selection.type === "zoom") {
             get().deleteZoom(videoId, selection.id);
-          } else {
+          } else if (selection.type === "highlight") {
             get().deleteHighlight(videoId, selection.id);
           }
+          // Note: segments are not deleted, only toggled enabled/disabled
         },
+
+        // Segment actions (for silence removal editing)
+        importSilences: (videoId, silences, durationMs) => {
+          // Convert silences to segments (inverse - regions with audio)
+          const segments: TimelineSegment[] = [];
+          let cursor = 0;
+          const paddingMs = 50; // 50ms padding
+
+          const sorted = [...silences].sort((a, b) => a.start - b.start);
+
+          for (const silence of sorted) {
+            const silenceStartMs = silence.start * 1000;
+            const silenceEndMs = silence.end * 1000;
+            const segmentEnd = Math.max(cursor, silenceStartMs - paddingMs);
+
+            if (segmentEnd > cursor + 100) {
+              // Minimum 100ms of content
+              segments.push({
+                id: nanoid(8),
+                startMs: cursor,
+                endMs: segmentEnd,
+                enabled: true,
+              });
+            }
+
+            cursor = silenceEndMs + paddingMs;
+          }
+
+          // Final segment (after last silence)
+          if (cursor < durationMs - 100) {
+            segments.push({
+              id: nanoid(8),
+              startMs: cursor,
+              endMs: durationMs,
+              enabled: true,
+            });
+          }
+
+          set((state) => {
+            const timeline = state.timelines[videoId] || createEmptyTimeline(videoId);
+            return {
+              timelines: {
+                ...state.timelines,
+                [videoId]: {
+                  ...timeline,
+                  segments: segments.sort((a, b) => a.startMs - b.startMs),
+                  silences,
+                },
+              },
+            };
+          });
+        },
+
+        toggleSegment: (videoId, id) =>
+          set((state) => {
+            const timeline = state.timelines[videoId];
+            if (!timeline) return state;
+
+            return {
+              timelines: {
+                ...state.timelines,
+                [videoId]: {
+                  ...timeline,
+                  segments: timeline.segments.map((s) =>
+                    s.id === id ? { ...s, enabled: !s.enabled } : s
+                  ),
+                },
+              },
+            };
+          }),
+
+        resizeSegment: (videoId, id, field, newValue) =>
+          set((state) => {
+            const timeline = state.timelines[videoId];
+            if (!timeline) return state;
+
+            return {
+              timelines: {
+                ...state.timelines,
+                [videoId]: {
+                  ...timeline,
+                  segments: timeline.segments
+                    .map((s) => {
+                      if (s.id !== id) return s;
+                      // Ensure valid range
+                      if (field === "startMs") {
+                        const newStart = Math.max(0, Math.min(newValue, s.endMs - 100));
+                        return { ...s, startMs: newStart };
+                      } else {
+                        const newEnd = Math.max(s.startMs + 100, newValue);
+                        return { ...s, endMs: newEnd };
+                      }
+                    })
+                    .sort((a, b) => a.startMs - b.startMs),
+                },
+              },
+            };
+          }),
 
         // Bulk actions
         clearTimeline: (videoId) =>
@@ -334,6 +465,25 @@ export const useTimelineStore = create<TimelineStore>()(
             },
             selection: null,
           })),
+
+        clearSegments: (videoId) =>
+          set((state) => {
+            const timeline = state.timelines[videoId];
+            if (!timeline) return state;
+
+            return {
+              timelines: {
+                ...state.timelines,
+                [videoId]: {
+                  ...timeline,
+                  segments: [],
+                  silences: [],
+                },
+              },
+              selection:
+                state.selection?.type === "segment" ? null : state.selection,
+            };
+          }),
 
         // Import from AlignedEvent[] format (from .zoom.json)
         importFromEvents: (videoId, events) => {
@@ -359,16 +509,22 @@ export const useTimelineStore = create<TimelineStore>()(
             }
           }
 
-          set((state) => ({
-            timelines: {
-              ...state.timelines,
-              [videoId]: {
-                videoId,
-                zooms: zooms.sort((a, b) => a.startMs - b.startMs),
-                highlights: highlights.sort((a, b) => a.startMs - b.startMs),
+          set((state) => {
+            const existingTimeline = state.timelines[videoId];
+            return {
+              timelines: {
+                ...state.timelines,
+                [videoId]: {
+                  videoId,
+                  zooms: zooms.sort((a, b) => a.startMs - b.startMs),
+                  highlights: highlights.sort((a, b) => a.startMs - b.startMs),
+                  // Preserve existing segments/silences
+                  segments: existingTimeline?.segments || [],
+                  silences: existingTimeline?.silences || [],
+                },
               },
-            },
-          }));
+            };
+          });
         },
 
         // Export to AlignedEvent[] format (for .zoom.json)
@@ -463,6 +619,12 @@ export const useVideoZooms = (videoId: string) =>
 export const useVideoHighlights = (videoId: string) =>
   useTimelineStore((state) => state.timelines[videoId]?.highlights || []);
 
+export const useVideoSegments = (videoId: string) =>
+  useTimelineStore((state) => state.timelines[videoId]?.segments || []);
+
+export const useVideoSilences = (videoId: string) =>
+  useTimelineStore((state) => state.timelines[videoId]?.silences || []);
+
 // Actions hooks (stable references)
 export const useTimelineActions = () =>
   useTimelineStore((state) => ({
@@ -486,7 +648,11 @@ export const useTimelineActions = () =>
     select: state.select,
     clearSelection: state.clearSelection,
     deleteSelected: state.deleteSelected,
+    importSilences: state.importSilences,
+    toggleSegment: state.toggleSegment,
+    resizeSegment: state.resizeSegment,
     clearTimeline: state.clearTimeline,
+    clearSegments: state.clearSegments,
     importFromEvents: state.importFromEvents,
     exportToEvents: state.exportToEvents,
     getTimeline: state.getTimeline,

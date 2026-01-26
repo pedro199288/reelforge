@@ -54,6 +54,7 @@ function RootLayout() {
           <NavLink to="/pipeline">Pipeline</NavLink>
           <NavLink to="/batch">Batch</NavLink>
           <NavLink to="/studio">Studio</NavLink>
+          <NavLink to="/editor">Editor</NavLink>
         </nav>
         <div className="ml-auto flex items-center gap-1">
           <Button
