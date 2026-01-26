@@ -12,6 +12,7 @@ import type { Video } from "@/components/VideoList";
 import { useWorkspaceStore } from "@/store/workspace";
 import { useTimelineStore } from "@/store/timeline";
 import { ScriptAlignmentPanel } from "@/components/ScriptAlignmentPanel";
+import { TakeDetectionPanel } from "@/components/TakeDetectionPanel";
 import type { Caption } from "@/core/script/align";
 import { VideoSidebarSkeleton } from "@/components/VideoSidebarSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1142,6 +1143,14 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                   }
                                   return undefined;
                                 })()}
+                              />
+                            )}
+
+                            {/* Take detection panel */}
+                            {step.key === "take-selection" && (
+                              <TakeDetectionPanel
+                                videoId={selectedVideo.id}
+                                captions={captions}
                               />
                             )}
 
