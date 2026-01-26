@@ -175,10 +175,15 @@ function StudioPage() {
       .catch(() => setCaptions([]));
   }, [selectedVideo]);
 
-  // Sync timeline playhead changes to player
+  // Sync timeline playhead changes to player (only when NOT playing)
+  // During playback, the player is the source of truth and updates the store
+  // This effect only handles manual seeks from timeline UI
   useEffect(() => {
     const player = playerRef.current;
     if (!player || !videoDuration) return;
+
+    // Skip sync during playback - player is source of truth
+    if (isPlaying) return;
 
     // Skip if this change came from the player itself
     if (isSyncingFromPlayer.current) {
@@ -194,7 +199,7 @@ function StudioPage() {
       isSyncingToPlayer.current = true;
       player.seekTo(targetFrame);
     }
-  }, [timelinePlayhead, videoDuration, fps]);
+  }, [timelinePlayhead, videoDuration, fps, isPlaying]);
 
   // Sync timeline play/pause state to player
   useEffect(() => {
@@ -208,30 +213,35 @@ function StudioPage() {
     }
   }, [timelineIsPlaying, isPlaying]);
 
-  // Sync player frame updates to timeline (during playback)
+  // Sync player frame updates to timeline (during playback only)
+  // Track last synced value to avoid unnecessary store updates
+  const lastSyncedMs = useRef<number>(-1);
+
   useEffect(() => {
     const player = playerRef.current;
-    if (!player) return;
+    // Only run RAF loop when playing
+    if (!player || !isPlaying) return;
 
-    const handleFrameUpdate = () => {
-      const currentFrame = player.getCurrentFrame();
-      const currentMs = (currentFrame / fps) * 1000;
-      isSyncingFromPlayer.current = true;
-      setPlayhead(currentMs);
-    };
-
-    // Use requestAnimationFrame for smooth updates during playback
     let rafId: number;
     const updateLoop = () => {
-      if (isPlaying) {
-        handleFrameUpdate();
+      const currentFrame = player.getCurrentFrame();
+      const currentMs = (currentFrame / fps) * 1000;
+
+      // Only update store if value changed significantly (avoid excessive updates)
+      if (Math.abs(currentMs - lastSyncedMs.current) > 16) {
+        lastSyncedMs.current = currentMs;
+        isSyncingFromPlayer.current = true;
+        setPlayhead(currentMs);
       }
+
       rafId = requestAnimationFrame(updateLoop);
     };
 
     rafId = requestAnimationFrame(updateLoop);
 
-    return () => cancelAnimationFrame(rafId);
+    return () => {
+      cancelAnimationFrame(rafId);
+    };
   }, [isPlaying, fps, setPlayhead]);
 
   const handleVideoSelect = useCallback(

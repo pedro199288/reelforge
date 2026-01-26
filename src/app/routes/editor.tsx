@@ -180,10 +180,15 @@ function EditorPage() {
     return () => video.removeEventListener("timeupdate", handleTimeUpdate);
   }, [videoDuration, setPlayhead]);
 
-  // Sync timeline playhead to video
+  // Sync timeline playhead to video (only when NOT playing)
+  // During playback, the video is the source of truth and updates the store
+  // This effect only handles manual seeks from timeline UI
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !videoDuration) return;
+
+    // Skip sync during playback - video is source of truth
+    if (isPlaying) return;
 
     // Skip if this change came from the video itself
     if (isSyncingFromVideo.current) {
@@ -196,7 +201,7 @@ function EditorPage() {
       isSyncingToVideo.current = true;
       video.currentTime = targetTime;
     }
-  }, [playheadMs, videoDuration]);
+  }, [playheadMs, videoDuration, isPlaying]);
 
   // Play/pause sync
   useEffect(() => {
