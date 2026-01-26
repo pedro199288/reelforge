@@ -19,6 +19,8 @@ export interface ScoreBreakdown {
   duration: number;
   /** Text completeness/similarity score (0-100) */
   completeness: number;
+  /** Whisper transcription confidence score (0-100) */
+  whisperConfidence: number;
 }
 
 /**
@@ -46,6 +48,7 @@ export interface ScoringConfig {
     energy: number;
     duration: number;
     completeness: number;
+    whisperConfidence: number;
   };
   /** Whether to apply bonus for shorter takes */
   preferShorter: boolean;
@@ -58,11 +61,12 @@ export interface ScoringConfig {
  */
 export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
   weights: {
-    clarity: 0.25,
-    fluency: 0.25,
-    energy: 0.20,
+    clarity: 0.20,
+    fluency: 0.20,
+    energy: 0.15,
     duration: 0.15,
     completeness: 0.15,
+    whisperConfidence: 0.15,
   },
   preferShorter: true,
   targetDurationRatio: 0.9, // Slightly shorter than average is ideal
@@ -164,6 +168,16 @@ function calculateCompletenessScore(similarity: number): number {
 }
 
 /**
+ * Calculate Whisper confidence score
+ * Higher confidence from Whisper indicates clearer, more accurate transcription
+ */
+function calculateWhisperConfidenceScore(confidence: number): number {
+  // Confidence is already 0-1, scale to 0-100
+  // Apply slight curve to emphasize high-confidence takes
+  return Math.pow(confidence, 0.8) * 100;
+}
+
+/**
  * Score a single take
  */
 export function scoreTake(
@@ -192,6 +206,7 @@ export function scoreTake(
       config
     ),
     completeness: calculateCompletenessScore(take.similarity),
+    whisperConfidence: calculateWhisperConfidenceScore(take.whisperConfidence),
   };
 
   // Calculate weighted total
@@ -200,7 +215,8 @@ export function scoreTake(
     breakdown.fluency * config.weights.fluency +
     breakdown.energy * config.weights.energy +
     breakdown.duration * config.weights.duration +
-    breakdown.completeness * config.weights.completeness;
+    breakdown.completeness * config.weights.completeness +
+    breakdown.whisperConfidence * config.weights.whisperConfidence;
 
   return {
     takeIndex: take.index,
@@ -285,7 +301,7 @@ export function scoreGroupSimple(
   const minDurationMs = Math.min(...durations);
   const maxDurationMs = Math.max(...durations);
 
-  // Score each take using only text similarity and duration
+  // Score each take using only text similarity, duration, and whisper confidence
   const scores: TakeScore[] = group.takes.map((take, index) => {
     const durationScore = calculateDurationScore(
       take.durationMs,
@@ -295,23 +311,26 @@ export function scoreGroupSimple(
       config
     );
     const completenessScore = calculateCompletenessScore(take.similarity);
+    const whisperScore = calculateWhisperConfidenceScore(take.whisperConfidence);
 
-    // Without audio analysis, weight duration and completeness more heavily
+    // Without audio analysis, weight duration, completeness, and whisper confidence more heavily
     const breakdown: ScoreBreakdown = {
       clarity: 50, // Default/neutral
       fluency: 50, // Default/neutral
       energy: 50, // Default/neutral
       duration: durationScore,
       completeness: completenessScore,
+      whisperConfidence: whisperScore,
     };
 
-    // Recalculate weights for simple scoring
+    // Recalculate weights for simple scoring (sum = 1)
     const simpleWeights = {
-      clarity: 0.1,
-      fluency: 0.1,
-      energy: 0.1,
-      duration: 0.35,
-      completeness: 0.35,
+      clarity: 0.05,
+      fluency: 0.05,
+      energy: 0.05,
+      duration: 0.30,
+      completeness: 0.30,
+      whisperConfidence: 0.25,
     };
 
     const total =
@@ -319,7 +338,8 @@ export function scoreGroupSimple(
       breakdown.fluency * simpleWeights.fluency +
       breakdown.energy * simpleWeights.energy +
       breakdown.duration * simpleWeights.duration +
-      breakdown.completeness * simpleWeights.completeness;
+      breakdown.completeness * simpleWeights.completeness +
+      breakdown.whisperConfidence * simpleWeights.whisperConfidence;
 
     return {
       takeIndex: index,

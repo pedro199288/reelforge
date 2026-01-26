@@ -131,6 +131,14 @@ export function TakeCard({
             <span className="text-muted-foreground">Duración</span>
             <span>{Math.round(score.breakdown.duration)}</span>
           </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Confianza</span>
+            <span>{Math.round(score.breakdown.whisperConfidence)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Completitud</span>
+            <span>{Math.round(score.breakdown.completeness)}</span>
+          </div>
         </div>
 
         {/* Similarity indicator */}

@@ -24,6 +24,8 @@ export interface Take {
   durationMs: number;
   /** Similarity score to the canonical phrase (0-1) */
   similarity: number;
+  /** Whisper transcription confidence (0-1), average of captions that form this take */
+  whisperConfidence: number;
 }
 
 /**
@@ -106,6 +108,7 @@ export function groupSimilarPhrases(
         text: caption.text,
         durationMs: caption.endMs - caption.startMs,
         similarity: 1, // First take is the canonical reference
+        whisperConfidence: caption.confidence ?? 1, // Use Whisper confidence, default to 1 if not available
       },
     ];
     assigned.add(i);
@@ -133,6 +136,7 @@ export function groupSimilarPhrases(
           text: otherCaption.text,
           durationMs: otherCaption.endMs - otherCaption.startMs,
           similarity: sim,
+          whisperConfidence: otherCaption.confidence ?? 1,
         });
         assigned.add(j);
       }
