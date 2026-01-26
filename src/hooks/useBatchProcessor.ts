@@ -13,7 +13,7 @@ import {
   notifyProcessingStart,
 } from "@/lib/notifications";
 
-const API_URL = "http://localhost:3003";
+const API_URL = "http://localhost:3012";
 
 interface BatchEvent {
   id?: string;

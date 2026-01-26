@@ -14,7 +14,7 @@ export default defineConfig({
   root: path.resolve(__dirname, "src/app"),
   publicDir: path.resolve(__dirname, "public"),
   server: {
-    port: 3000,
+    port: 3010,
   },
   build: {
     outDir: path.resolve(__dirname, "dist"),

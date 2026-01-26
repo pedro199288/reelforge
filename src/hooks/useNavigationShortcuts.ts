@@ -18,7 +18,7 @@ const NAVIGATION_KEYS: Record<string, string> = {
 export function useNavigationShortcuts(enabled = true) {
   const navigate = useNavigate();
   const pendingGRef = useRef(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     if (!enabled) return;

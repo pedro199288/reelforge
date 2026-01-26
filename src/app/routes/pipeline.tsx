@@ -20,7 +20,7 @@ import {
   type ProcessingStatus,
 } from "@/components/ProcessingStatusPanel";
 
-const API_URL = "http://localhost:3003";
+const API_URL = "http://localhost:3012";
 
 interface ProcessProgress {
   step: string;

@@ -64,7 +64,7 @@ function MediaPage() {
           const formData = new FormData();
           formData.append("file", file);
 
-          const response = await fetch("http://localhost:3003/api/import", {
+          const response = await fetch("http://localhost:3012/api/import", {
             method: "POST",
             body: formData,
           });

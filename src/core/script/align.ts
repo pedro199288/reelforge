@@ -1,4 +1,4 @@
-import type { ParsedScript, ZoomMarker, HighlightMarker, ScriptMarker } from "./types";
+import type { ParsedScript } from "./types";
 
 /**
  * Caption from Whisper transcription
@@ -102,39 +102,6 @@ export function similarity(a: string, b: string): number {
   const maxLen = Math.max(normA.length, normB.length);
 
   return 1 - distance / maxLen;
-}
-
-/**
- * Find the best matching caption window for a script segment
- */
-function findBestMatch(
-  segment: string,
-  captions: Caption[],
-  startIndex: number,
-  windowSize: number,
-): { index: number; length: number; score: number } | null {
-  const normSegment = normalize(segment);
-  if (!normSegment) return null;
-
-  let bestMatch = { index: -1, length: 0, score: 0 };
-
-  // Try different window sizes
-  for (let len = 1; len <= Math.min(windowSize, captions.length - startIndex); len++) {
-    for (let i = startIndex; i <= captions.length - len; i++) {
-      const captionWindow = captions
-        .slice(i, i + len)
-        .map((c) => c.text)
-        .join(" ");
-
-      const score = similarity(normSegment, captionWindow);
-
-      if (score > bestMatch.score) {
-        bestMatch = { index: i, length: len, score };
-      }
-    }
-  }
-
-  return bestMatch.score > 0.5 ? bestMatch : null;
 }
 
 /**

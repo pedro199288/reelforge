@@ -9,7 +9,7 @@ import { spawn, type Subprocess } from "bun";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, basename, extname, dirname } from "node:path";
 
-const PORT = 3003;
+const PORT = 3012;
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -87,7 +87,7 @@ async function handleProcessVideo(
 
   // SSE stream for real-time progress
   const encoder = new TextEncoder();
-  let controller: ReadableStreamDefaultController<Uint8Array>;
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
 
   const stream = new ReadableStream<Uint8Array>({
     start(c) {
@@ -444,7 +444,7 @@ async function handleRequest(req: Request): Promise<Response> {
 
     // SSE stream for batch progress
     const encoder = new TextEncoder();
-    let controller: ReadableStreamDefaultController<Uint8Array>;
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
 
     const stream = new ReadableStream<Uint8Array>({
       start(c) {
@@ -479,7 +479,6 @@ async function handleRequest(req: Request): Promise<Response> {
         timestamp: new Date().toISOString(),
       });
 
-      const videoMap = new Map(videos.map((v) => [v.id, v]));
       const pending = [...videos];
       const activeProcesses: Array<Promise<void>> = [];
 

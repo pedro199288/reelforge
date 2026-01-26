@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import type { WaveformData } from "@/core/audio/waveform";
 import { downsampleWaveform } from "@/core/audio/waveform";
 
-const API_BASE = "http://localhost:3003";
+const API_BASE = "http://localhost:3012";
 
 // Cache waveform data in memory
 const waveformCache = new Map<string, WaveformData>();

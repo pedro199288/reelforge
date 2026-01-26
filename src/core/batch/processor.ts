@@ -2,9 +2,8 @@
  * Batch processing system for parallel video processing
  */
 
-import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, basename, join } from "node:path";
+import { basename, join } from "node:path";
 import { detectSilences, getVideoDuration } from "../silence/detect";
 import { silencesToSegments } from "../silence/segments";
 import { cutVideo } from "../cut/index";
