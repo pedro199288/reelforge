@@ -235,6 +235,7 @@ function PipelinePage() {
 
   // Individual step execution state
   const [backendStatus, setBackendStatus] = useState<BackendPipelineStatus | null>(null);
+  const [allVideoStatuses, setAllVideoStatuses] = useState<Record<string, BackendPipelineStatus>>({});
   const [stepProcessing, setStepProcessing] = useState<PipelineStep | null>(null);
   const [stepProgress, setStepProgress] = useState<ProcessProgress | null>(null);
   const [stepResults, setStepResults] = useState<Record<string, StepResult>>({});
@@ -272,6 +273,8 @@ function PipelinePage() {
       if (res.ok) {
         const status = await res.json() as BackendPipelineStatus;
         setBackendStatus(status);
+        // Also update the allVideoStatuses map
+        setAllVideoStatuses(prev => ({ ...prev, [videoId]: status }));
 
         // Load results for completed steps
         const completedSteps = Object.entries(status.steps)
@@ -505,6 +508,26 @@ function PipelinePage() {
     }
   }, [selectedVideo, loadPipelineStatus]);
 
+  // Load pipeline status for all videos (for sidebar display)
+  useEffect(() => {
+    const loadAllStatuses = async () => {
+      for (const video of videos) {
+        try {
+          const res = await fetch(
+            `${API_URL}/api/pipeline/status?videoId=${encodeURIComponent(video.id)}&filename=${encodeURIComponent(video.filename)}`
+          );
+          if (res.ok) {
+            const status = await res.json() as BackendPipelineStatus;
+            setAllVideoStatuses(prev => ({ ...prev, [video.id]: status }));
+          }
+        } catch (err) {
+          console.error("Error loading pipeline status for sidebar:", err);
+        }
+      }
+    };
+    loadAllStatuses();
+  }, [videos]);
+
   // Load captions when video changes (for script alignment)
   useEffect(() => {
     if (!selectedVideo) {
@@ -663,7 +686,15 @@ function PipelinePage() {
   // Refresh callback for reset actions
   const handleRefresh = useCallback(() => {
     loadVideos(false);
-  }, [loadVideos]);
+    // Clear the cached pipeline statuses so they reload from backend
+    setAllVideoStatuses({});
+    // Also reset the current backend status
+    setBackendStatus(null);
+    // Reload the pipeline status for the selected video
+    if (selectedVideo) {
+      loadPipelineStatus(selectedVideo.id, selectedVideo.filename);
+    }
+  }, [loadVideos, selectedVideo, loadPipelineStatus]);
 
   useEffect(() => {
     loadVideos(true);
@@ -820,8 +851,8 @@ bunx remotion render src/index.ts CaptionedVideo \\
               const videoTimeline = timelines[video.id];
               const hasScriptEvts = videoTimeline &&
                 (videoTimeline.zooms.length > 0 || videoTimeline.highlights.length > 0);
-              // Use backendStatus for the selected video
-              const videoBackendStatus = selectedVideo?.id === video.id ? backendStatus : null;
+              // Use allVideoStatuses map to get the correct status for each video
+              const videoBackendStatus = allVideoStatuses[video.id] ?? null;
               const state = getVideoPipelineState(video, hasTakes, hasScriptEvts, videoBackendStatus);
               const completed = getCompletedSteps(state);
               const videoStepInfo = pipelineStateToStepInfo(state);

@@ -16,6 +16,7 @@ import {
   canExecuteStep,
   saveStepResult,
   loadStepResult,
+  getPipelineDir,
   type PipelineStep,
   type SilencesResult,
   type SegmentsResult,
@@ -685,6 +686,17 @@ async function handleRequest(req: Request): Promise<Response> {
           const { unlinkSync } = await import("node:fs");
           unlinkSync(metadataJsonPath);
           deleted.push(`metadata/${nameWithoutExt}-cut.json`);
+        }
+      }
+
+      // Delete pipeline state directory when resetting all or cut
+      // This resets the pipeline status so the video shows as phase 1 again
+      if (phases.includes("all") || phases.includes("cut")) {
+        const pipelineDir = getPipelineDir(videoId);
+        if (existsSync(pipelineDir)) {
+          const { rmSync } = await import("node:fs");
+          rmSync(pipelineDir, { recursive: true, force: true });
+          deleted.push(`pipeline/${videoId}`);
         }
       }
 
