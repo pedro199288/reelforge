@@ -63,6 +63,11 @@ export interface ConfigProfile {
   config: PipelineConfig;
 }
 
+export interface ScriptState {
+  rawScript: string;
+  lastUpdated?: string;
+}
+
 interface WorkspaceStore {
   // Selecciones por video (videoId -> indices seleccionados)
   selections: Record<string, number[]>;
@@ -82,6 +87,9 @@ interface WorkspaceStore {
 
   // Config override por video
   videoConfigs: Record<string, Partial<PipelineConfig>>;
+
+  // Scripts por video (para alineación con transcripción)
+  scripts: Record<string, ScriptState>;
 
   // Actions - Selections
   setSelection: (videoId: string, indices: number[]) => void;
@@ -112,6 +120,10 @@ interface WorkspaceStore {
   setVideoConfig: (videoId: string, config: Partial<PipelineConfig>) => void;
   clearVideoConfig: (videoId: string) => void;
   getEffectiveConfig: (videoId?: string) => PipelineConfig;
+
+  // Actions - Scripts
+  setScript: (videoId: string, script: string) => void;
+  clearScript: (videoId: string) => void;
 }
 
 const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
@@ -184,6 +196,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         profiles: DEFAULT_PROFILES,
         activeProfileId: null,
         videoConfigs: {},
+        scripts: {},
 
         // Selection actions
         setSelection: (videoId, indices) =>
@@ -356,6 +369,25 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             output: { ...state.pipelineConfig.output, ...videoConfig.output },
           };
         },
+
+        // Script actions
+        setScript: (videoId, script) =>
+          set((state) => ({
+            scripts: {
+              ...state.scripts,
+              [videoId]: {
+                rawScript: script,
+                lastUpdated: new Date().toISOString(),
+              },
+            },
+          })),
+
+        clearScript: (videoId) =>
+          set((state) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [videoId]: _removed, ...rest } = state.scripts;
+            return { scripts: rest };
+          }),
       }),
       {
         name: "reelforge-workspace",
@@ -403,3 +435,6 @@ export const useRenderHistory = () =>
 
 export const useTakeSelections = (videoId: string) =>
   useWorkspaceStore((state) => state.takeSelections[videoId]);
+
+export const useScript = (videoId: string) =>
+  useWorkspaceStore((state) => state.scripts[videoId]);
