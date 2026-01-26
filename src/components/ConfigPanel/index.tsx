@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import { useWorkspaceStore } from "@/store/workspace";
 import type {
   TakeSelectionCriteria,
@@ -30,6 +31,7 @@ import type {
   FPS,
   RenderQuality,
 } from "@/store/workspace";
+import { ProfileSelector } from "./ProfileSelector";
 
 interface ConfigPanelProps {
   open: boolean;
@@ -50,7 +52,13 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
           </SheetTitle>
         </SheetHeader>
 
-        <Accordion type="multiple" defaultValue={["silence", "takes", "output"]} className="mt-6">
+        <div className="mt-4">
+          <ProfileSelector />
+        </div>
+
+        <Separator className="my-4" />
+
+        <Accordion type="multiple" defaultValue={["silence", "takes", "output"]}>
           {/* Silence Detection Section */}
           <AccordionItem value="silence">
             <AccordionTrigger>Deteccion de Silencios</AccordionTrigger>

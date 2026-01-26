@@ -54,6 +54,14 @@ export interface RenderEntry {
   outputPath: string;
 }
 
+export interface ConfigProfile {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  config: PipelineConfig;
+}
+
 interface WorkspaceStore {
   // Selecciones por video (videoId -> indices seleccionados)
   selections: Record<string, number[]>;
@@ -66,6 +74,13 @@ interface WorkspaceStore {
 
   // Selecciones de tomas (videoId -> TakeSelection)
   takeSelections: Record<string, TakeSelection>;
+
+  // Perfiles de configuracion
+  profiles: ConfigProfile[];
+  activeProfileId: string | null;
+
+  // Config override por video
+  videoConfigs: Record<string, Partial<PipelineConfig>>;
 
   // Actions - Selections
   setSelection: (videoId: string, indices: number[]) => void;
@@ -84,6 +99,18 @@ interface WorkspaceStore {
   setTakeSelection: (videoId: string, phraseGroupId: string, takeIndex: number) => void;
   setAllTakeSelections: (videoId: string, selections: Record<string, number>, autoSelected: boolean) => void;
   clearTakeSelections: (videoId: string) => void;
+
+  // Actions - Profiles
+  createProfile: (name: string, description?: string) => string;
+  updateProfile: (id: string, updates: Partial<Omit<ConfigProfile, "id" | "createdAt">>) => void;
+  deleteProfile: (id: string) => void;
+  loadProfile: (id: string) => void;
+  saveCurrentToProfile: (id: string) => void;
+
+  // Actions - Video Config
+  setVideoConfig: (videoId: string, config: Partial<PipelineConfig>) => void;
+  clearVideoConfig: (videoId: string) => void;
+  getEffectiveConfig: (videoId?: string) => PipelineConfig;
 }
 
 const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
@@ -105,15 +132,57 @@ const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   },
 };
 
+const DEFAULT_PROFILES: ConfigProfile[] = [
+  {
+    id: "tiktok-vertical",
+    name: "TikTok Vertical",
+    description: "9:16, 30fps, silencios agresivos",
+    createdAt: new Date().toISOString(),
+    config: {
+      silence: { thresholdDb: -35, minDurationSec: 0.3, paddingSec: 0.03 },
+      takes: { minSimilarity: 80, autoSelectBest: true, selectionCriteria: "energy" },
+      output: { maxDurationSec: 180, resolution: "1080x1920", fps: 30, quality: "high" },
+    },
+  },
+  {
+    id: "youtube-shorts",
+    name: "YouTube Shorts",
+    description: "9:16, 60fps, calidad alta",
+    createdAt: new Date().toISOString(),
+    config: {
+      silence: { thresholdDb: -40, minDurationSec: 0.4, paddingSec: 0.05 },
+      takes: { minSimilarity: 85, autoSelectBest: true, selectionCriteria: "clarity" },
+      output: { maxDurationSec: 60, resolution: "1080x1920", fps: 60, quality: "high" },
+    },
+  },
+  {
+    id: "instagram-reels",
+    name: "Instagram Reels",
+    description: "9:16, 30fps, duracion 90s max",
+    createdAt: new Date().toISOString(),
+    config: {
+      silence: { thresholdDb: -38, minDurationSec: 0.4, paddingSec: 0.04 },
+      takes: { minSimilarity: 80, autoSelectBest: true, selectionCriteria: "fluency" },
+      output: { maxDurationSec: 90, resolution: "1080x1920", fps: 30, quality: "high" },
+    },
+  },
+];
+
+let profileIdCounter = 0;
+const generateProfileId = () => `profile-${Date.now()}-${++profileIdCounter}`;
+
 export const useWorkspaceStore = create<WorkspaceStore>()(
   persist(
     temporal(
-      (set) => ({
+      (set, get) => ({
         // Initial state
         selections: {},
         pipelineConfig: DEFAULT_PIPELINE_CONFIG,
         renderHistory: [],
         takeSelections: {},
+        profiles: DEFAULT_PROFILES,
+        activeProfileId: null,
+        videoConfigs: {},
 
         // Selection actions
         setSelection: (videoId, indices) =>
@@ -208,6 +277,84 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             const { [videoId]: _removed, ...rest } = state.takeSelections;
             return { takeSelections: rest };
           }),
+
+        // Profile actions
+        createProfile: (name, description) => {
+          const id = generateProfileId();
+          const state = get();
+          set({
+            profiles: [
+              ...state.profiles,
+              {
+                id,
+                name,
+                description,
+                createdAt: new Date().toISOString(),
+                config: { ...state.pipelineConfig },
+              },
+            ],
+            activeProfileId: id,
+          });
+          return id;
+        },
+
+        updateProfile: (id, updates) =>
+          set((state) => ({
+            profiles: state.profiles.map((p) =>
+              p.id === id ? { ...p, ...updates } : p
+            ),
+          })),
+
+        deleteProfile: (id) =>
+          set((state) => ({
+            profiles: state.profiles.filter((p) => p.id !== id),
+            activeProfileId: state.activeProfileId === id ? null : state.activeProfileId,
+          })),
+
+        loadProfile: (id) =>
+          set((state) => {
+            const profile = state.profiles.find((p) => p.id === id);
+            if (!profile) return {};
+            return {
+              pipelineConfig: { ...profile.config },
+              activeProfileId: id,
+            };
+          }),
+
+        saveCurrentToProfile: (id) =>
+          set((state) => ({
+            profiles: state.profiles.map((p) =>
+              p.id === id ? { ...p, config: { ...state.pipelineConfig } } : p
+            ),
+          })),
+
+        // Video config actions
+        setVideoConfig: (videoId, config) =>
+          set((state) => ({
+            videoConfigs: {
+              ...state.videoConfigs,
+              [videoId]: { ...state.videoConfigs[videoId], ...config },
+            },
+          })),
+
+        clearVideoConfig: (videoId) =>
+          set((state) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [videoId]: _removed, ...rest } = state.videoConfigs;
+            return { videoConfigs: rest };
+          }),
+
+        getEffectiveConfig: (videoId) => {
+          const state = get();
+          if (!videoId) return state.pipelineConfig;
+          const videoConfig = state.videoConfigs[videoId];
+          if (!videoConfig) return state.pipelineConfig;
+          return {
+            silence: { ...state.pipelineConfig.silence, ...videoConfig.silence },
+            takes: { ...state.pipelineConfig.takes, ...videoConfig.takes },
+            output: { ...state.pipelineConfig.output, ...videoConfig.output },
+          };
+        },
       }),
       {
         // Limit history to 50 actions
