@@ -23,11 +23,16 @@ export const CaptionedVideoForPlayer: React.FC<{
   src: string;
   highlightColor?: string;
   fontFamily?: FontId;
-}> = ({ src, highlightColor, fontFamily = DEFAULT_FONT }) => {
+  /** Optional zoom/highlight events from timeline editor (takes precedence over file) */
+  timelineEvents?: AlignedEvent[];
+}> = ({ src, highlightColor, fontFamily = DEFAULT_FONT, timelineEvents }) => {
   const [subtitles, setSubtitles] = useState<Caption[]>([]);
-  const [zoomEvents, setZoomEvents] = useState<AlignedEvent[]>([]);
+  const [fileZoomEvents, setFileZoomEvents] = useState<AlignedEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { fps } = useVideoConfig();
+
+  // Use timeline events if provided, otherwise fall back to file events
+  const zoomEvents = timelineEvents ?? fileZoomEvents;
 
   const subtitlesFile = src
     .replace(/.mp4$/, ".json")
@@ -54,15 +59,17 @@ export const CaptionedVideoForPlayer: React.FC<{
   }, [subtitlesFile, fontFamily]);
 
   const fetchZoomEvents = useCallback(async () => {
+    // Skip fetching if timeline events are provided
+    if (timelineEvents !== undefined) return;
     try {
       const res = await fetch(zoomFile);
       if (!res.ok) return;
       const data = (await res.json()) as AlignedEvent[];
-      setZoomEvents(data);
+      setFileZoomEvents(data);
     } catch {
       // Zoom events are optional
     }
-  }, [zoomFile]);
+  }, [zoomFile, timelineEvents]);
 
   useEffect(() => {
     const loadAll = async () => {

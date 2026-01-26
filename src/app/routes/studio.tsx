@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Player, type PlayerRef } from "@remotion/player";
 import { CaptionedVideoForPlayer } from "@/CaptionedVideo/ForPlayer";
@@ -11,6 +11,14 @@ import type { Video } from "@/components/VideoList";
 import { useSubtitleStore, HIGHLIGHT_COLORS, AVAILABLE_FONTS } from "@/store/subtitles";
 import { useTimelineShortcuts, TIMELINE_SHORTCUTS } from "@/hooks/useTimelineShortcuts";
 import { useHotkeys } from "react-hotkeys-hook";
+import { Timeline } from "@/components/Timeline";
+import {
+  useTimelineStore,
+  useVideoTimeline,
+  usePlayhead,
+  useIsPlaying,
+} from "@/store/timeline";
+import type { AlignedEvent, ZoomEvent, HighlightEvent, Caption } from "@/core/script/align";
 
 interface VideoManifest {
   videos: Video[];
@@ -34,8 +42,43 @@ function StudioPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [captions, setCaptions] = useState<Caption[]>([]);
 
   const { highlightColor, setHighlightColor, fontFamily, setFontFamily } = useSubtitleStore();
+
+  // Timeline store integration
+  const { setPlayhead, play: timelinePlay, pause: timelinePause } = useTimelineStore();
+  const timelinePlayhead = usePlayhead();
+  const timelineIsPlaying = useIsPlaying();
+  const timeline = useVideoTimeline(selectedVideo?.id ?? "");
+
+  // Convert timeline store data to AlignedEvent[] for player
+  const timelineEvents = useMemo<AlignedEvent[]>(() => {
+    if (!selectedVideo) return [];
+    const events: AlignedEvent[] = [];
+
+    for (const zoom of timeline.zooms) {
+      events.push({
+        type: "zoom",
+        style: zoom.type,
+        timestampMs: zoom.startMs,
+        durationMs: zoom.durationMs,
+        confidence: 1,
+      } satisfies ZoomEvent);
+    }
+
+    for (const highlight of timeline.highlights) {
+      events.push({
+        type: "highlight",
+        word: highlight.word,
+        startMs: highlight.startMs,
+        endMs: highlight.endMs,
+        confidence: 1,
+      } satisfies HighlightEvent);
+    }
+
+    return events;
+  }, [selectedVideo, timeline.zooms, timeline.highlights]);
 
   const fps = 30;
   const durationInFrames = videoDuration ? Math.floor(videoDuration * fps) : 0;
@@ -106,6 +149,79 @@ function StudioPage() {
     };
   }, [selectedVideo]);
 
+  // Load captions when video changes
+  useEffect(() => {
+    if (!selectedVideo) {
+      setCaptions([]);
+      return;
+    }
+
+    const captionsFile = selectedVideo.filename
+      .replace(/.mp4$/, ".json")
+      .replace(/.mkv$/, ".json")
+      .replace(/.mov$/, ".json")
+      .replace(/.webm$/, ".json");
+
+    fetch(`/${captionsFile}`)
+      .then((res) => {
+        if (!res.ok) return [];
+        return res.json() as Promise<Caption[]>;
+      })
+      .then(setCaptions)
+      .catch(() => setCaptions([]));
+  }, [selectedVideo]);
+
+  // Sync timeline playhead changes to player
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player || !videoDuration) return;
+
+    const targetFrame = Math.round((timelinePlayhead / 1000) * fps);
+    const currentFrame = player.getCurrentFrame();
+
+    // Only seek if difference is significant (avoid feedback loops)
+    if (Math.abs(targetFrame - currentFrame) > 1) {
+      player.seekTo(targetFrame);
+    }
+  }, [timelinePlayhead, videoDuration, fps]);
+
+  // Sync timeline play/pause state to player
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+
+    if (timelineIsPlaying && !isPlaying) {
+      player.play();
+    } else if (!timelineIsPlaying && isPlaying) {
+      player.pause();
+    }
+  }, [timelineIsPlaying, isPlaying]);
+
+  // Sync player frame updates to timeline (during playback)
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+
+    const handleFrameUpdate = () => {
+      const currentFrame = player.getCurrentFrame();
+      const currentMs = (currentFrame / fps) * 1000;
+      setPlayhead(currentMs);
+    };
+
+    // Use requestAnimationFrame for smooth updates during playback
+    let rafId: number;
+    const updateLoop = () => {
+      if (isPlaying) {
+        handleFrameUpdate();
+      }
+      rafId = requestAnimationFrame(updateLoop);
+    };
+
+    rafId = requestAnimationFrame(updateLoop);
+
+    return () => cancelAnimationFrame(rafId);
+  }, [isPlaying, fps, setPlayhead]);
+
   const handleVideoSelect = useCallback(
     (video: Video) => {
       setSelectedVideo(video);
@@ -119,22 +235,35 @@ function StudioPage() {
     [navigate],
   );
 
-  // Listen to player events
+  // Listen to player events and sync with timeline store
   useEffect(() => {
     const player = playerRef.current;
     if (!player) return;
 
-    const onPlay = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
+    const onPlay = () => {
+      setIsPlaying(true);
+      timelinePlay();
+    };
+    const onPause = () => {
+      setIsPlaying(false);
+      timelinePause();
+    };
+    const onSeeked = () => {
+      const frame = player.getCurrentFrame();
+      const ms = (frame / fps) * 1000;
+      setPlayhead(ms);
+    };
 
     player.addEventListener("play", onPlay);
     player.addEventListener("pause", onPause);
+    player.addEventListener("seeked", onSeeked);
 
     return () => {
       player.removeEventListener("play", onPlay);
       player.removeEventListener("pause", onPause);
+      player.removeEventListener("seeked", onSeeked);
     };
-  }, [selectedVideo, videoDuration]);
+  }, [selectedVideo, videoDuration, fps, timelinePlay, timelinePause, setPlayhead]);
 
   const handleToggle = () => playerRef.current?.toggle();
   const handleSeekStart = () => playerRef.current?.seekTo(0);
@@ -224,6 +353,7 @@ function StudioPage() {
                   src: `/${selectedVideo.filename}`,
                   highlightColor,
                   fontFamily,
+                  timelineEvents: timelineEvents.length > 0 ? timelineEvents : undefined,
                 }}
                 durationInFrames={durationInFrames}
                 compositionWidth={1080}
@@ -244,6 +374,17 @@ function StudioPage() {
             <div className="text-white/50">Select a video to preview</div>
           )}
         </div>
+
+        {/* Timeline editor */}
+        {selectedVideo && videoDuration && captions.length > 0 && (
+          <div className="border-t border-white/10 p-2 bg-background max-h-[300px] overflow-auto">
+            <Timeline
+              videoId={selectedVideo.id}
+              durationMs={videoDuration * 1000}
+              captions={captions}
+            />
+          </div>
+        )}
 
         {/* Controls bar */}
         {selectedVideo && (
