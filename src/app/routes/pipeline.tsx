@@ -182,13 +182,14 @@ function getVideoPipelineState(
     };
   }
 
-  // Fallback: derive state from available metadata
+  // No backend status available: show all steps as pending
+  // This ensures we always show accurate state from the backend
   return {
     raw: true,
-    silences: video.hasCaptions,
-    segments: video.hasCaptions,
+    silences: false,
+    segments: false,
     cut: false,
-    captions: video.hasCaptions,
+    captions: false,
     script: hasScriptEvents ?? false,
     "take-selection": hasTakeSelections ?? false,
     rendered: false,
@@ -509,26 +510,6 @@ function PipelinePage() {
     }
   }, [selectedVideo, loadPipelineStatus]);
 
-  // Load pipeline status for all videos (for sidebar display)
-  useEffect(() => {
-    const loadAllStatuses = async () => {
-      for (const video of videos) {
-        try {
-          const res = await fetch(
-            `${API_URL}/api/pipeline/status?videoId=${encodeURIComponent(video.id)}&filename=${encodeURIComponent(video.filename)}`
-          );
-          if (res.ok) {
-            const status = await res.json() as BackendPipelineStatus;
-            setAllVideoStatuses(prev => ({ ...prev, [video.id]: status }));
-          }
-        } catch (err) {
-          console.error("Error loading pipeline status for sidebar:", err);
-        }
-      }
-    };
-    loadAllStatuses();
-  }, [videos]);
-
   // Load captions when video changes (for script alignment)
   useEffect(() => {
     if (!selectedVideo) {
@@ -684,6 +665,30 @@ function PipelinePage() {
     }
   }, [selectedVideo]);
 
+  // Load pipeline status for all videos (shared between initial load and refresh)
+  const loadAllVideoStatuses = useCallback(async (videoList: Video[]) => {
+    for (const video of videoList) {
+      try {
+        const res = await fetch(
+          `${API_URL}/api/pipeline/status?videoId=${encodeURIComponent(video.id)}&filename=${encodeURIComponent(video.filename)}`
+        );
+        if (res.ok) {
+          const status = await res.json() as BackendPipelineStatus;
+          setAllVideoStatuses(prev => ({ ...prev, [video.id]: status }));
+        }
+      } catch (err) {
+        console.error("Error loading pipeline status:", err);
+      }
+    }
+  }, []);
+
+  // Load pipeline status for all videos (for sidebar display)
+  useEffect(() => {
+    if (videos.length > 0) {
+      loadAllVideoStatuses(videos);
+    }
+  }, [videos, loadAllVideoStatuses]);
+
   // Refresh callback for reset actions
   const handleRefresh = useCallback(() => {
     loadVideos(false);
@@ -691,11 +696,13 @@ function PipelinePage() {
     setAllVideoStatuses({});
     // Also reset the current backend status
     setBackendStatus(null);
-    // Reload the pipeline status for the selected video
+    // Reload pipeline status for ALL videos (not just selected)
+    loadAllVideoStatuses(videos);
+    // Reload the pipeline status for the selected video (updates backendStatus)
     if (selectedVideo) {
       loadPipelineStatus(selectedVideo.id, selectedVideo.filename);
     }
-  }, [loadVideos, selectedVideo, loadPipelineStatus]);
+  }, [loadVideos, videos, selectedVideo, loadPipelineStatus, loadAllVideoStatuses]);
 
   useEffect(() => {
     loadVideos(true);
