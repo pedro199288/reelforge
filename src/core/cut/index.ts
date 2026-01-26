@@ -22,6 +22,27 @@ const DEFAULT_CONFIG: CutConfig = {
   crf: 18,
 };
 
+let cachedFfmpegPath: string | null = null;
+
+/**
+ * Get the ffmpeg command to use.
+ * Prefers system ffmpeg for better filter support, falls back to Remotion's bundled version.
+ */
+function getFfmpegCommand(): string {
+  if (cachedFfmpegPath !== null) {
+    return cachedFfmpegPath;
+  }
+
+  try {
+    execSync("ffmpeg -version", { stdio: "pipe", encoding: "utf-8" });
+    cachedFfmpegPath = "ffmpeg";
+    return cachedFfmpegPath;
+  } catch {
+    cachedFfmpegPath = "npx remotion ffmpeg";
+    return cachedFfmpegPath;
+  }
+}
+
 /**
  * Cut and concatenate video segments using FFmpeg
  * Removes silences by keeping only the specified segments
@@ -96,8 +117,9 @@ async function cutWithFilterComplex(
     `${streamLabels.join("")}concat=n=${segments.length}:v=1:a=1[outv][outa]`,
   ].join(";");
 
+  const ffmpeg = getFfmpegCommand();
   const cmd = [
-    "npx remotion ffmpeg -y",
+    `${ffmpeg} -y`,
     `-i "${input}"`,
     `-filter_complex "${filterComplex}"`,
     `-map "[outv]" -map "[outa]"`,
@@ -115,8 +137,8 @@ async function cutWithFilterComplex(
 }
 
 /**
- * Cut using concat demuxer with codec copy
- * Faster but cuts may not be frame-accurate
+ * Cut using concat demuxer with re-encoding for frame-accurate cuts
+ * Each segment is re-encoded to ensure precise cut points without audio/video desync
  */
 async function cutWithConcatDemuxer(
   input: string,
@@ -125,23 +147,26 @@ async function cutWithConcatDemuxer(
 ): Promise<void> {
   const tempDir = join(tmpdir(), `reelforge-cut-${Date.now()}`);
   mkdirSync(tempDir, { recursive: true });
+  const ffmpeg = getFfmpegCommand();
 
   try {
     const segmentFiles: string[] = [];
 
-    // Extract each segment
+    // Extract each segment with re-encoding for precise cuts
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i];
       const segmentFile = join(tempDir, `segment_${i.toString().padStart(4, "0")}.mp4`);
       segmentFiles.push(segmentFile);
 
+      // Use -ss after -i (input seeking) with trim filter for frame-accurate cuts
+      // Re-encode to avoid keyframe alignment issues
       const cmd = [
-        "npx remotion ffmpeg -y",
-        `-ss ${seg.startTime}`,
+        `${ffmpeg} -y`,
         `-i "${input}"`,
-        `-t ${seg.duration}`,
-        `-c copy`,
-        `-avoid_negative_ts make_zero`,
+        `-vf "trim=start=${seg.startTime}:end=${seg.endTime},setpts=PTS-STARTPTS"`,
+        `-af "atrim=start=${seg.startTime}:end=${seg.endTime},asetpts=PTS-STARTPTS"`,
+        `-c:v libx264 -crf 18 -preset fast`,
+        `-c:a aac`,
         `"${segmentFile}"`,
       ].join(" ");
 
@@ -159,9 +184,9 @@ async function cutWithConcatDemuxer(
       .join("\n");
     writeFileSync(concatFile, concatContent);
 
-    // Concatenate segments
+    // Concatenate segments - can use codec copy now since segments are already re-encoded
     const concatCmd = [
-      "npx remotion ffmpeg -y",
+      `${ffmpeg} -y`,
       `-f concat -safe 0`,
       `-i "${concatFile}"`,
       `-c copy`,

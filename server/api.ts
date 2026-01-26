@@ -994,6 +994,7 @@ async function handleRequest(req: Request): Promise<Response> {
             const outputPath = join(process.cwd(), "public", "videos", `${name}-cut${ext}`);
 
             sendEvent("progress", { step, progress: 20, message: "Cortando video..." });
+            // Use re-encoding (codecCopy=false) by default for precise frame-accurate cuts
             await cutVideo(videoPath, segmentsResult.segments, outputPath, {
               codecCopy: config?.codecCopy ?? false,
               crf: config?.crf ?? 18,
