@@ -4,10 +4,17 @@ import { persist } from "zustand/middleware";
 import { temporal, type TemporalState } from "zundo";
 
 export interface SilenceDetectionConfig {
-  thresholdDb: number;
-  minDurationSec: number;
-  paddingSec: number;
+  thresholdDb?: number;
+  minDurationSec?: number;
+  paddingSec?: number;
 }
+
+// Default values for silence detection (used when fields are undefined)
+export const SILENCE_DEFAULTS = {
+  thresholdDb: -40,
+  minDurationSec: 0.5,
+  paddingSec: 0.05,
+} as const;
 
 export type TakeSelectionCriteria = "clarity" | "fluency" | "energy" | "duration";
 

@@ -9,6 +9,7 @@ import { BatchQueue } from "@/components/BatchQueue";
 import { BatchDropZone } from "@/components/BatchDropZone";
 import { BatchLogs } from "@/components/BatchLogs";
 import { useBatchStore } from "@/store/batch";
+import { SILENCE_DEFAULTS } from "@/store/workspace";
 import { useBatchProcessor } from "@/hooks/useBatchProcessor";
 import { requestNotificationPermission } from "@/lib/notifications";
 import type { Video } from "@/components/VideoList";
@@ -158,9 +159,9 @@ function BatchPage() {
 
                   {/* Threshold dB */}
                   <div className="space-y-2">
-                    <Label>Umbral de silencio: {globalConfig.silence.thresholdDb} dB</Label>
+                    <Label>Umbral de silencio: {globalConfig.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb} dB</Label>
                     <Slider
-                      value={[globalConfig.silence.thresholdDb]}
+                      value={[globalConfig.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb]}
                       min={-60}
                       max={-20}
                       step={1}
@@ -176,10 +177,10 @@ function BatchPage() {
                   {/* Min Duration */}
                   <div className="space-y-2">
                     <Label>
-                      Duración mínima: {globalConfig.silence.minDurationSec}s
+                      Duración mínima: {globalConfig.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec}s
                     </Label>
                     <Slider
-                      value={[globalConfig.silence.minDurationSec]}
+                      value={[globalConfig.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec]}
                       min={0.1}
                       max={2}
                       step={0.1}
@@ -194,9 +195,9 @@ function BatchPage() {
 
                   {/* Padding */}
                   <div className="space-y-2">
-                    <Label>Padding: {globalConfig.silence.paddingSec}s</Label>
+                    <Label>Padding: {globalConfig.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec}s</Label>
                     <Slider
-                      value={[globalConfig.silence.paddingSec]}
+                      value={[globalConfig.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec]}
                       min={0}
                       max={0.5}
                       step={0.01}

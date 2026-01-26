@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { useWorkspaceStore } from "@/store/workspace";
+import { useWorkspaceStore, SILENCE_DEFAULTS } from "@/store/workspace";
 import type {
   TakeSelectionCriteria,
   Resolution,
@@ -67,11 +67,11 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                 <div className="flex justify-between">
                   <Label>Threshold</Label>
                   <span className="text-sm text-muted-foreground">
-                    {pipelineConfig.silence.thresholdDb} dB
+                    {pipelineConfig.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb} dB
                   </span>
                 </div>
                 <Slider
-                  value={[pipelineConfig.silence.thresholdDb]}
+                  value={[pipelineConfig.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb]}
                   onValueChange={([v]) =>
                     setPipelineConfig({
                       silence: { ...pipelineConfig.silence, thresholdDb: v },
@@ -90,11 +90,11 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                 <div className="flex justify-between">
                   <Label>Duracion minima</Label>
                   <span className="text-sm text-muted-foreground">
-                    {pipelineConfig.silence.minDurationSec}s
+                    {pipelineConfig.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec}s
                   </span>
                 </div>
                 <Slider
-                  value={[pipelineConfig.silence.minDurationSec]}
+                  value={[pipelineConfig.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec]}
                   onValueChange={([v]) =>
                     setPipelineConfig({
                       silence: { ...pipelineConfig.silence, minDurationSec: v },
@@ -113,11 +113,11 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                 <div className="flex justify-between">
                   <Label>Padding</Label>
                   <span className="text-sm text-muted-foreground">
-                    {pipelineConfig.silence.paddingSec}s
+                    {pipelineConfig.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec}s
                   </span>
                 </div>
                 <Slider
-                  value={[pipelineConfig.silence.paddingSec]}
+                  value={[pipelineConfig.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec]}
                   onValueChange={([v]) =>
                     setPipelineConfig({
                       silence: { ...pipelineConfig.silence, paddingSec: v },

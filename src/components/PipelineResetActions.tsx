@@ -194,9 +194,9 @@ export function PipelineResetActions({
     setResetOptions({
       selections: hasSelections,
       takeSelections: hasTakeSelections,
-      cutVideo: false,
-      captions: hasCaptions,
-      metadata: false,
+      cutVideo: true,
+      captions: true,
+      metadata: true,
     });
     setResetDialogOpen(true);
   };

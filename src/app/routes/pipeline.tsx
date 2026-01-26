@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import type { Video } from "@/components/VideoList";
-import { useWorkspaceStore } from "@/store/workspace";
+import { useWorkspaceStore, SILENCE_DEFAULTS } from "@/store/workspace";
+import { X } from "lucide-react";
 import { useTimelineStore } from "@/store/timeline";
 import { ScriptAlignmentPanel } from "@/components/ScriptAlignmentPanel";
 import { TakeDetectionPanel } from "@/components/TakeDetectionPanel";
@@ -316,9 +317,9 @@ function PipelinePage() {
           filename,
           step,
           config: {
-            thresholdDb: config.thresholdDb,
-            minDurationSec: config.minDurationSec,
-            paddingSec: config.paddingSec,
+            thresholdDb: config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb,
+            minDurationSec: config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec,
+            paddingSec: config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
           },
         }),
       });
@@ -422,9 +423,9 @@ function PipelinePage() {
             filename,
             step,
             config: {
-              thresholdDb: config.thresholdDb,
-              minDurationSec: config.minDurationSec,
-              paddingSec: config.paddingSec,
+              thresholdDb: config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb,
+              minDurationSec: config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec,
+              paddingSec: config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
             },
           }),
         });
@@ -708,8 +709,11 @@ function PipelinePage() {
     const timeline = timelines[selectedVideo.id];
     const hasScriptEvents = timeline &&
       (timeline.zooms.length > 0 || timeline.highlights.length > 0);
-    return getVideoPipelineState(selectedVideo, hasTakeSelections, hasScriptEvents, backendStatus);
-  }, [selectedVideo, takeSelections, timelines, backendStatus]);
+    // Use backendStatus if available, otherwise fall back to allVideoStatuses
+    // This ensures the panel shows correct state immediately when switching videos
+    const effectiveStatus = backendStatus ?? allVideoStatuses[selectedVideo.id] ?? null;
+    return getVideoPipelineState(selectedVideo, hasTakeSelections, hasScriptEvents, effectiveStatus);
+  }, [selectedVideo, takeSelections, timelines, backendStatus, allVideoStatuses]);
 
   const progressPercent = useMemo(() => {
     if (!pipelineState) return 0;
@@ -731,12 +735,12 @@ function PipelinePage() {
       case "silences":
         return `# Detectar silencios en el video
 bun run src/core/silence/detect.ts "${videoPath}" \\
-  --threshold ${config.thresholdDb} \\
-  --min-duration ${config.minDurationSec}`;
+  --threshold ${config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb} \\
+  --min-duration ${config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec}`;
       case "segments":
         return `# Generar segmentos de contenido
 bun run src/core/silence/segments.ts "${videoPath}" \\
-  --padding ${config.paddingSec}`;
+  --padding ${config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec}`;
       case "cut":
         return `# Cortar video (remover silencios)
 bun run src/core/cut/index.ts "${videoPath}" \\
@@ -1095,17 +1099,37 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                   <label className="text-sm font-medium">
                                     Threshold (dB)
                                   </label>
-                                  <Input
-                                    type="number"
-                                    value={config.thresholdDb}
-                                    onChange={(e) =>
-                                      setPipelineConfig({
-                                        thresholdDb: Number(e.target.value),
-                                      })
-                                    }
-                                    className="mt-1"
-                                    disabled={isStepRunning}
-                                  />
+                                  <div className="relative mt-1">
+                                    <Input
+                                      type="number"
+                                      value={config.silence.thresholdDb ?? ""}
+                                      placeholder={`${SILENCE_DEFAULTS.thresholdDb} (default)`}
+                                      onChange={(e) =>
+                                        setPipelineConfig({
+                                          silence: {
+                                            ...config.silence,
+                                            thresholdDb: e.target.value === "" ? undefined : Number(e.target.value),
+                                          },
+                                        })
+                                      }
+                                      className="pr-8"
+                                      disabled={isStepRunning}
+                                    />
+                                    {config.silence.thresholdDb !== undefined && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPipelineConfig({
+                                            silence: { ...config.silence, thresholdDb: undefined },
+                                          })
+                                        }
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                        disabled={isStepRunning}
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </button>
+                                    )}
+                                  </div>
                                   <p className="text-xs text-muted-foreground mt-1">
                                     Nivel de ruido para detectar silencio
                                     (-60 a -20)
@@ -1115,18 +1139,38 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                   <label className="text-sm font-medium">
                                     Duración mínima (seg)
                                   </label>
-                                  <Input
-                                    type="number"
-                                    step="0.1"
-                                    value={config.minDurationSec}
-                                    onChange={(e) =>
-                                      setPipelineConfig({
-                                        minDurationSec: Number(e.target.value),
-                                      })
-                                    }
-                                    className="mt-1"
-                                    disabled={isStepRunning}
-                                  />
+                                  <div className="relative mt-1">
+                                    <Input
+                                      type="number"
+                                      step="0.1"
+                                      value={config.silence.minDurationSec ?? ""}
+                                      placeholder={`${SILENCE_DEFAULTS.minDurationSec} (default)`}
+                                      onChange={(e) =>
+                                        setPipelineConfig({
+                                          silence: {
+                                            ...config.silence,
+                                            minDurationSec: e.target.value === "" ? undefined : Number(e.target.value),
+                                          },
+                                        })
+                                      }
+                                      className="pr-8"
+                                      disabled={isStepRunning}
+                                    />
+                                    {config.silence.minDurationSec !== undefined && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPipelineConfig({
+                                            silence: { ...config.silence, minDurationSec: undefined },
+                                          })
+                                        }
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                        disabled={isStepRunning}
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </button>
+                                    )}
+                                  </div>
                                   <p className="text-xs text-muted-foreground mt-1">
                                     Mínimo de segundos para considerar silencio
                                   </p>
@@ -1140,18 +1184,38 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                 <label className="text-sm font-medium">
                                   Padding (seg)
                                 </label>
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  value={config.paddingSec}
-                                  onChange={(e) =>
-                                    setPipelineConfig({
-                                      paddingSec: Number(e.target.value),
-                                    })
-                                  }
-                                  className="mt-1"
-                                  disabled={isStepRunning}
-                                />
+                                <div className="relative mt-1">
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    value={config.silence.paddingSec ?? ""}
+                                    placeholder={`${SILENCE_DEFAULTS.paddingSec} (default)`}
+                                    onChange={(e) =>
+                                      setPipelineConfig({
+                                        silence: {
+                                          ...config.silence,
+                                          paddingSec: e.target.value === "" ? undefined : Number(e.target.value),
+                                        },
+                                      })
+                                    }
+                                    className="pr-8"
+                                    disabled={isStepRunning}
+                                  />
+                                  {config.silence.paddingSec !== undefined && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setPipelineConfig({
+                                          silence: { ...config.silence, paddingSec: undefined },
+                                        })
+                                      }
+                                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                      disabled={isStepRunning}
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  )}
+                                </div>
                                 <p className="text-xs text-muted-foreground mt-1">
                                   Espacio adicional antes/después de cada
                                   segmento

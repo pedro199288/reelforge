@@ -8,7 +8,7 @@ import {
 import { Page } from "./Page";
 import { TikTokPage } from "@remotion/captions";
 import type { FontId } from "../load-font";
-import { useSubtitleStyle } from "@/store/subtitles";
+import { useSubtitleStyle } from "../store/subtitles";
 
 const SubtitlePage: React.FC<{
   readonly page: TikTokPage;

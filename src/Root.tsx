@@ -18,8 +18,8 @@ export const RemotionRoot: React.FC = () => {
       width={1080}
       height={1920}
       defaultProps={{
-        src: staticFile("Errores empezando gimnasio.mp4"),
-        // src: staticFile("sample-video.mp4"),
+        src: staticFile("videos/Errores empezando gimnasio.mp4"),
+        // src: staticFile("videos/sample-video.mp4"),
       }}
     />
   );

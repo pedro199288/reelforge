@@ -10,7 +10,7 @@ import { TikTokPage } from "@remotion/captions";
 import {
   useSubtitleStyle,
   type SubtitleStyle,
-} from "@/store/subtitles";
+} from "../store/subtitles";
 import { getEntranceStyles } from "./animations/entrance";
 import { getHighlightStyles, combineHighlightWithBase } from "./animations/highlight";
 

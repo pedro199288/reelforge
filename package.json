@@ -76,7 +76,7 @@
     "lint": "eslint src && tsc",
     "typecheck": "tsc --noEmit",
     "create-subtitles": "node sub.mjs",
-    "server": "bun server/api.ts",
+    "server": "bun --watch server/api.ts",
     "process": "bun process-video.ts"
   },
   "sideEffects": [
