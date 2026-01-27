@@ -46,6 +46,8 @@ export interface SegmentsResult {
   percentSaved: number;
   config: {
     paddingSec: number;
+    /** Whether semantic analysis was used for script-aware segmentation */
+    usedSemanticAnalysis?: boolean;
   };
   createdAt: string;
 }

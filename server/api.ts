@@ -28,7 +28,9 @@ import {
 import {
   analyzeSemanticCuts,
   getSemanticStats,
+  semanticToSegments,
 } from "../src/core/semantic/segments";
+import type { SemanticAnalysisResult } from "../src/core/semantic/types";
 import type { Caption } from "../src/core/script/align";
 import {
   detectSilences,
@@ -1024,12 +1026,46 @@ async function handleRequest(req: Request): Promise<Response> {
               throw new Error("Silences result not found");
             }
 
-            sendEvent("progress", { step, progress: 50, message: "Calculando segmentos..." });
-            const segments = silencesToSegments(
-              silencesResult.silences,
-              silencesResult.videoDuration,
-              { paddingSec: config?.paddingSec ?? 0.05 }
-            );
+            // Check if semantic analysis is available
+            const semanticAnalysisPath = join(getPipelineDir(videoId), "semantic-analysis.json");
+            let usedSemanticAnalysis = false;
+            let segments;
+
+            if (existsSync(semanticAnalysisPath)) {
+              // Use semantic analysis for script-aware segment generation
+              sendEvent("progress", { step, progress: 30, message: "Usando análisis semántico del guión..." });
+              const semanticAnalysis: SemanticAnalysisResult = JSON.parse(
+                await Bun.file(semanticAnalysisPath).text()
+              );
+
+              // Convert duration to ms for semantic functions
+              const durationMs = silencesResult.videoDuration * 1000;
+              const paddingMs = (config?.paddingSec ?? 0.05) * 1000;
+
+              sendEvent("progress", { step, progress: 50, message: "Generando segmentos basados en límites de oraciones..." });
+              const semanticSegmentsMs = semanticToSegments(semanticAnalysis, durationMs, {
+                paddingMs,
+                minSegmentMs: 100,
+                minSilenceDurationMs: 300,
+              });
+
+              // Convert ms-based segments to seconds-based Segment format
+              segments = semanticSegmentsMs.map((seg, index) => ({
+                startTime: seg.startMs / 1000,
+                endTime: seg.endMs / 1000,
+                duration: (seg.endMs - seg.startMs) / 1000,
+                index,
+              }));
+              usedSemanticAnalysis = true;
+            } else {
+              // Fallback to simple silence-based segmentation
+              sendEvent("progress", { step, progress: 50, message: "Calculando segmentos basados en silencios..." });
+              segments = silencesToSegments(
+                silencesResult.silences,
+                silencesResult.videoDuration,
+                { paddingSec: config?.paddingSec ?? 0.05 }
+              );
+            }
 
             const editedDuration = getTotalDuration(segments);
             const timeSaved = silencesResult.videoDuration - editedDuration;
@@ -1043,6 +1079,7 @@ async function handleRequest(req: Request): Promise<Response> {
               percentSaved: (timeSaved / silencesResult.videoDuration) * 100,
               config: {
                 paddingSec: config?.paddingSec ?? 0.05,
+                usedSemanticAnalysis,
               },
               createdAt: new Date().toISOString(),
             };

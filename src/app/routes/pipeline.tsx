@@ -68,7 +68,7 @@ interface SegmentsResult {
   editedDuration: number;
   timeSaved: number;
   percentSaved: number;
-  config: { paddingSec: number };
+  config: { paddingSec: number; usedSemanticAnalysis?: boolean };
   createdAt: string;
 }
 
@@ -1631,6 +1631,16 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
                 <span className="text-muted-foreground">Ahorro:</span>
                 <span className="ml-2 font-medium text-green-600">{r.percentSaved.toFixed(1)}%</span>
               </div>
+              {r.config?.usedSemanticAnalysis && (
+                <div className="col-span-full">
+                  <span className="inline-flex items-center gap-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
+                    <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                    Cortes respetan límites de oraciones del guión
+                  </span>
+                </div>
+              )}
             </div>
             {selectedVideo && (
               <SegmentReviewPanel
