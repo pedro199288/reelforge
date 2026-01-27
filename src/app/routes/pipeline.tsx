@@ -1034,7 +1034,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                 </TabsList>
 
                 {STEPS.map((step) => {
-                  const isExecutableStep = ["silences", "segments", "cut", "captions"].includes(step.key);
+                  const isExecutableStep = ["silences", "captions-raw", "segments", "semantic", "cut", "captions"].includes(step.key);
                   const { canExecute, missingDeps } = canExecuteStepCheck(step.key, pipelineState);
                   const isStepRunning = stepProcessing === step.key;
                   const stepResult = stepResults[step.key];
