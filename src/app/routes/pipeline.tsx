@@ -1137,7 +1137,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                           </div>
                         </div>
                       </CardHeader>
-                      <CardContent>
+                      <CardContent className="max-h-[calc(100vh-400px)] overflow-y-auto scrollbar-subtle">
                         {/* Step progress indicator */}
                         {isStepRunning && stepProgress && (
                           <div className="mb-4 p-4 border rounded-lg bg-blue-50 border-blue-200">
