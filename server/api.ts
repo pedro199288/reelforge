@@ -1270,11 +1270,20 @@ async function handleRequest(req: Request): Promise<Response> {
             sendEvent("progress", { step, progress: 50, message: "Analizando estructura semántica..." });
 
             // Get script from request body if provided, otherwise use full transcript
-            const scriptText = (body as { script?: string }).script ||
+            const requestBody = body as {
+              script?: string;
+              useScriptBoundaries?: boolean;
+              detectDeviations?: boolean;
+            };
+            const scriptText = requestBody.script ||
               captions.map(c => c.text).join(" ");
 
-            // Analyze semantic cuts
-            const analysis = analyzeSemanticCuts(scriptText, captions, silencesResult.silences);
+            // When script is provided, use it as authoritative source and detect deviations
+            const hasScript = Boolean(requestBody.script);
+            const analysis = analyzeSemanticCuts(scriptText, captions, silencesResult.silences, {
+              useScriptBoundaries: requestBody.useScriptBoundaries ?? hasScript,
+              detectDeviations: requestBody.detectDeviations ?? hasScript,
+            });
             const stats = getSemanticStats(analysis);
 
             sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });

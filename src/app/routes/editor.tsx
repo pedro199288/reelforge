@@ -306,11 +306,16 @@ function EditorPage() {
 
       if (cutMode === "semantic" && scriptState?.rawScript && captions.length > 0) {
         // Semantic mode: only cut between sentences
+        // Use script as authoritative source for sentence boundaries
         const analysis = analyzeSemanticCuts(
           scriptState.rawScript,
           captions,
           data.silences,
-          { minSilenceDurationMs: detectionParams.minDurationSec * 1000 }
+          {
+            minSilenceDurationMs: detectionParams.minDurationSec * 1000,
+            useScriptBoundaries: true,
+            detectDeviations: true,
+          }
         );
 
         const semanticSegs = semanticToSegments(analysis, durationMs);
@@ -319,9 +324,13 @@ function EditorPage() {
         importSemanticSegments(selectedVideo.id, semanticSegs, data.silences);
         setSemanticStats(stats);
 
-        toast.success("Cortes semánticos generados", {
-          description: `${stats.semanticCutCount} cortes entre oraciones, ${stats.naturalPauseCount} pausas naturales conservadas`,
-        });
+        // Build toast description with deviation info if available
+        let description = `${stats.semanticCutCount} cortes entre oraciones, ${stats.naturalPauseCount} pausas naturales conservadas`;
+        if (stats.deviationCount !== undefined && stats.deviationCount > 0) {
+          description += ` (${stats.deviationCount} desviaciones del guión)`;
+        }
+
+        toast.success("Cortes semánticos generados", { description });
       } else {
         // Standard silence mode: cut all silences
         importSilences(selectedVideo.id, data.silences, durationMs);

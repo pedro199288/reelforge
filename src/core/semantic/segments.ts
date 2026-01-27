@@ -13,7 +13,8 @@ import type {
   SemanticSegmentConfig,
 } from "./types";
 import { DEFAULT_SEMANTIC_CONFIG } from "./types";
-import { alignSentences } from "./sentence-boundaries";
+import { alignSentences, extractDeviations } from "./sentence-boundaries";
+import { splitIntoSentences } from "../script/takes";
 
 /**
  * Classify silences as inter-sentence (cut candidates) or intra-sentence (natural pauses)
@@ -119,9 +120,17 @@ function classifySilences(
 /**
  * Analyze script and transcription to identify semantic cut points
  *
+ * When useScriptBoundaries is true (and a script is provided), the script's
+ * sentence structure is used as the authoritative source for classifying
+ * silences. This provides more accurate classification because:
+ * - Script punctuation defines exact sentence boundaries
+ * - Silences can be classified with higher precision
+ * - Deviations from the script can be detected
+ *
  * @param scriptText - The script text
  * @param captions - Transcription captions with timestamps
  * @param silences - Detected silence ranges
+ * @param config - Configuration options
  * @returns Semantic analysis result with classified silences
  */
 export function analyzeSemanticCuts(
@@ -131,14 +140,25 @@ export function analyzeSemanticCuts(
   config: Partial<SemanticSegmentConfig> = {}
 ): SemanticAnalysisResult {
   const fullConfig = { ...DEFAULT_SEMANTIC_CONFIG, ...config };
+  const {
+    useScriptBoundaries = false,
+    detectDeviations = false,
+    deviationThreshold = 0.7,
+  } = fullConfig;
 
-  // Align sentences with transcription
-  const sentences = alignSentences(scriptText, captions);
+  // Determine if we're using script as authoritative source
+  const isScriptProvided = scriptText.trim().length > 0;
+  const usedScriptBoundaries = useScriptBoundaries && isScriptProvided;
+
+  // Align sentences with transcription, passing deviation threshold
+  const sentences = alignSentences(scriptText, captions, {
+    deviationThreshold,
+  });
 
   // Sort silences by start time
   const sortedSilences = [...silences].sort((a, b) => a.start - b.start);
 
-  // Classify silences
+  // Classify silences based on sentence boundaries
   const { semantic, intrasentence } = classifySilences(
     sortedSilences,
     sentences,
@@ -151,11 +171,19 @@ export function analyzeSemanticCuts(
       ? sentences.reduce((sum, s) => sum + s.confidence, 0) / sentences.length
       : 0;
 
+  // Detect deviations if requested
+  const deviations =
+    detectDeviations && isScriptProvided
+      ? extractDeviations(sentences, splitIntoSentences(scriptText))
+      : undefined;
+
   return {
     sentences,
     semanticSilences: semantic,
     intrasentenceSilences: intrasentence,
     overallConfidence,
+    usedScriptBoundaries,
+    deviations,
   };
 }
 
@@ -226,16 +254,29 @@ export function semanticToSegments(
 }
 
 /**
- * Get statistics about the semantic analysis
+ * Statistics about semantic analysis
  */
-export function getSemanticStats(analysis: SemanticAnalysisResult): {
+export interface SemanticStats {
   sentenceCount: number;
   semanticCutCount: number;
   naturalPauseCount: number;
   totalCuttableDurationMs: number;
   totalPreservedPauseDurationMs: number;
-} {
-  return {
+  /** Whether script boundaries were used as authoritative source */
+  usedScriptBoundaries: boolean;
+  /** Number of deviations from script (if detection was enabled) */
+  deviationCount?: number;
+  /** Number of sentences that were modified from script */
+  modifiedSentenceCount?: number;
+  /** Number of sentences that were missing/skipped */
+  missingSentenceCount?: number;
+}
+
+/**
+ * Get statistics about the semantic analysis
+ */
+export function getSemanticStats(analysis: SemanticAnalysisResult): SemanticStats {
+  const stats: SemanticStats = {
     sentenceCount: analysis.sentences.length,
     semanticCutCount: analysis.semanticSilences.length,
     naturalPauseCount: analysis.intrasentenceSilences.length,
@@ -247,5 +288,19 @@ export function getSemanticStats(analysis: SemanticAnalysisResult): {
       (sum, s) => sum + s.durationMs,
       0
     ),
+    usedScriptBoundaries: analysis.usedScriptBoundaries,
   };
+
+  // Add deviation stats if available
+  if (analysis.deviations) {
+    stats.deviationCount = analysis.deviations.length;
+    stats.modifiedSentenceCount = analysis.deviations.filter(
+      (d) => d.type === "modified"
+    ).length;
+    stats.missingSentenceCount = analysis.deviations.filter(
+      (d) => d.type === "missing"
+    ).length;
+  }
+
+  return stats;
 }
