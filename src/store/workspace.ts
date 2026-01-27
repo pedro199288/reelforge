@@ -431,8 +431,10 @@ export const useCanRedo = () =>
 export const useClearHistory = () => useTemporalStore((state) => state.clear);
 
 // Selector helpers
+// Use a constant empty array to avoid creating a new reference on every render
+const EMPTY_SELECTION: number[] = [];
 export const useSelection = (videoId: string) =>
-  useWorkspaceStore((state) => state.selections[videoId] || []);
+  useWorkspaceStore((state) => state.selections[videoId] ?? EMPTY_SELECTION);
 
 export const usePipelineConfig = () =>
   useWorkspaceStore((state) => state.pipelineConfig);
