@@ -62,6 +62,10 @@ export function SegmentEditorPanel({
   const [currentTime, setCurrentTime] = useState(0);
   const [mode, setMode] = useState<"full" | "preview">("full");
 
+  // State and refs for jump control (prevents race conditions in preview mode)
+  const [isJumping, setIsJumping] = useState(false);
+  const lastJumpTimeRef = useRef<number>(0);
+
   // Get segments from timeline store (these are the editable ones with enabled state)
   const timelineSegments = useVideoSegments(videoId);
   const { importSemanticSegments, toggleSegment } = useTimelineActions();
@@ -132,7 +136,53 @@ export function SegmentEditorPanel({
     [enabledSegments]
   );
 
-  // Handle video time update
+  // Refs for stable access in callbacks (avoids recreating handlers)
+  const modeRef = useRef(mode);
+  const isPlayingRef = useRef(isPlaying);
+  const isJumpingRef = useRef(isJumping);
+  const enabledSegmentsRef = useRef(enabledSegments);
+  const mapTimeToEditedRef = useRef(mapTimeToEdited);
+
+  // Sync refs with state
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+  useEffect(() => {
+    isJumpingRef.current = isJumping;
+  }, [isJumping]);
+  useEffect(() => {
+    enabledSegmentsRef.current = enabledSegments;
+  }, [enabledSegments]);
+  useEffect(() => {
+    mapTimeToEditedRef.current = mapTimeToEdited;
+  }, [mapTimeToEdited]);
+
+  // Perform jump with debounce and seeked event handling
+  const performJump = useCallback((targetTime: number) => {
+    const video = videoRef.current;
+    if (!video || isJumpingRef.current) return;
+
+    // Debounce: avoid redundant jumps within 100ms
+    const now = Date.now();
+    if (now - lastJumpTimeRef.current < 100) return;
+
+    setIsJumping(true);
+    lastJumpTimeRef.current = now;
+
+    video.currentTime = targetTime;
+
+    // Wait for the video to confirm the seek
+    const handleSeeked = () => {
+      setIsJumping(false);
+      video.removeEventListener("seeked", handleSeeked);
+    };
+    video.addEventListener("seeked", handleSeeked, { once: true });
+  }, []);
+
+  // Handle video time update (stable handler, no re-registration needed)
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -141,21 +191,23 @@ export function SegmentEditorPanel({
       const currentMs = video.currentTime * 1000;
       setCurrentTime(video.currentTime);
 
-      // In preview mode, skip silences
-      if (mode === "preview" && isPlaying) {
-        const editedMs = mapTimeToEdited(currentMs);
-        const isInSilence = editedMs === null;
+      // Skip processing if we're in the middle of a jump
+      if (isJumpingRef.current) return;
 
-        if (isInSilence) {
-          // Find next enabled segment
-          const nextSegment = enabledSegments.find((s) => s.startMs > currentMs);
-          if (nextSegment) {
-            video.currentTime = nextSegment.startMs / 1000;
-          } else {
-            // End of video
-            video.pause();
-            setIsPlaying(false);
-          }
+      // Only process in preview mode while playing
+      if (modeRef.current !== "preview" || !isPlayingRef.current) return;
+
+      const editedMs = mapTimeToEditedRef.current(currentMs);
+      if (editedMs === null) {
+        // We're in a silence region - schedule a jump
+        const nextSegment = enabledSegmentsRef.current.find(
+          (s) => s.startMs > currentMs
+        );
+        if (nextSegment) {
+          performJump(nextSegment.startMs / 1000);
+        } else {
+          // End of video
+          video.pause();
         }
       }
     };
@@ -175,7 +227,7 @@ export function SegmentEditorPanel({
       video.removeEventListener("pause", handlePause);
       video.removeEventListener("ended", handleEnded);
     };
-  }, [mode, isPlaying, enabledSegments, mapTimeToEdited]);
+  }, [performJump]); // Only depends on performJump which is stable
 
   const togglePlayback = useCallback(() => {
     const video = videoRef.current;
@@ -322,21 +374,23 @@ export function SegmentEditorPanel({
               </Button>
             </div>
           </div>
+
+          {/* Timeline integrated with video (no separate Card) */}
+          <div className="border-t">
+            <SegmentTimeline
+              videoId={videoId}
+              videoPath={videoPath}
+              durationMs={totalDuration * 1000}
+              currentTimeMs={currentTime * 1000}
+              onSeek={(ms) => {
+                if (videoRef.current) {
+                  videoRef.current.currentTime = ms / 1000;
+                }
+              }}
+            />
+          </div>
         </CardContent>
       </Card>
-
-      {/* Timeline with waveform and segments */}
-      <SegmentTimeline
-        videoId={videoId}
-        videoPath={videoPath}
-        durationMs={totalDuration * 1000}
-        currentTimeMs={currentTime * 1000}
-        onSeek={(ms) => {
-          if (videoRef.current) {
-            videoRef.current.currentTime = ms / 1000;
-          }
-        }}
-      />
 
       {/* Segments Review Section */}
       <Card className="flex-1 min-h-0 flex flex-col">
