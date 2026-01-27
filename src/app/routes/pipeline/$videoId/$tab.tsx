@@ -19,12 +19,10 @@ import { TakeDetectionPanel } from "@/components/TakeDetectionPanel";
 import { EffectsAnalysisPanel } from "@/components/EffectsAnalysisPanel";
 import { SegmentReviewPanel } from "@/components/SegmentReviewPanel";
 import type { Caption } from "@/core/script/align";
-import { VideoSidebarSkeleton } from "@/components/VideoSidebarSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PipelineResetActions } from "@/components/PipelineResetActions";
 import {
   ProcessingStatusPanel,
-  ProcessingStatusInline,
   type ProcessingStepInfo,
   type ProcessingStatus,
 } from "@/components/ProcessingStatusPanel";
@@ -120,9 +118,6 @@ interface EffectsAnalysisResultMeta {
 type StepResult = SilencesResult | SegmentsResult | CutResult | CaptionsResult | CaptionsRawResult | SemanticResult | EffectsAnalysisResultMeta;
 
 // Step dependencies
-// Note: captions-raw can run in parallel with silences (no dependencies)
-// semantic requires both captions-raw and silences to classify silences
-// effects-analysis requires captions-raw for AI analysis
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   raw: [],
   silences: [],
@@ -182,8 +177,8 @@ const STEPS: { key: PipelineStep; label: string; description: string; optional?:
   },
   {
     key: "captions-raw",
-    label: "Transcripción (Raw)",
-    description: "Transcripción del video original (para análisis semántico)",
+    label: "Transcripcion (Raw)",
+    description: "Transcripcion del video original (para analisis semantico)",
     optional: true,
   },
   {
@@ -193,26 +188,26 @@ const STEPS: { key: PipelineStep; label: string; description: string; optional?:
   },
   {
     key: "semantic",
-    label: "Análisis Semántico",
-    description: "Clasificar silencios (inter vs intra-oración)",
+    label: "Analisis Semantico",
+    description: "Clasificar silencios (inter vs intra-oracion)",
     optional: true,
   },
   {
     key: "effects-analysis",
     label: "Auto-Efectos",
-    description: "Análisis con IA para detectar zooms y highlights automáticos",
+    description: "Analisis con IA para detectar zooms y highlights automaticos",
     optional: true,
   },
   { key: "cut", label: "Cortado", description: "Cortar video sin silencios" },
   {
     key: "captions",
     label: "Captions",
-    description: "Transcripción con Whisper",
+    description: "Transcripcion con Whisper",
   },
   {
     key: "script",
     label: "Script",
-    description: "Importar guión y alinear con transcripción",
+    description: "Importar guion y alinear con transcripcion",
   },
   {
     key: "take-selection",
@@ -222,7 +217,7 @@ const STEPS: { key: PipelineStep; label: string; description: string; optional?:
   {
     key: "rendered",
     label: "Renderizado",
-    description: "Video final con subtítulos",
+    description: "Video final con subtitulos",
   },
 ];
 
@@ -232,7 +227,6 @@ function getVideoPipelineState(
   hasScriptEvents?: boolean,
   backendStatus?: BackendPipelineStatus | null
 ): PipelineState {
-  // Use backend status if available, otherwise derive from video metadata
   if (backendStatus) {
     return {
       raw: true,
@@ -249,8 +243,6 @@ function getVideoPipelineState(
     };
   }
 
-  // No backend status available: show all steps as pending
-  // This ensures we always show accurate state from the backend
   return {
     raw: true,
     silences: false,
@@ -287,7 +279,6 @@ function pipelineStateToStepInfo(
       key: step.key,
       label: step.label,
       status,
-      // In the future, timestamps can be added when the backend provides them
       completedAt: state[step.key] ? new Date() : undefined,
     };
   });
@@ -307,7 +298,7 @@ function PipelinePage() {
     return videos.find((v) => v.id === videoId) ?? null;
   }, [videos, videoId]);
 
-  // Validate and use tab from params (default to "raw" if invalid)
+  // Validate and use tab from params
   const validTabs: PipelineStep[] = [
     "raw", "silences", "captions-raw", "segments", "semantic", "effects-analysis",
     "cut", "captions", "script", "take-selection", "rendered"
@@ -323,7 +314,6 @@ function PipelinePage() {
 
   // Individual step execution state
   const [backendStatus, setBackendStatus] = useState<BackendPipelineStatus | null>(null);
-  const [allVideoStatuses, setAllVideoStatuses] = useState<Record<string, BackendPipelineStatus>>({});
   const [stepProcessing, setStepProcessing] = useState<PipelineStep | null>(null);
   const [stepProgress, setStepProgress] = useState<ProcessProgress | null>(null);
   const [stepResults, setStepResults] = useState<Record<string, StepResult>>({});
@@ -369,8 +359,6 @@ function PipelinePage() {
       if (res.ok) {
         const status = await res.json() as BackendPipelineStatus;
         setBackendStatus(status);
-        // Also update the allVideoStatuses map
-        setAllVideoStatuses(prev => ({ ...prev, [videoId]: status }));
 
         // Load results for completed steps
         const completedSteps = Object.entries(status.steps)
@@ -416,9 +404,7 @@ function PipelinePage() {
             minDurationSec: config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec,
             paddingSec: config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
           },
-          // Pass selected segment indices for the cut step
           selectedSegments: step === "cut" && segmentSelection.length > 0 ? segmentSelection : undefined,
-          // Pass script for phases that can use it (semantic, captions, etc.)
           script: scriptState?.rawScript || undefined,
         }),
       });
@@ -462,7 +448,6 @@ function PipelinePage() {
                   description: `Paso "${step}" ejecutado correctamente`,
                 });
                 setStepResults((prev) => ({ ...prev, [step]: data.result }));
-                // Reload pipeline status
                 await loadPipelineStatus(videoId, filename);
                 break;
               case "error":
@@ -488,27 +473,23 @@ function PipelinePage() {
     const videoId = selectedVideo.id;
     const filename = selectedVideo.filename;
 
-    // Define the order of executable steps
     const executableSteps: PipelineStep[] = ["silences", "segments", "cut", "captions"];
     const targetIndex = executableSteps.indexOf(targetStep);
 
     if (targetIndex === -1) return;
 
-    // Get current status to check which steps need execution
     const currentStatus = backendStatus;
 
-    // Get steps to execute (from beginning up to and including target)
     const stepsToExecute = executableSteps.slice(0, targetIndex + 1).filter((step) => {
       const stepState = currentStatus?.steps[step];
       return stepState?.status !== "completed";
     });
 
     if (stepsToExecute.length === 0) {
-      toast.info("Todos los pasos ya están completados");
+      toast.info("Todos los pasos ya estan completados");
       return;
     }
 
-    // Execute each step sequentially
     for (const step of stepsToExecute) {
       setStepProcessing(step);
       setStepProgress({ step, progress: 0, message: `Iniciando ${step}...` });
@@ -526,7 +507,6 @@ function PipelinePage() {
               minDurationSec: config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec,
               paddingSec: config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
             },
-            // Pass script for phases that can use it
             script: scriptState?.rawScript || undefined,
           }),
         });
@@ -536,7 +516,6 @@ function PipelinePage() {
           throw new Error(err.error || `Error al ejecutar ${step}`);
         }
 
-        // Read SSE stream
         const reader = response.body?.getReader();
         if (!reader) throw new Error("No response body");
 
@@ -578,10 +557,9 @@ function PipelinePage() {
         }
 
         if (!stepCompleted) {
-          throw new Error(`Paso ${step} no se completó correctamente`);
+          throw new Error(`Paso ${step} no se completo correctamente`);
         }
 
-        // Reload pipeline status after each step
         await loadPipelineStatus(videoId, filename);
 
       } catch (err) {
@@ -590,11 +568,11 @@ function PipelinePage() {
         });
         setStepProcessing(null);
         setStepProgress(null);
-        return; // Stop execution on error
+        return;
       }
     }
 
-    toast.success("Ejecución completada", {
+    toast.success("Ejecucion completada", {
       description: `Se ejecutaron ${stepsToExecute.length} paso(s) correctamente`,
     });
     setStepProcessing(null);
@@ -620,7 +598,6 @@ function PipelinePage() {
 
     const loadCaptions = async () => {
       try {
-        // Use filename without extension to match backend naming convention
         const nameWithoutExt = selectedVideo.filename.replace(/\.[^/.]+$/, "");
         const captionsPath = `/subs/${encodeURIComponent(nameWithoutExt)}-cut.json`;
         const res = await fetch(captionsPath);
@@ -668,7 +645,6 @@ function PipelinePage() {
         throw new Error(err.error || "Error connecting to server");
       }
 
-      // Read SSE stream
       const reader = response.body?.getReader();
       if (!reader) throw new Error("No response body");
 
@@ -734,10 +710,9 @@ function PipelinePage() {
     }
   }, []);
 
-  // Load videos from manifest - extracted to allow refresh after reset
+  // Load videos from manifest
   const loadVideos = useCallback(async (isInitialLoad = false) => {
     try {
-      // Add cache-busting timestamp to ensure fresh data after resets
       const res = await fetch(`/videos.manifest.json?t=${Date.now()}`);
       if (!res.ok) throw new Error("Failed to load video manifest");
       const data = (await res.json()) as VideoManifest;
@@ -757,59 +732,21 @@ function PipelinePage() {
     }
   }, []);
 
-  // Load pipeline status for all videos (shared between initial load and refresh)
-  const loadAllVideoStatuses = useCallback(async (videoList: Video[]) => {
-    for (const video of videoList) {
-      try {
-        const res = await fetch(
-          `${API_URL}/api/pipeline/status?videoId=${encodeURIComponent(video.id)}&filename=${encodeURIComponent(video.filename)}`
-        );
-        if (res.ok) {
-          const status = await res.json() as BackendPipelineStatus;
-          setAllVideoStatuses(prev => ({ ...prev, [video.id]: status }));
-        }
-      } catch (err) {
-        console.error("Error loading pipeline status:", err);
-      }
-    }
-  }, []);
-
-  // Load pipeline status for all videos (for sidebar display)
-  useEffect(() => {
-    if (videos.length > 0) {
-      loadAllVideoStatuses(videos);
-    }
-  }, [videos, loadAllVideoStatuses]);
-
   // Refresh callback for reset actions
   const handleRefresh = useCallback(() => {
     loadVideos(false);
-    // Clear the cached pipeline statuses so they reload from backend
-    setAllVideoStatuses({});
-    // Also reset the current backend status
     setBackendStatus(null);
-    // Reload pipeline status for ALL videos (not just selected)
-    loadAllVideoStatuses(videos);
-    // Reload the pipeline status for the selected video (updates backendStatus)
     if (selectedVideo) {
       loadPipelineStatus(selectedVideo.id, selectedVideo.filename);
     }
-  }, [loadVideos, videos, selectedVideo, loadPipelineStatus, loadAllVideoStatuses]);
+  }, [loadVideos, selectedVideo, loadPipelineStatus]);
 
   useEffect(() => {
     loadVideos(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Navigate to different video (preserves current tab)
-  const handleSelectVideo = useCallback((video: Video) => {
-    navigate({
-      to: "/pipeline/$videoId/$tab",
-      params: { videoId: video.id, tab: activeStep },
-    });
-  }, [navigate, activeStep]);
-
-  // Navigate to different tab (preserves current video)
+  // Navigate to different tab
   const handleSetActiveStep = useCallback((step: PipelineStep) => {
     navigate({
       to: "/pipeline/$videoId/$tab",
@@ -824,11 +761,8 @@ function PipelinePage() {
     const timeline = timelines[selectedVideo.id];
     const hasScriptEvents = timeline &&
       (timeline.zooms.length > 0 || timeline.highlights.length > 0);
-    // Use backendStatus if available, otherwise fall back to allVideoStatuses
-    // This ensures the panel shows correct state immediately when switching videos
-    const effectiveStatus = backendStatus ?? allVideoStatuses[selectedVideo.id] ?? null;
-    return getVideoPipelineState(selectedVideo, hasTakeSelections, hasScriptEvents, effectiveStatus);
-  }, [selectedVideo, takeSelections, timelines, backendStatus, allVideoStatuses]);
+    return getVideoPipelineState(selectedVideo, hasTakeSelections, hasScriptEvents, backendStatus);
+  }, [selectedVideo, takeSelections, timelines, backendStatus]);
 
   const progressPercent = useMemo(() => {
     if (!pipelineState) return 0;
@@ -848,23 +782,21 @@ function PipelinePage() {
 
     switch (step) {
       case "raw":
-        return `# Video importado desde
-${videoPath}`;
+        return `# Video importado desde\n${videoPath}`;
       case "silences":
         return `# Detectar silencios en el video
 bun run src/core/silence/detect.ts "${videoPath}" \\
   --threshold ${config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb} \\
   --min-duration ${config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec}`;
       case "captions-raw":
-        return `# Transcribir video original con Whisper
-node sub.mjs "${videoPath}"`;
+        return `# Transcribir video original con Whisper\nnode sub.mjs "${videoPath}"`;
       case "segments":
         return `# Generar segmentos de contenido
 bun run src/core/silence/segments.ts "${videoPath}" \\
   --padding ${config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec}`;
       case "semantic":
-        return `# Análisis semántico de silencios
-# Clasifica silencios usando la transcripción:
+        return `# Analisis semantico de silencios
+# Clasifica silencios usando la transcripcion:
 # - Pausas importantes (entre oraciones)
 # - Silencios eliminables (muertos)
 # Requiere: silences + captions-raw completados`;
@@ -873,14 +805,13 @@ bun run src/core/silence/segments.ts "${videoPath}" \\
 bun run src/core/cut/index.ts "${videoPath}" \\
   --output "public/videos/${selectedVideo.id}_cut.mp4"`;
       case "captions":
-        return `# Generar captions con Whisper
-bun run create-subtitles "${videoPath}"`;
+        return `# Generar captions con Whisper\nbun run create-subtitles "${videoPath}"`;
       case "script":
-        return `# Guión del video
-# Ingresa el texto del guión en el campo de arriba
-# Se usa para mejorar la transcripción y el análisis semántico`;
+        return `# Guion del video
+# Ingresa el texto del guion en el campo de arriba
+# Se usa para mejorar la transcripcion y el analisis semantico`;
       case "take-selection":
-        return `# Selección de tomas
+        return `# Seleccion de tomas
 # Revisa y selecciona las mejores tomas del video
 # Interfaz interactiva en el panel de resultados`;
       case "rendered":
@@ -895,580 +826,511 @@ bunx remotion render src/index.ts CaptionedVideo \\
 
   if (loading) {
     return (
-      <div className="p-6 max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-6 w-24 rounded-full" />
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          <Card className="lg:col-span-1">
-            <CardHeader className="pb-3">
-              <Skeleton className="h-4 w-16" />
-            </CardHeader>
-            <CardContent>
-              <VideoSidebarSkeleton count={3} />
-            </CardContent>
-          </Card>
-          <div className="lg:col-span-3">
-            <Card>
-              <CardContent className="pt-6">
-                <Skeleton className="h-4 w-48 mb-4" />
-                <Skeleton className="h-2 w-full mb-4" />
-                <div className="flex gap-2">
-                  {[1, 2, 3, 4, 5, 6].map((i) => (
-                    <Skeleton key={i} className="h-6 w-20 rounded-full" />
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
+      <div className="flex flex-col gap-6 flex-1">
+        <Card>
+          <CardContent className="pt-6">
+            <Skeleton className="h-4 w-48 mb-4" />
+            <Skeleton className="h-2 w-full mb-4" />
+            <div className="flex gap-2">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <Skeleton key={i} className="h-6 w-20 rounded-full" />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="p-6">
-        <Alert variant="destructive">
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      </div>
+      <Alert variant="destructive">
+        <AlertTitle>Error</AlertTitle>
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (!selectedVideo) {
+    return (
+      <Card className="flex-1 flex items-center justify-center">
+        <CardContent className="py-12 text-center">
+          <div className="text-muted-foreground mb-2">
+            Video no encontrado
+          </div>
+          <p className="text-sm text-muted-foreground/70">
+            El video seleccionado no existe o fue eliminado
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto h-full flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between mb-6 flex-none">
-        <h1 className="text-2xl font-bold">Pipeline Dashboard</h1>
-        <div className="flex items-center gap-3">
-          {selectedVideo && (
-            <>
-              <Badge variant="outline" className="text-sm">
-                {progressPercent}% completado
-              </Badge>
-              <PipelineResetActions
-                videoId={selectedVideo.id}
-                disabled={isProcessing}
-                hasCaptions={selectedVideo.hasCaptions}
-                onReset={handleRefresh}
-              />
-              {isProcessing ? (
-                <Button
-                  variant="destructive"
-                  onClick={cancelProcess}
-                  className="gap-2"
-                >
-                  <StopIcon className="w-4 h-4" />
-                  Cancelar
-                </Button>
-              ) : (
-                <Button
-                  onClick={startAutoProcess}
-                  className="gap-2 bg-green-600 hover:bg-green-700"
-                >
-                  <ZapIcon className="w-4 h-4" />
-                  Procesar Todo
-                </Button>
-              )}
-            </>
-          )}
-        </div>
+    <div className="flex flex-col gap-6 flex-1 min-h-0">
+      {/* Header with actions */}
+      <div className="flex items-center justify-end gap-3 flex-none">
+        <Badge variant="outline" className="text-sm">
+          {progressPercent}% completado
+        </Badge>
+        <PipelineResetActions
+          videoId={selectedVideo.id}
+          disabled={isProcessing}
+          hasCaptions={selectedVideo.hasCaptions}
+          onReset={handleRefresh}
+        />
+        {isProcessing ? (
+          <Button
+            variant="destructive"
+            onClick={cancelProcess}
+            className="gap-2"
+          >
+            <StopIcon className="w-4 h-4" />
+            Cancelar
+          </Button>
+        ) : (
+          <Button
+            onClick={startAutoProcess}
+            className="gap-2 bg-green-600 hover:bg-green-700"
+          >
+            <ZapIcon className="w-4 h-4" />
+            Procesar Todo
+          </Button>
+        )}
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1 min-h-0">
-        {/* Video Selector */}
-        <Card className="lg:col-span-1 min-h-0 overflow-hidden">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Videos</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {videos.map((video) => {
-              const hasTakes = video.id in takeSelections &&
-                Object.keys(takeSelections[video.id]?.selections || {}).length > 0;
-              const videoTimeline = timelines[video.id];
-              const hasScriptEvts = videoTimeline &&
-                (videoTimeline.zooms.length > 0 || videoTimeline.highlights.length > 0);
-              // Use allVideoStatuses map to get the correct status for each video
-              const videoBackendStatus = allVideoStatuses[video.id] ?? null;
-              const state = getVideoPipelineState(video, hasTakes, hasScriptEvts, videoBackendStatus);
-              const completed = getCompletedSteps(state);
-              const videoStepInfo = pipelineStateToStepInfo(state);
-              return (
-                <button
-                  key={video.id}
-                  onClick={() => handleSelectVideo(video)}
-                  className={`w-full text-left p-3 rounded-lg border transition-colors ${
-                    selectedVideo?.id === video.id
-                      ? "border-primary bg-primary/5"
-                      : "border-transparent hover:bg-muted"
-                  }`}
-                >
-                  <div className="font-medium text-sm truncate">
-                    {video.title}
-                  </div>
-                  <div className="flex items-center justify-between gap-2 mt-2">
-                    <Progress value={(completed / STEPS.length) * 100} className="h-1 flex-1" />
-                    <ProcessingStatusInline steps={videoStepInfo} />
-                  </div>
-                </button>
-              );
-            })}
+
+      {/* Auto-Process Progress */}
+      {isProcessing && processProgress && (
+        <Card className="border-green-500/50 bg-green-500/5 flex-none">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3 mb-3">
+              <LoaderIcon className="w-5 h-5 animate-spin text-green-600" />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-green-700">
+                  Procesando automaticamente...
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {processProgress.message}
+                </div>
+              </div>
+              <Badge variant="outline" className="text-green-600 border-green-500">
+                {processProgress.progress}%
+              </Badge>
+            </div>
+            <Progress value={processProgress.progress} className="h-2" />
           </CardContent>
         </Card>
+      )}
 
-        {/* Pipeline Steps */}
-        <div className="lg:col-span-3 flex flex-col min-h-0 gap-6">
-          {selectedVideo && pipelineState && (
-            <>
-              {/* Auto-Process Progress */}
-              {isProcessing && processProgress && (
-                <Card className="border-green-500/50 bg-green-500/5 flex-none">
-                  <CardContent className="pt-6">
-                    <div className="flex items-center gap-3 mb-3">
-                      <LoaderIcon className="w-5 h-5 animate-spin text-green-600" />
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-green-700">
-                          Procesando automáticamente...
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-0.5">
-                          {processProgress.message}
-                        </div>
+      {/* Progress Overview */}
+      <Card className="flex-none">
+        <CardContent className="pt-6">
+          <div className="flex items-center gap-4 mb-4">
+            <div className="flex-1">
+              <div className="text-sm font-medium mb-2">
+                {selectedVideo.title}
+              </div>
+              <Progress value={progressPercent} />
+            </div>
+          </div>
+          <ProcessingStatusPanel
+            steps={stepInfoList}
+            activeStep={activeStep}
+            onStepClick={(key) => handleSetActiveStep(key as PipelineStep)}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Pipeline Tabs */}
+      {pipelineState && (
+        <Tabs
+          value={activeStep}
+          onValueChange={(v) => handleSetActiveStep(v as PipelineStep)}
+          className="flex-1 min-h-0 flex flex-col"
+        >
+          {STEPS.map((step) => {
+            const isExecutableStep = ["silences", "captions-raw", "segments", "semantic", "effects-analysis", "cut", "captions"].includes(step.key);
+            const { canExecute, missingDeps } = canExecuteStepCheck(step.key, pipelineState);
+            const isStepRunning = stepProcessing === step.key;
+            const stepResult = stepResults[step.key];
+
+            return (
+              <TabsContent key={step.key} value={step.key} className="flex-1 min-h-0 flex flex-col data-[state=inactive]:hidden">
+                <Card className="flex-1 min-h-0 flex flex-col">
+                  <CardHeader className="flex-none">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="flex items-center gap-2">
+                          {step.label}
+                          {pipelineState[step.key] && (
+                            <Badge
+                              variant="outline"
+                              className="bg-green-100 text-green-700 border-green-300"
+                            >
+                              Completado
+                            </Badge>
+                          )}
+                          {backendStatus?.steps[step.key as keyof typeof backendStatus.steps]?.status === "error" && (
+                            <Badge variant="destructive">Error</Badge>
+                          )}
+                        </CardTitle>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {step.description}
+                        </p>
                       </div>
-                      <Badge variant="outline" className="text-green-600 border-green-500">
-                        {processProgress.progress}%
-                      </Badge>
-                    </div>
-                    <Progress value={processProgress.progress} className="h-2" />
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Progress Overview */}
-              <Card className="flex-none">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="flex-1">
-                      <div className="text-sm font-medium mb-2">
-                        {selectedVideo.title}
-                      </div>
-                      <Progress value={progressPercent} />
-                    </div>
-                  </div>
-                  {/* Visual Processing Status Indicators - clickable for navigation */}
-                  <ProcessingStatusPanel
-                    steps={stepInfoList}
-                    activeStep={activeStep}
-                    onStepClick={(key) => handleSetActiveStep(key as PipelineStep)}
-                  />
-                </CardContent>
-              </Card>
-
-              {/* Pipeline Tabs - navigation via badges above */}
-              <Tabs
-                value={activeStep}
-                onValueChange={(v) => handleSetActiveStep(v as PipelineStep)}
-                className="flex-1 min-h-0 flex flex-col"
-              >
-                {STEPS.map((step) => {
-                  const isExecutableStep = ["silences", "captions-raw", "segments", "semantic", "effects-analysis", "cut", "captions"].includes(step.key);
-                  const { canExecute, missingDeps } = canExecuteStepCheck(step.key, pipelineState);
-                  const isStepRunning = stepProcessing === step.key;
-                  const stepResult = stepResults[step.key];
-
-                  return (
-                    <TabsContent key={step.key} value={step.key} className="flex-1 min-h-0 flex flex-col data-[state=inactive]:hidden">
-                      <Card className="flex-1 min-h-0 flex flex-col">
-                        <CardHeader className="flex-none">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <CardTitle className="flex items-center gap-2">
-                                {step.label}
-                                {pipelineState[step.key] && (
-                                  <Badge
-                                    variant="outline"
-                                    className="bg-green-100 text-green-700 border-green-300"
-                                  >
-                                    Completado
-                                  </Badge>
+                      <div className="flex items-center gap-2">
+                        {isExecutableStep && (
+                          <>
+                            {!canExecute && missingDeps.length > 0 && !stepProcessing && (
+                              <span className="text-xs text-muted-foreground">
+                                Requiere: {missingDeps.join(", ")}
+                              </span>
+                            )}
+                            {step.key !== "silences" && (
+                              <Button
+                                onClick={() => executeUntilStep(step.key)}
+                                disabled={isStepRunning || isProcessing || !!stepProcessing}
+                                variant="outline"
+                                className="gap-2"
+                              >
+                                {stepProcessing && !isStepRunning ? (
+                                  <>
+                                    <LoaderIcon className="w-4 h-4 animate-spin" />
+                                    Ejecutando...
+                                  </>
+                                ) : (
+                                  <>
+                                    <FastForwardIcon className="w-4 h-4" />
+                                    Ejecutar hasta aqui
+                                  </>
                                 )}
-                                {backendStatus?.steps[step.key as keyof typeof backendStatus.steps]?.status === "error" && (
-                                  <Badge variant="destructive">Error</Badge>
-                                )}
-                              </CardTitle>
-                              <p className="text-sm text-muted-foreground mt-1">
-                                {step.description}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {/* Execute buttons for executable steps */}
-                              {isExecutableStep && (
+                              </Button>
+                            )}
+                            <Button
+                              onClick={() => executeStep(step.key)}
+                              disabled={!canExecute || isStepRunning || isProcessing || !!stepProcessing}
+                              variant={pipelineState[step.key] ? "outline" : "default"}
+                              className="gap-2"
+                            >
+                              {isStepRunning ? (
                                 <>
-                                  {!canExecute && missingDeps.length > 0 && !stepProcessing && (
-                                    <span className="text-xs text-muted-foreground">
-                                      Requiere: {missingDeps.join(", ")}
-                                    </span>
-                                  )}
-                                  {/* Execute until here button - show if there are previous steps */}
-                                  {step.key !== "silences" && (
-                                    <Button
-                                      onClick={() => executeUntilStep(step.key)}
-                                      disabled={isStepRunning || isProcessing || !!stepProcessing}
-                                      variant="outline"
-                                      className="gap-2"
-                                    >
-                                      {stepProcessing && !isStepRunning ? (
-                                        <>
-                                          <LoaderIcon className="w-4 h-4 animate-spin" />
-                                          Ejecutando...
-                                        </>
-                                      ) : (
-                                        <>
-                                          <FastForwardIcon className="w-4 h-4" />
-                                          Ejecutar hasta aquí
-                                        </>
-                                      )}
-                                    </Button>
-                                  )}
-                                  {/* Single step execute button */}
-                                  <Button
-                                    onClick={() => executeStep(step.key)}
-                                    disabled={!canExecute || isStepRunning || isProcessing || !!stepProcessing}
-                                    variant={pipelineState[step.key] ? "outline" : "default"}
-                                    className="gap-2"
-                                  >
-                                    {isStepRunning ? (
-                                      <>
-                                        <LoaderIcon className="w-4 h-4 animate-spin" />
-                                        Ejecutando...
-                                      </>
-                                    ) : pipelineState[step.key] ? (
-                                      <>
-                                        <RefreshIcon className="w-4 h-4" />
-                                        Re-ejecutar
-                                      </>
-                                    ) : (
-                                      <>
-                                        <PlayIcon className="w-4 h-4" />
-                                        Ejecutar
-                                      </>
-                                    )}
-                                  </Button>
+                                  <LoaderIcon className="w-4 h-4 animate-spin" />
+                                  Ejecutando...
+                                </>
+                              ) : pipelineState[step.key] ? (
+                                <>
+                                  <RefreshIcon className="w-4 h-4" />
+                                  Re-ejecutar
+                                </>
+                              ) : (
+                                <>
+                                  <PlayIcon className="w-4 h-4" />
+                                  Ejecutar
                                 </>
                               )}
-                              {step.key !== "raw" && !pipelineState[step.key] && !isExecutableStep && (
-                                <Button
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(
-                                      getStepCommand(step.key)
-                                    );
-                                    toast.success("Comando copiado", {
-                                      description: `Comando para "${step.label}" copiado al portapapeles`,
-                                    });
-                                  }}
-                                >
-                                  <CopyIcon className="w-4 h-4 mr-2" />
-                                  Copiar comando
-                                </Button>
-                              )}
+                            </Button>
+                          </>
+                        )}
+                        {step.key !== "raw" && !pipelineState[step.key] && !isExecutableStep && (
+                          <Button
+                            onClick={() => {
+                              navigator.clipboard.writeText(
+                                getStepCommand(step.key)
+                              );
+                              toast.success("Comando copiado", {
+                                description: `Comando para "${step.label}" copiado al portapapeles`,
+                              });
+                            }}
+                          >
+                            <CopyIcon className="w-4 h-4 mr-2" />
+                            Copiar comando
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="flex-1 min-h-0 overflow-y-auto scrollbar-subtle">
+                    {/* Step progress indicator */}
+                    {isStepRunning && stepProgress && (
+                      <div className="mb-4 p-4 border rounded-lg bg-blue-50 border-blue-200">
+                        <div className="flex items-center gap-3 mb-2">
+                          <LoaderIcon className="w-4 h-4 animate-spin text-blue-600" />
+                          <span className="text-sm font-medium text-blue-700">
+                            {stepProgress.message}
+                          </span>
+                          <Badge variant="outline" className="ml-auto text-blue-600 border-blue-300">
+                            {stepProgress.progress}%
+                          </Badge>
+                        </div>
+                        <Progress value={stepProgress.progress} className="h-2" />
+                      </div>
+                    )}
+
+                    {step.key === "raw" ? (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">
+                              Archivo:
+                            </span>
+                            <span className="ml-2 font-mono">
+                              {selectedVideo.filename}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">
+                              Tamano:
+                            </span>
+                            <span className="ml-2">
+                              {formatFileSize(selectedVideo.size)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Script Input Section */}
+                        <div className="space-y-2 pt-2 border-t">
+                          <div className="flex items-center justify-between">
+                            <label className="text-sm font-medium">
+                              Guion original (opcional)
+                            </label>
+                            {scriptState?.rawScript && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => clearScript(selectedVideo.id)}
+                                className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
+                              >
+                                <X className="w-3 h-3 mr-1" />
+                                Limpiar
+                              </Button>
+                            )}
+                          </div>
+                          <Textarea
+                            placeholder="Pega aqui tu guion original. Puedes usar marcadores como [zoom], [zoom:slow] o {palabra} para efectos..."
+                            value={scriptState?.rawScript ?? ""}
+                            onChange={(e) => setScript(selectedVideo.id, e.target.value)}
+                            className="min-h-[120px] text-sm font-mono resize-y"
+                          />
+                          {scriptState?.rawScript && (() => {
+                            const parsed = parseScript(scriptState.rawScript);
+                            const zoomCount = parsed.markers.filter((m) => m.type === "zoom").length;
+                            const highlightCount = parsed.markers.filter((m) => m.type === "highlight").length;
+                            const totalMarkers = zoomCount + highlightCount;
+                            return (
+                              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                <span>{scriptState.rawScript.length} caracteres</span>
+                                {totalMarkers > 0 && (
+                                  <>
+                                    <span className="text-muted-foreground/50">|</span>
+                                    {zoomCount > 0 && (
+                                      <Badge variant="secondary" className="text-xs h-5">
+                                        {zoomCount} zoom{zoomCount !== 1 ? "s" : ""}
+                                      </Badge>
+                                    )}
+                                    {highlightCount > 0 && (
+                                      <Badge variant="secondary" className="text-xs h-5">
+                                        {highlightCount} highlight{highlightCount !== 1 ? "s" : ""}
+                                      </Badge>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })()}
+                          <p className="text-xs text-muted-foreground">
+                            Este guion se usara para mejorar la deteccion de silencios y transcripcion.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {/* Config for silence detection */}
+                        {step.key === "silences" && (
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="text-sm font-medium">
+                                Threshold (dB)
+                              </label>
+                              <div className="relative mt-1">
+                                <Input
+                                  type="number"
+                                  value={config.silence.thresholdDb ?? ""}
+                                  placeholder={`${SILENCE_DEFAULTS.thresholdDb} (default)`}
+                                  onChange={(e) =>
+                                    setPipelineConfig({
+                                      silence: {
+                                        ...config.silence,
+                                        thresholdDb: e.target.value === "" ? undefined : Number(e.target.value),
+                                      },
+                                    })
+                                  }
+                                  className="pr-8"
+                                  disabled={isStepRunning}
+                                />
+                                {config.silence.thresholdDb !== undefined && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setPipelineConfig({
+                                        silence: { ...config.silence, thresholdDb: undefined },
+                                      })
+                                    }
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                    disabled={isStepRunning}
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </button>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Nivel de ruido para detectar silencio
+                                (-60 a -20)
+                              </p>
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium">
+                                Duracion minima (seg)
+                              </label>
+                              <div className="relative mt-1">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  value={config.silence.minDurationSec ?? ""}
+                                  placeholder={`${SILENCE_DEFAULTS.minDurationSec} (default)`}
+                                  onChange={(e) =>
+                                    setPipelineConfig({
+                                      silence: {
+                                        ...config.silence,
+                                        minDurationSec: e.target.value === "" ? undefined : Number(e.target.value),
+                                      },
+                                    })
+                                  }
+                                  className="pr-8"
+                                  disabled={isStepRunning}
+                                />
+                                {config.silence.minDurationSec !== undefined && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setPipelineConfig({
+                                        silence: { ...config.silence, minDurationSec: undefined },
+                                      })
+                                    }
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                    disabled={isStepRunning}
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </button>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Minimo de segundos para considerar silencio
+                              </p>
                             </div>
                           </div>
-                        </CardHeader>
-                        <CardContent className="flex-1 min-h-0 overflow-y-auto scrollbar-subtle">
-                          {/* Step progress indicator */}
-                          {isStepRunning && stepProgress && (
-                            <div className="mb-4 p-4 border rounded-lg bg-blue-50 border-blue-200">
-                              <div className="flex items-center gap-3 mb-2">
-                                <LoaderIcon className="w-4 h-4 animate-spin text-blue-600" />
-                                <span className="text-sm font-medium text-blue-700">
-                                  {stepProgress.message}
-                                </span>
-                                <Badge variant="outline" className="ml-auto text-blue-600 border-blue-300">
-                                  {stepProgress.progress}%
-                                </Badge>
-                              </div>
-                              <Progress value={stepProgress.progress} className="h-2" />
-                            </div>
-                          )}
+                        )}
 
-                          {step.key === "raw" ? (
-                            <div className="space-y-4">
-                              <div className="grid grid-cols-2 gap-4 text-sm">
-                                <div>
-                                  <span className="text-muted-foreground">
-                                    Archivo:
-                                  </span>
-                                  <span className="ml-2 font-mono">
-                                    {selectedVideo.filename}
-                                  </span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">
-                                    Tamaño:
-                                  </span>
-                                  <span className="ml-2">
-                                    {formatFileSize(selectedVideo.size)}
-                                  </span>
-                                </div>
-                              </div>
-
-                              {/* Script Input Section */}
-                              <div className="space-y-2 pt-2 border-t">
-                                <div className="flex items-center justify-between">
-                                  <label className="text-sm font-medium">
-                                    Guión original (opcional)
-                                  </label>
-                                  {scriptState?.rawScript && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => clearScript(selectedVideo.id)}
-                                      className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
-                                    >
-                                      <X className="w-3 h-3 mr-1" />
-                                      Limpiar
-                                    </Button>
-                                  )}
-                                </div>
-                                <Textarea
-                                  placeholder="Pega aquí tu guión original. Puedes usar marcadores como [zoom], [zoom:slow] o {palabra} para efectos..."
-                                  value={scriptState?.rawScript ?? ""}
-                                  onChange={(e) => setScript(selectedVideo.id, e.target.value)}
-                                  className="min-h-[120px] text-sm font-mono resize-y"
-                                />
-                                {scriptState?.rawScript && (() => {
-                                  const parsed = parseScript(scriptState.rawScript);
-                                  const zoomCount = parsed.markers.filter((m) => m.type === "zoom").length;
-                                  const highlightCount = parsed.markers.filter((m) => m.type === "highlight").length;
-                                  const totalMarkers = zoomCount + highlightCount;
-                                  return (
-                                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                                      <span>{scriptState.rawScript.length} caracteres</span>
-                                      {totalMarkers > 0 && (
-                                        <>
-                                          <span className="text-muted-foreground/50">|</span>
-                                          {zoomCount > 0 && (
-                                            <Badge variant="secondary" className="text-xs h-5">
-                                              {zoomCount} zoom{zoomCount !== 1 ? "s" : ""}
-                                            </Badge>
-                                          )}
-                                          {highlightCount > 0 && (
-                                            <Badge variant="secondary" className="text-xs h-5">
-                                              {highlightCount} highlight{highlightCount !== 1 ? "s" : ""}
-                                            </Badge>
-                                          )}
-                                        </>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-                                <p className="text-xs text-muted-foreground">
-                                  Este guión se usará para mejorar la detección de silencios y transcripción.
-                                </p>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="space-y-4">
-                              {/* Config for silence detection */}
-                              {step.key === "silences" && (
-                                <div className="grid grid-cols-2 gap-4">
-                                  <div>
-                                    <label className="text-sm font-medium">
-                                      Threshold (dB)
-                                    </label>
-                                    <div className="relative mt-1">
-                                      <Input
-                                        type="number"
-                                        value={config.silence.thresholdDb ?? ""}
-                                        placeholder={`${SILENCE_DEFAULTS.thresholdDb} (default)`}
-                                        onChange={(e) =>
-                                          setPipelineConfig({
-                                            silence: {
-                                              ...config.silence,
-                                              thresholdDb: e.target.value === "" ? undefined : Number(e.target.value),
-                                            },
-                                          })
-                                        }
-                                        className="pr-8"
-                                        disabled={isStepRunning}
-                                      />
-                                      {config.silence.thresholdDb !== undefined && (
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setPipelineConfig({
-                                              silence: { ...config.silence, thresholdDb: undefined },
-                                            })
-                                          }
-                                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                                          disabled={isStepRunning}
-                                        >
-                                          <X className="h-4 w-4" />
-                                        </button>
-                                      )}
-                                    </div>
-                                    <p className="text-xs text-muted-foreground mt-1">
-                                      Nivel de ruido para detectar silencio
-                                      (-60 a -20)
-                                    </p>
-                                  </div>
-                                  <div>
-                                    <label className="text-sm font-medium">
-                                      Duración mínima (seg)
-                                    </label>
-                                    <div className="relative mt-1">
-                                      <Input
-                                        type="number"
-                                        step="0.1"
-                                        value={config.silence.minDurationSec ?? ""}
-                                        placeholder={`${SILENCE_DEFAULTS.minDurationSec} (default)`}
-                                        onChange={(e) =>
-                                          setPipelineConfig({
-                                            silence: {
-                                              ...config.silence,
-                                              minDurationSec: e.target.value === "" ? undefined : Number(e.target.value),
-                                            },
-                                          })
-                                        }
-                                        className="pr-8"
-                                        disabled={isStepRunning}
-                                      />
-                                      {config.silence.minDurationSec !== undefined && (
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setPipelineConfig({
-                                              silence: { ...config.silence, minDurationSec: undefined },
-                                            })
-                                          }
-                                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                                          disabled={isStepRunning}
-                                        >
-                                          <X className="h-4 w-4" />
-                                        </button>
-                                      )}
-                                    </div>
-                                    <p className="text-xs text-muted-foreground mt-1">
-                                      Mínimo de segundos para considerar silencio
-                                    </p>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Config for segments */}
-                              {step.key === "segments" && (
-                                <div className="max-w-xs">
-                                  <label className="text-sm font-medium">
-                                    Padding (seg)
-                                  </label>
-                                  <div className="relative mt-1">
-                                    <Input
-                                      type="number"
-                                      step="0.01"
-                                      value={config.silence.paddingSec ?? ""}
-                                      placeholder={`${SILENCE_DEFAULTS.paddingSec} (default)`}
-                                      onChange={(e) =>
-                                        setPipelineConfig({
-                                          silence: {
-                                            ...config.silence,
-                                            paddingSec: e.target.value === "" ? undefined : Number(e.target.value),
-                                          },
-                                        })
-                                      }
-                                      className="pr-8"
-                                      disabled={isStepRunning}
-                                    />
-                                    {config.silence.paddingSec !== undefined && (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setPipelineConfig({
-                                            silence: { ...config.silence, paddingSec: undefined },
-                                          })
-                                        }
-                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                                        disabled={isStepRunning}
-                                      >
-                                        <X className="h-4 w-4" />
-                                      </button>
-                                    )}
-                                  </div>
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    Espacio adicional antes/después de cada
-                                    segmento
-                                  </p>
-                                </div>
-                              )}
-
-                              {/* Script alignment panel */}
-                              {step.key === "script" && (
-                                <ScriptAlignmentPanel
-                                  videoId={selectedVideo.id}
-                                  captions={captions}
-                                  cutFilename={(() => {
-                                    // Extract base name from cut video output path
-                                    const cutResult = stepResults.cut as CutResult | undefined;
-                                    if (cutResult?.outputPath) {
-                                      // outputPath is like "public/videos/name-cut.mp4"
-                                      const match = cutResult.outputPath.match(/([^/]+)\.(mp4|mkv|mov|webm)$/i);
-                                      return match ? match[1] : undefined;
-                                    }
-                                    return undefined;
-                                  })()}
-                                />
-                              )}
-
-                              {/* Take detection panel */}
-                              {step.key === "take-selection" && (
-                                <TakeDetectionPanel
-                                  videoId={selectedVideo.id}
-                                  captions={captions}
-                                />
-                              )}
-
-                              {/* Effects analysis panel */}
-                              {step.key === "effects-analysis" && pipelineState["effects-analysis"] && (
-                                <EffectsAnalysisPanel
-                                  videoId={selectedVideo.id}
-                                />
-                              )}
-
-                              {/* Step results display */}
-                              {stepResult && (
-                                <StepResultDisplay step={step.key} result={stepResult} selectedVideo={selectedVideo} />
-                              )}
-
-                              {/* Command preview (collapsed if result exists) */}
-                              {!stepResult && (
-                                <div>
-                                  <label className="text-sm font-medium">
-                                    Comando equivalente
-                                  </label>
-                                  <pre className="mt-2 p-4 bg-muted rounded-lg text-sm font-mono overflow-x-auto whitespace-pre-wrap">
-                                    {getStepCommand(step.key)}
-                                  </pre>
-                                </div>
+                        {/* Config for segments */}
+                        {step.key === "segments" && (
+                          <div className="max-w-xs">
+                            <label className="text-sm font-medium">
+                              Padding (seg)
+                            </label>
+                            <div className="relative mt-1">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={config.silence.paddingSec ?? ""}
+                                placeholder={`${SILENCE_DEFAULTS.paddingSec} (default)`}
+                                onChange={(e) =>
+                                  setPipelineConfig({
+                                    silence: {
+                                      ...config.silence,
+                                      paddingSec: e.target.value === "" ? undefined : Number(e.target.value),
+                                    },
+                                  })
+                                }
+                                className="pr-8"
+                                disabled={isStepRunning}
+                              />
+                              {config.silence.paddingSec !== undefined && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPipelineConfig({
+                                      silence: { ...config.silence, paddingSec: undefined },
+                                    })
+                                  }
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                  disabled={isStepRunning}
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
                               )}
                             </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    </TabsContent>
-                  )
-                })}
-              </Tabs>
-            </>
-          )}
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Espacio adicional antes/despues de cada
+                              segmento
+                            </p>
+                          </div>
+                        )}
 
-          {!selectedVideo && (
-            <Card>
-              <CardContent className="py-8 text-center text-muted-foreground">
-                Selecciona un video para ver su pipeline
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </div>
+                        {/* Script alignment panel */}
+                        {step.key === "script" && (
+                          <ScriptAlignmentPanel
+                            videoId={selectedVideo.id}
+                            captions={captions}
+                            cutFilename={(() => {
+                              const cutResult = stepResults.cut as CutResult | undefined;
+                              if (cutResult?.outputPath) {
+                                const match = cutResult.outputPath.match(/([^/]+)\.(mp4|mkv|mov|webm)$/i);
+                                return match ? match[1] : undefined;
+                              }
+                              return undefined;
+                            })()}
+                          />
+                        )}
+
+                        {/* Take detection panel */}
+                        {step.key === "take-selection" && (
+                          <TakeDetectionPanel
+                            videoId={selectedVideo.id}
+                            captions={captions}
+                          />
+                        )}
+
+                        {/* Effects analysis panel */}
+                        {step.key === "effects-analysis" && pipelineState["effects-analysis"] && (
+                          <EffectsAnalysisPanel
+                            videoId={selectedVideo.id}
+                          />
+                        )}
+
+                        {/* Step results display */}
+                        {stepResult && (
+                          <StepResultDisplay step={step.key} result={stepResult} selectedVideo={selectedVideo} />
+                        )}
+
+                        {/* Command preview (collapsed if result exists) */}
+                        {!stepResult && (
+                          <div>
+                            <label className="text-sm font-medium">
+                              Comando equivalente
+                            </label>
+                            <pre className="mt-2 p-4 bg-muted rounded-lg text-sm font-mono overflow-x-auto whitespace-pre-wrap">
+                              {getStepCommand(step.key)}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            )
+          })}
+        </Tabs>
+      )}
     </div>
   )
 }
@@ -1667,7 +1529,7 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
                     <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                     </svg>
-                    Cortes respetan límites de oraciones del guión
+                    Cortes respetan limites de oraciones del guion
                   </span>
                 </div>
               )}
@@ -1684,7 +1546,6 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
       }
       case "cut": {
         const r = result as CutResult;
-        // Use streaming endpoint for proper HTTP Range support (fixes video pausing issues)
         const videoUrl = r.outputPath
           ? `${API_URL}/api/stream/${r.outputPath.replace(/^public\//, "")}`
           : null;
@@ -1764,7 +1625,7 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
                 <span className="ml-2 font-medium">{r.sentenceCount}</span>
               </div>
               <div>
-                <span className="text-muted-foreground">Cortes semánticos:</span>
+                <span className="text-muted-foreground">Cortes semanticos:</span>
                 <span className="ml-2 font-medium text-green-600">{r.semanticCutCount}</span>
               </div>
               <div>
