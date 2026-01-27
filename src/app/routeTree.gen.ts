@@ -10,20 +10,16 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as StudioRouteImport } from './routes/studio'
-import { Route as PipelineRouteImport } from './routes/pipeline'
 import { Route as EditorRouteImport } from './routes/editor'
 import { Route as BatchRouteImport } from './routes/batch'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as PipelineIndexRouteImport } from './routes/pipeline/index'
 import { Route as MediaVideoIdRouteImport } from './routes/media/$videoId'
+import { Route as PipelineVideoIdTabRouteImport } from './routes/pipeline/$videoId/$tab'
 
 const StudioRoute = StudioRouteImport.update({
   id: '/studio',
   path: '/studio',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PipelineRoute = PipelineRouteImport.update({
-  id: '/pipeline',
-  path: '/pipeline',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EditorRoute = EditorRouteImport.update({
@@ -41,9 +37,19 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PipelineIndexRoute = PipelineIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => PipelineRoute,
+} as any)
 const MediaVideoIdRoute = MediaVideoIdRouteImport.update({
   id: '/media/$videoId',
   path: '/media/$videoId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PipelineVideoIdTabRoute = PipelineVideoIdTabRouteImport.update({
+  id: '/pipeline/$videoId/$tab',
+  path: '/pipeline/$videoId/$tab',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -51,26 +57,29 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/batch': typeof BatchRoute
   '/editor': typeof EditorRoute
-  '/pipeline': typeof PipelineRoute
   '/studio': typeof StudioRoute
   '/media/$videoId': typeof MediaVideoIdRoute
+  '/pipeline/': typeof PipelineIndexRoute
+  '/pipeline/$videoId/$tab': typeof PipelineVideoIdTabRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/batch': typeof BatchRoute
   '/editor': typeof EditorRoute
-  '/pipeline': typeof PipelineRoute
   '/studio': typeof StudioRoute
   '/media/$videoId': typeof MediaVideoIdRoute
+  '/pipeline': typeof PipelineIndexRoute
+  '/pipeline/$videoId/$tab': typeof PipelineVideoIdTabRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/batch': typeof BatchRoute
   '/editor': typeof EditorRoute
-  '/pipeline': typeof PipelineRoute
   '/studio': typeof StudioRoute
   '/media/$videoId': typeof MediaVideoIdRoute
+  '/pipeline/': typeof PipelineIndexRoute
+  '/pipeline/$videoId/$tab': typeof PipelineVideoIdTabRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -78,28 +87,37 @@ export interface FileRouteTypes {
     | '/'
     | '/batch'
     | '/editor'
-    | '/pipeline'
     | '/studio'
     | '/media/$videoId'
+    | '/pipeline/'
+    | '/pipeline/$videoId/$tab'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/batch' | '/editor' | '/pipeline' | '/studio' | '/media/$videoId'
+  to:
+    | '/'
+    | '/batch'
+    | '/editor'
+    | '/studio'
+    | '/media/$videoId'
+    | '/pipeline'
+    | '/pipeline/$videoId/$tab'
   id:
     | '__root__'
     | '/'
     | '/batch'
     | '/editor'
-    | '/pipeline'
     | '/studio'
     | '/media/$videoId'
+    | '/pipeline/'
+    | '/pipeline/$videoId/$tab'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BatchRoute: typeof BatchRoute
   EditorRoute: typeof EditorRoute
-  PipelineRoute: typeof PipelineRoute
   StudioRoute: typeof StudioRoute
   MediaVideoIdRoute: typeof MediaVideoIdRoute
+  PipelineVideoIdTabRoute: typeof PipelineVideoIdTabRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -109,13 +127,6 @@ declare module '@tanstack/react-router' {
       path: '/studio'
       fullPath: '/studio'
       preLoaderRoute: typeof StudioRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/pipeline': {
-      id: '/pipeline'
-      path: '/pipeline'
-      fullPath: '/pipeline'
-      preLoaderRoute: typeof PipelineRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/editor': {
@@ -139,11 +150,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/pipeline/': {
+      id: '/pipeline/'
+      path: '/'
+      fullPath: '/pipeline/'
+      preLoaderRoute: typeof PipelineIndexRouteImport
+      parentRoute: typeof PipelineRoute
+    }
     '/media/$videoId': {
       id: '/media/$videoId'
       path: '/media/$videoId'
       fullPath: '/media/$videoId'
       preLoaderRoute: typeof MediaVideoIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pipeline/$videoId/$tab': {
+      id: '/pipeline/$videoId/$tab'
+      path: '/pipeline/$videoId/$tab'
+      fullPath: '/pipeline/$videoId/$tab'
+      preLoaderRoute: typeof PipelineVideoIdTabRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -153,9 +178,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BatchRoute: BatchRoute,
   EditorRoute: EditorRoute,
-  PipelineRoute: PipelineRoute,
   StudioRoute: StudioRoute,
   MediaVideoIdRoute: MediaVideoIdRoute,
+  PipelineVideoIdTabRoute: PipelineVideoIdTabRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
