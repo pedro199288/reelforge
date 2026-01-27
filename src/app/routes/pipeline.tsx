@@ -568,7 +568,8 @@ function PipelinePage() {
     }
   }, [selectedVideo, loadPipelineStatus]);
 
-  // Load captions when video changes (for script alignment)
+  // Load captions when video changes or captions step completes
+  const captionsStepStatus = backendStatus?.steps?.captions?.status;
   useEffect(() => {
     if (!selectedVideo) {
       setCaptions([]);
@@ -591,7 +592,7 @@ function PipelinePage() {
     };
 
     loadCaptions();
-  }, [selectedVideo]);
+  }, [selectedVideo, captionsStepStatus]);
 
   // Start auto-processing
   const startAutoProcess = useCallback(async () => {
@@ -889,8 +890,8 @@ bunx remotion render src/index.ts CaptionedVideo \\
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-6 max-w-6xl mx-auto h-full flex flex-col overflow-hidden">
+      <div className="flex items-center justify-between mb-6 flex-none">
         <h1 className="text-2xl font-bold">Pipeline Dashboard</h1>
         <div className="flex items-center gap-3">
           {selectedVideo && (
@@ -927,9 +928,9 @@ bunx remotion render src/index.ts CaptionedVideo \\
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1 min-h-0">
         {/* Video Selector */}
-        <Card className="lg:col-span-1">
+        <Card className="lg:col-span-1 min-h-0 overflow-hidden">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium">Videos</CardTitle>
           </CardHeader>
@@ -969,12 +970,12 @@ bunx remotion render src/index.ts CaptionedVideo \\
         </Card>
 
         {/* Pipeline Steps */}
-        <div className="lg:col-span-3 space-y-6">
+        <div className="lg:col-span-3 flex flex-col min-h-0 gap-6">
           {selectedVideo && pipelineState && (
             <>
               {/* Auto-Process Progress */}
               {isProcessing && processProgress && (
-                <Card className="border-green-500/50 bg-green-500/5">
+                <Card className="border-green-500/50 bg-green-500/5 flex-none">
                   <CardContent className="pt-6">
                     <div className="flex items-center gap-3 mb-3">
                       <LoaderIcon className="w-5 h-5 animate-spin text-green-600" />
@@ -996,7 +997,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
               )}
 
               {/* Progress Overview */}
-              <Card>
+              <Card className="flex-none">
                 <CardContent className="pt-6">
                   <div className="flex items-center gap-4 mb-4">
                     <div className="flex-1">
@@ -1015,8 +1016,9 @@ bunx remotion render src/index.ts CaptionedVideo \\
               <Tabs
                 value={activeStep}
                 onValueChange={(v) => setActiveStep(v as PipelineStep)}
+                className="flex-1 min-h-0 flex flex-col"
               >
-                <TabsList className="w-full justify-start overflow-x-auto scrollbar-subtle pb-1">
+                <TabsList className="w-full justify-start overflow-x-auto scrollbar-subtle pb-1 flex-none">
                   {STEPS.map((step) => (
                     <TabsTrigger
                       key={step.key}
@@ -1040,9 +1042,9 @@ bunx remotion render src/index.ts CaptionedVideo \\
                   const stepResult = stepResults[step.key];
 
                   return (
-                  <TabsContent key={step.key} value={step.key}>
-                    <Card>
-                      <CardHeader>
+                  <TabsContent key={step.key} value={step.key} className="flex-1 min-h-0 flex flex-col data-[state=inactive]:hidden">
+                    <Card className="flex-1 min-h-0 flex flex-col">
+                      <CardHeader className="flex-none">
                         <div className="flex items-center justify-between">
                           <div>
                             <CardTitle className="flex items-center gap-2">
@@ -1137,7 +1139,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                           </div>
                         </div>
                       </CardHeader>
-                      <CardContent className="max-h-[calc(100vh-320px)] overflow-y-auto scrollbar-subtle">
+                      <CardContent className="flex-1 min-h-0 overflow-y-auto scrollbar-subtle">
                         {/* Step progress indicator */}
                         {isStepRunning && stepProgress && (
                           <div className="mb-4 p-4 border rounded-lg bg-blue-50 border-blue-200">

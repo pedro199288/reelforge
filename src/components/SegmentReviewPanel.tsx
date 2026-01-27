@@ -167,7 +167,7 @@ export function SegmentReviewPanel({
         </div>
 
         {/* Segment list */}
-        <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-2 scrollbar-subtle">
+        <div className="space-y-2 pr-2">
           {segments.map((segment) => {
             const selected = isSelected(segment.index);
             return (
