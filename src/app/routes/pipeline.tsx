@@ -9,7 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import type { Video } from "@/components/VideoList";
-import { useWorkspaceStore, useSelection, SILENCE_DEFAULTS } from "@/store/workspace";
+import { useWorkspaceStore, useSelection, useScript, SILENCE_DEFAULTS } from "@/store/workspace";
+import { Textarea } from "@/components/ui/textarea";
+import { parseScript } from "@/core/script/parser";
 import { X } from "lucide-react";
 import { useTimelineStore } from "@/store/timeline";
 import { ScriptAlignmentPanel } from "@/components/ScriptAlignmentPanel";
@@ -289,6 +291,11 @@ function PipelinePage() {
   const setPipelineConfig = useWorkspaceStore((state) => state.setPipelineConfig);
   const takeSelections = useWorkspaceStore((state) => state.takeSelections);
   const timelines = useTimelineStore((state) => state.timelines);
+
+  // Script state for raw phase
+  const scriptState = useScript(selectedVideo?.id ?? "");
+  const setScript = useWorkspaceStore((state) => state.setScript);
+  const clearScript = useWorkspaceStore((state) => state.clearScript);
 
   // Segment selections for the current video
   const segmentSelection = useSelection(selectedVideo?.id ?? "");
@@ -1124,7 +1131,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                         )}
 
                         {step.key === "raw" ? (
-                          <div className="space-y-2">
+                          <div className="space-y-4">
                             <div className="grid grid-cols-2 gap-4 text-sm">
                               <div>
                                 <span className="text-muted-foreground">
@@ -1142,6 +1149,61 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                   {formatFileSize(selectedVideo.size)}
                                 </span>
                               </div>
+                            </div>
+
+                            {/* Script Input Section */}
+                            <div className="space-y-2 pt-2 border-t">
+                              <div className="flex items-center justify-between">
+                                <label className="text-sm font-medium">
+                                  Guión original (opcional)
+                                </label>
+                                {scriptState?.rawScript && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => clearScript(selectedVideo.id)}
+                                    className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
+                                  >
+                                    <X className="w-3 h-3 mr-1" />
+                                    Limpiar
+                                  </Button>
+                                )}
+                              </div>
+                              <Textarea
+                                placeholder="Pega aquí tu guión original. Puedes usar marcadores como [zoom], [zoom:slow] o {palabra} para efectos..."
+                                value={scriptState?.rawScript ?? ""}
+                                onChange={(e) => setScript(selectedVideo.id, e.target.value)}
+                                className="min-h-[120px] text-sm font-mono resize-y"
+                              />
+                              {scriptState?.rawScript && (() => {
+                                const parsed = parseScript(scriptState.rawScript);
+                                const zoomCount = parsed.markers.filter((m) => m.type === "zoom").length;
+                                const highlightCount = parsed.markers.filter((m) => m.type === "highlight").length;
+                                const totalMarkers = zoomCount + highlightCount;
+                                return (
+                                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                    <span>{scriptState.rawScript.length} caracteres</span>
+                                    {totalMarkers > 0 && (
+                                      <>
+                                        <span className="text-muted-foreground/50">|</span>
+                                        {zoomCount > 0 && (
+                                          <Badge variant="secondary" className="text-xs h-5">
+                                            {zoomCount} zoom{zoomCount !== 1 ? "s" : ""}
+                                          </Badge>
+                                        )}
+                                        {highlightCount > 0 && (
+                                          <Badge variant="secondary" className="text-xs h-5">
+                                            {highlightCount} highlight{highlightCount !== 1 ? "s" : ""}
+                                          </Badge>
+                                        )}
+                                      </>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                              <p className="text-xs text-muted-foreground">
+                                Este guión se usará para mejorar la detección de silencios y transcripción.
+                              </p>
                             </div>
                           </div>
                         ) : (
