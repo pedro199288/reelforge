@@ -17,7 +17,7 @@ import { useTimelineStore } from "@/store/timeline";
 import { ScriptAlignmentPanel } from "@/components/ScriptAlignmentPanel";
 import { TakeDetectionPanel } from "@/components/TakeDetectionPanel";
 import { EffectsAnalysisPanel } from "@/components/EffectsAnalysisPanel";
-import { SegmentReviewPanel } from "@/components/SegmentReviewPanel";
+import { SegmentEditorPanel } from "@/components/SegmentEditorPanel";
 import type { Caption } from "@/core/script/align";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PipelineResetActions } from "@/components/PipelineResetActions";
@@ -1535,8 +1535,9 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
               )}
             </div>
             {selectedVideo && (
-              <SegmentReviewPanel
+              <SegmentEditorPanel
                 videoId={selectedVideo.id}
+                videoPath={`${API_URL}/api/stream/videos/${selectedVideo.filename}`}
                 segments={r.segments}
                 totalDuration={r.totalDuration}
               />

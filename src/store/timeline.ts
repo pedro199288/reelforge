@@ -137,6 +137,8 @@ interface TimelineStore {
     field: "startMs" | "endMs",
     newValue: number
   ) => void;
+  addSegment: (videoId: string, startMs: number, endMs: number) => string;
+  deleteSegment: (videoId: string, segmentId: string) => void;
 
   // Bulk actions
   clearTimeline: (videoId: string) => void;
@@ -487,6 +489,52 @@ export const useTimelineStore = create<TimelineStore>()(
             };
           }),
 
+        addSegment: (videoId, startMs, endMs) => {
+          const id = nanoid(8);
+          set((state) => {
+            const timeline = state.timelines[videoId] || createEmptyTimeline(videoId);
+            const newSegment: TimelineSegment = {
+              id,
+              startMs: Math.max(0, startMs),
+              endMs: Math.max(startMs + 100, endMs),
+              enabled: true,
+            };
+            return {
+              timelines: {
+                ...state.timelines,
+                [videoId]: {
+                  ...timeline,
+                  segments: [...timeline.segments, newSegment].sort(
+                    (a, b) => a.startMs - b.startMs
+                  ),
+                },
+              },
+              selection: { type: "segment", id },
+            };
+          });
+          return id;
+        },
+
+        deleteSegment: (videoId, segmentId) =>
+          set((state) => {
+            const timeline = state.timelines[videoId];
+            if (!timeline) return state;
+
+            return {
+              timelines: {
+                ...state.timelines,
+                [videoId]: {
+                  ...timeline,
+                  segments: timeline.segments.filter((s) => s.id !== segmentId),
+                },
+              },
+              selection:
+                state.selection?.type === "segment" && state.selection.id === segmentId
+                  ? null
+                  : state.selection,
+            };
+          }),
+
         // Bulk actions
         clearTimeline: (videoId) =>
           set((state) => ({
@@ -718,6 +766,8 @@ export const useTimelineActions = () =>
       importSemanticSegments: state.importSemanticSegments,
       toggleSegment: state.toggleSegment,
       resizeSegment: state.resizeSegment,
+      addSegment: state.addSegment,
+      deleteSegment: state.deleteSegment,
       clearTimeline: state.clearTimeline,
       clearSegments: state.clearSegments,
       importFromEvents: state.importFromEvents,

@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -46,14 +46,20 @@ export function SegmentReviewPanel({
   const selectedIndices = useSelection(videoId);
   const setSelection = useWorkspaceStore((s) => s.setSelection);
   const toggleSegment = useWorkspaceStore((s) => s.toggleSegment);
+  const initializedRef = useRef(false);
 
-  // Initialize selection with all segments if empty
-  const effectiveSelection = useMemo(() => {
-    if (selectedIndices.length === 0 && segments.length > 0) {
-      return segments.map((s) => s.index);
+  // Initialize selection with all segments on mount (only once)
+  useEffect(() => {
+    if (!initializedRef.current && segments.length > 0 && selectedIndices.length === 0) {
+      initializedRef.current = true;
+      const allIndices = segments.map((s) => s.index);
+      setSelection(videoId, allIndices);
+      onSelectionChange?.(allIndices);
     }
-    return selectedIndices;
-  }, [selectedIndices, segments]);
+  }, [videoId, segments, selectedIndices.length, setSelection, onSelectionChange]);
+
+  // Use selectedIndices directly - no more fallback logic
+  const effectiveSelection = selectedIndices;
 
   // Calculate statistics
   const stats = useMemo(() => {
@@ -78,20 +84,13 @@ export function SegmentReviewPanel({
 
   const handleToggle = useCallback(
     (index: number) => {
-      // If this is the first toggle and selection is empty, initialize with all except this one
-      if (selectedIndices.length === 0) {
-        const allIndices = segments.map((s) => s.index).filter((i) => i !== index);
-        setSelection(videoId, allIndices);
-        onSelectionChange?.(allIndices);
-      } else {
-        toggleSegment(videoId, index);
-        const newSelection = selectedIndices.includes(index)
-          ? selectedIndices.filter((i) => i !== index)
-          : [...selectedIndices, index].sort((a, b) => a - b);
-        onSelectionChange?.(newSelection);
-      }
+      toggleSegment(videoId, index);
+      const newSelection = selectedIndices.includes(index)
+        ? selectedIndices.filter((i) => i !== index)
+        : [...selectedIndices, index].sort((a, b) => a - b);
+      onSelectionChange?.(newSelection);
     },
-    [videoId, segments, selectedIndices, setSelection, toggleSegment, onSelectionChange]
+    [videoId, selectedIndices, toggleSegment, onSelectionChange]
   );
 
   const handleSelectAll = useCallback(() => {

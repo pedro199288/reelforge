@@ -15,6 +15,7 @@ import { Route as EditorRouteImport } from './routes/editor'
 import { Route as BatchRouteImport } from './routes/batch'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PipelineIndexRouteImport } from './routes/pipeline/index'
+import { Route as PipelineVideoIdRouteImport } from './routes/pipeline/$videoId'
 import { Route as MediaVideoIdRouteImport } from './routes/media/$videoId'
 import { Route as PipelineVideoIdTabRouteImport } from './routes/pipeline/$videoId/$tab'
 
@@ -48,15 +49,20 @@ const PipelineIndexRoute = PipelineIndexRouteImport.update({
   path: '/',
   getParentRoute: () => PipelineRoute,
 } as any)
+const PipelineVideoIdRoute = PipelineVideoIdRouteImport.update({
+  id: '/$videoId',
+  path: '/$videoId',
+  getParentRoute: () => PipelineRoute,
+} as any)
 const MediaVideoIdRoute = MediaVideoIdRouteImport.update({
   id: '/media/$videoId',
   path: '/media/$videoId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PipelineVideoIdTabRoute = PipelineVideoIdTabRouteImport.update({
-  id: '/$videoId/$tab',
-  path: '/$videoId/$tab',
-  getParentRoute: () => PipelineRoute,
+  id: '/$tab',
+  path: '/$tab',
+  getParentRoute: () => PipelineVideoIdRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -66,6 +72,7 @@ export interface FileRoutesByFullPath {
   '/pipeline': typeof PipelineRouteWithChildren
   '/studio': typeof StudioRoute
   '/media/$videoId': typeof MediaVideoIdRoute
+  '/pipeline/$videoId': typeof PipelineVideoIdRouteWithChildren
   '/pipeline/': typeof PipelineIndexRoute
   '/pipeline/$videoId/$tab': typeof PipelineVideoIdTabRoute
 }
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
   '/editor': typeof EditorRoute
   '/studio': typeof StudioRoute
   '/media/$videoId': typeof MediaVideoIdRoute
+  '/pipeline/$videoId': typeof PipelineVideoIdRouteWithChildren
   '/pipeline': typeof PipelineIndexRoute
   '/pipeline/$videoId/$tab': typeof PipelineVideoIdTabRoute
 }
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/pipeline': typeof PipelineRouteWithChildren
   '/studio': typeof StudioRoute
   '/media/$videoId': typeof MediaVideoIdRoute
+  '/pipeline/$videoId': typeof PipelineVideoIdRouteWithChildren
   '/pipeline/': typeof PipelineIndexRoute
   '/pipeline/$videoId/$tab': typeof PipelineVideoIdTabRoute
 }
@@ -98,6 +107,7 @@ export interface FileRouteTypes {
     | '/pipeline'
     | '/studio'
     | '/media/$videoId'
+    | '/pipeline/$videoId'
     | '/pipeline/'
     | '/pipeline/$videoId/$tab'
   fileRoutesByTo: FileRoutesByTo
@@ -107,6 +117,7 @@ export interface FileRouteTypes {
     | '/editor'
     | '/studio'
     | '/media/$videoId'
+    | '/pipeline/$videoId'
     | '/pipeline'
     | '/pipeline/$videoId/$tab'
   id:
@@ -117,6 +128,7 @@ export interface FileRouteTypes {
     | '/pipeline'
     | '/studio'
     | '/media/$videoId'
+    | '/pipeline/$videoId'
     | '/pipeline/'
     | '/pipeline/$videoId/$tab'
   fileRoutesById: FileRoutesById
@@ -174,6 +186,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PipelineIndexRouteImport
       parentRoute: typeof PipelineRoute
     }
+    '/pipeline/$videoId': {
+      id: '/pipeline/$videoId'
+      path: '/$videoId'
+      fullPath: '/pipeline/$videoId'
+      preLoaderRoute: typeof PipelineVideoIdRouteImport
+      parentRoute: typeof PipelineRoute
+    }
     '/media/$videoId': {
       id: '/media/$videoId'
       path: '/media/$videoId'
@@ -183,22 +202,34 @@ declare module '@tanstack/react-router' {
     }
     '/pipeline/$videoId/$tab': {
       id: '/pipeline/$videoId/$tab'
-      path: '/$videoId/$tab'
+      path: '/$tab'
       fullPath: '/pipeline/$videoId/$tab'
       preLoaderRoute: typeof PipelineVideoIdTabRouteImport
-      parentRoute: typeof PipelineRoute
+      parentRoute: typeof PipelineVideoIdRoute
     }
   }
 }
 
-interface PipelineRouteChildren {
-  PipelineIndexRoute: typeof PipelineIndexRoute
+interface PipelineVideoIdRouteChildren {
   PipelineVideoIdTabRoute: typeof PipelineVideoIdTabRoute
 }
 
-const PipelineRouteChildren: PipelineRouteChildren = {
-  PipelineIndexRoute: PipelineIndexRoute,
+const PipelineVideoIdRouteChildren: PipelineVideoIdRouteChildren = {
   PipelineVideoIdTabRoute: PipelineVideoIdTabRoute,
+}
+
+const PipelineVideoIdRouteWithChildren = PipelineVideoIdRoute._addFileChildren(
+  PipelineVideoIdRouteChildren,
+)
+
+interface PipelineRouteChildren {
+  PipelineVideoIdRoute: typeof PipelineVideoIdRouteWithChildren
+  PipelineIndexRoute: typeof PipelineIndexRoute
+}
+
+const PipelineRouteChildren: PipelineRouteChildren = {
+  PipelineVideoIdRoute: PipelineVideoIdRouteWithChildren,
+  PipelineIndexRoute: PipelineIndexRoute,
 }
 
 const PipelineRouteWithChildren = PipelineRoute._addFileChildren(
