@@ -31,6 +31,8 @@ export interface ProcessingStepInfo {
 interface ProcessingStatusPanelProps {
   steps: ProcessingStepInfo[];
   compact?: boolean;
+  activeStep?: string;
+  onStepClick?: (key: string) => void;
 }
 
 const STEP_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -100,9 +102,13 @@ function formatRelativeTime(date: Date): string {
 function ProcessingStepBadge({
   step,
   compact,
+  isActive,
+  onClick,
 }: {
   step: ProcessingStepInfo;
   compact?: boolean;
+  isActive?: boolean;
+  onClick?: () => void;
 }) {
   const config = STATUS_CONFIG[step.status];
   const StatusIcon = config.icon;
@@ -115,7 +121,10 @@ function ProcessingStepBadge({
         ${config.bgColor} ${config.borderColor} ${config.color}
         flex items-center gap-1.5 px-2 py-1
         ${step.status === "processing" ? "animate-pulse" : ""}
+        ${isActive ? "ring-2 ring-primary ring-offset-1" : ""}
+        ${onClick ? "cursor-pointer hover:opacity-80 transition-opacity" : ""}
       `}
+      onClick={onClick}
     >
       <StepIcon className="w-3 h-3" />
       {!compact && <span className="text-xs font-medium">{step.label}</span>}
@@ -149,6 +158,8 @@ function ProcessingStepBadge({
 export function ProcessingStatusPanel({
   steps,
   compact = false,
+  activeStep,
+  onStepClick,
 }: ProcessingStatusPanelProps) {
   const completedCount = steps.filter((s) => s.status === "completed").length;
   const hasErrors = steps.some((s) => s.status === "error");
@@ -183,7 +194,13 @@ export function ProcessingStatusPanel({
       {/* Step badges */}
       <div className="flex flex-wrap gap-2">
         {steps.map((step) => (
-          <ProcessingStepBadge key={step.key} step={step} compact={compact} />
+          <ProcessingStepBadge
+            key={step.key}
+            step={step}
+            compact={compact}
+            isActive={activeStep === step.key}
+            onClick={onStepClick ? () => onStepClick(step.key) : undefined}
+          />
         ))}
       </div>
     </div>

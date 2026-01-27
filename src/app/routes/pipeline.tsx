@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -121,8 +121,25 @@ const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   rendered: ["take-selection"],
 };
 
+// Search params type for URL synchronization
+interface PipelineSearch {
+  video?: string;
+  tab?: PipelineStep;
+}
+
 export const Route = createFileRoute("/pipeline")({
   component: PipelinePage,
+  validateSearch: (search: Record<string, unknown>): PipelineSearch => {
+    const validTabs: PipelineStep[] = [
+      "raw", "silences", "captions-raw", "segments", "semantic",
+      "cut", "captions", "script", "take-selection", "rendered"
+    ];
+    const tab = search.tab as string | undefined;
+    return {
+      video: typeof search.video === "string" ? search.video : undefined,
+      tab: tab && validTabs.includes(tab as PipelineStep) ? (tab as PipelineStep) : undefined,
+    };
+  },
 });
 
 interface VideoManifest {
@@ -273,6 +290,18 @@ function PipelinePage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [activeStep, setActiveStep] = useState<PipelineStep>("raw");
+
+  // URL synchronization hooks
+  const search = useSearch({ from: "/pipeline" });
+  const navigate = useNavigate({ from: "/pipeline" });
+
+  // Navigate helper to update URL without full page reload
+  const updateUrlParams = useCallback((params: Partial<PipelineSearch>) => {
+    navigate({
+      search: (prev) => ({ ...prev, ...params }),
+      replace: true,
+    });
+  }, [navigate]);
 
   // Auto-process state
   const [isProcessing, setIsProcessing] = useState(false);
@@ -578,7 +607,9 @@ function PipelinePage() {
 
     const loadCaptions = async () => {
       try {
-        const captionsPath = `/subs/${selectedVideo.id}-cut.json`;
+        // Use filename without extension to match backend naming convention
+        const nameWithoutExt = selectedVideo.filename.replace(/\.[^/.]+$/, "");
+        const captionsPath = `/subs/${encodeURIComponent(nameWithoutExt)}-cut.json`;
         const res = await fetch(captionsPath);
         if (res.ok) {
           const data = await res.json();
@@ -768,6 +799,46 @@ function PipelinePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Sync selected video from URL when videos load
+  useEffect(() => {
+    if (videos.length === 0 || loading) return;
+
+    // If URL has video param, select that video
+    if (search.video) {
+      const videoFromUrl = videos.find((v) => v.id === search.video);
+      if (videoFromUrl && selectedVideo?.id !== videoFromUrl.id) {
+        setSelectedVideo(videoFromUrl);
+      } else if (!videoFromUrl && videos.length > 0) {
+        // Invalid video ID in URL, select first and update URL
+        setSelectedVideo(videos[0]);
+        updateUrlParams({ video: videos[0].id });
+      }
+    } else if (!selectedVideo && videos.length > 0) {
+      // No video in URL, select first and update URL
+      setSelectedVideo(videos[0]);
+      updateUrlParams({ video: videos[0].id });
+    }
+  }, [videos, loading, search.video, selectedVideo, updateUrlParams]);
+
+  // Sync active step from URL
+  useEffect(() => {
+    if (search.tab && search.tab !== activeStep) {
+      setActiveStep(search.tab);
+    }
+  }, [search.tab, activeStep]);
+
+  // Update URL when selected video changes (user interaction)
+  const handleSelectVideo = useCallback((video: Video) => {
+    setSelectedVideo(video);
+    updateUrlParams({ video: video.id });
+  }, [updateUrlParams]);
+
+  // Update URL when active step changes (user interaction)
+  const handleSetActiveStep = useCallback((step: PipelineStep) => {
+    setActiveStep(step);
+    updateUrlParams({ tab: step });
+  }, [updateUrlParams]);
+
   const pipelineState = useMemo(() => {
     if (!selectedVideo) return null;
     const hasTakeSelections = selectedVideo.id in takeSelections &&
@@ -949,7 +1020,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
               return (
                 <button
                   key={video.id}
-                  onClick={() => setSelectedVideo(video)}
+                  onClick={() => handleSelectVideo(video)}
                   className={`w-full text-left p-3 rounded-lg border transition-colors ${
                     selectedVideo?.id === video.id
                       ? "border-primary bg-primary/5"
@@ -1007,34 +1078,21 @@ bunx remotion render src/index.ts CaptionedVideo \\
                       <Progress value={progressPercent} />
                     </div>
                   </div>
-                  {/* Visual Processing Status Indicators */}
-                  <ProcessingStatusPanel steps={stepInfoList} />
+                  {/* Visual Processing Status Indicators - clickable for navigation */}
+                  <ProcessingStatusPanel
+                    steps={stepInfoList}
+                    activeStep={activeStep}
+                    onStepClick={(key) => handleSetActiveStep(key as PipelineStep)}
+                  />
                 </CardContent>
               </Card>
 
-              {/* Pipeline Tabs */}
+              {/* Pipeline Tabs - navigation via badges above */}
               <Tabs
                 value={activeStep}
-                onValueChange={(v) => setActiveStep(v as PipelineStep)}
+                onValueChange={(v) => handleSetActiveStep(v as PipelineStep)}
                 className="flex-1 min-h-0 flex flex-col"
               >
-                <TabsList className="w-full justify-start overflow-x-auto scrollbar-subtle pb-1 flex-none">
-                  {STEPS.map((step) => (
-                    <TabsTrigger
-                      key={step.key}
-                      value={step.key}
-                      className="flex items-center gap-1"
-                    >
-                      {pipelineState[step.key] ? (
-                        <CheckIcon className="w-3 h-3 text-green-600" />
-                      ) : (
-                        <CircleIcon className="w-3 h-3" />
-                      )}
-                      {step.label}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-
                 {STEPS.map((step) => {
                   const isExecutableStep = ["silences", "captions-raw", "segments", "semantic", "cut", "captions"].includes(step.key);
                   const { canExecute, missingDeps } = canExecuteStepCheck(step.key, pipelineState);
@@ -1437,40 +1495,6 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024)
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-function CheckIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
-  );
-}
-
-function CircleIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <circle cx="12" cy="12" r="10" />
-    </svg>
-  );
 }
 
 function CopyIcon({ className }: { className?: string }) {
