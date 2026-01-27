@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { TimelineTrack } from "./TimelineTrack";
 import { SegmentMarker } from "./SegmentMarker";
+import { LABEL_COLUMN_WIDTH, getPxPerMs } from "./constants";
 import type { TimelineSegment, TimelineSelection } from "@/store/timeline";
 import type { SilenceRange } from "@/core/silence/detect";
 
@@ -34,8 +35,7 @@ export function SegmentTrack({
   const [dragStart, setDragStart] = useState<number | null>(null);
   const [dragEnd, setDragEnd] = useState<number | null>(null);
 
-  // Calculate pixels per millisecond based on zoom level
-  const pxPerMs = (100 * zoomLevel) / 1000;
+  const pxPerMs = getPxPerMs(zoomLevel);
 
   // Convert pixel position to milliseconds
   const pxToMs = useCallback(
@@ -62,7 +62,7 @@ export function SegmentTrack({
       const rect = trackRef.current?.getBoundingClientRect();
       if (!rect) return;
 
-      const x = e.clientX - rect.left - 80; // Account for label width
+      const x = e.clientX - rect.left - LABEL_COLUMN_WIDTH;
       const ms = pxToMs(x);
 
       // Don't start drag if inside existing segment
@@ -176,7 +176,7 @@ export function SegmentTrack({
               key={`silence-${index}`}
               className="absolute top-0 bottom-0 bg-red-900/30 border-x border-red-500/20"
               style={{
-                left: x + 80, // Account for track label width
+                left: x + LABEL_COLUMN_WIDTH,
                 width: Math.max(width, 2),
               }}
             />
@@ -184,7 +184,7 @@ export function SegmentTrack({
         })}
 
         {/* Render segments */}
-        <div className="absolute inset-0 ml-[80px]">
+        <div style={{ marginLeft: LABEL_COLUMN_WIDTH }} className="absolute inset-0">
           {segments.map((segment) => (
             <SegmentMarker
               key={segment.id}
@@ -204,7 +204,7 @@ export function SegmentTrack({
           <div
             className="absolute top-1 bottom-1 bg-green-500/30 border-2 border-dashed border-green-500 rounded pointer-events-none"
             style={{
-              left: (dragPreview.startMs - viewportStartMs) * pxPerMs + 80,
+              left: (dragPreview.startMs - viewportStartMs) * pxPerMs + LABEL_COLUMN_WIDTH,
               width: Math.max((dragPreview.endMs - dragPreview.startMs) * pxPerMs, 4),
             }}
           />

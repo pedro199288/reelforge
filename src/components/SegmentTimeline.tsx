@@ -9,6 +9,7 @@ import { Waveform, WaveformPlaceholder } from "@/components/Timeline/Waveform";
 import { TimelineRuler } from "@/components/Timeline/TimelineRuler";
 import { TimelinePlayhead } from "@/components/Timeline/TimelinePlayhead";
 import { SegmentTrack } from "@/components/Timeline/SegmentTrack";
+import { LABEL_COLUMN_WIDTH, getPxPerMs } from "@/components/Timeline/constants";
 import { useWaveform } from "@/hooks/useWaveform";
 import {
   useVideoSegments,
@@ -39,6 +40,7 @@ export function SegmentTimeline({
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(800);
   const [compressedView, setCompressedView] = useState(false);
+  const prevCompressedViewRef = useRef(compressedView);
 
   // Waveform data
   const { rawData: waveformRawData, loading: waveformLoading } = useWaveform(
@@ -80,26 +82,48 @@ export function SegmentTimeline({
   );
 
   // Map original time to compressed time
+  // Returns the compressed position, or the edge of the nearest segment if in a gap
   const mapOriginalToCompressed = useCallback(
-    (originalMs: number): number | null => {
+    (originalMs: number): number => {
+      if (enabledSegments.length === 0) return 0;
+
       let compressedMs = 0;
-      for (const segment of enabledSegments) {
+      for (let i = 0; i < enabledSegments.length; i++) {
+        const segment = enabledSegments[i];
+
+        // Before first segment: show at start
+        if (i === 0 && originalMs < segment.startMs) {
+          return 0;
+        }
+
+        // Inside this segment: interpolate position
         if (originalMs >= segment.startMs && originalMs <= segment.endMs) {
           return compressedMs + (originalMs - segment.startMs);
         }
-        if (originalMs > segment.endMs) {
-          compressedMs += segment.endMs - segment.startMs;
+
+        // After this segment
+        const segmentDuration = segment.endMs - segment.startMs;
+
+        // Check if we're in the gap between this segment and the next
+        const nextSegment = enabledSegments[i + 1];
+        if (nextSegment && originalMs > segment.endMs && originalMs < nextSegment.startMs) {
+          // In a gap: stick to end of previous segment
+          return compressedMs + segmentDuration;
         }
+
+        compressedMs += segmentDuration;
       }
-      return null;
+
+      // After all segments: show at end
+      return compressedDurationMs;
     },
-    [enabledSegments]
+    [enabledSegments, compressedDurationMs]
   );
 
   // Effective duration and playhead based on view mode
   const effectiveDurationMs = compressedView ? compressedDurationMs : durationMs;
   const effectivePlayheadMs = compressedView
-    ? (mapOriginalToCompressed(currentTimeMs) ?? 0)
+    ? mapOriginalToCompressed(currentTimeMs)
     : currentTimeMs;
 
   // Store actions
@@ -130,11 +154,30 @@ export function SegmentTimeline({
     return () => observer.disconnect();
   }, []);
 
+  // Sync viewport when switching between full and compressed view
+  useEffect(() => {
+    const wasCompressed = prevCompressedViewRef.current;
+    prevCompressedViewRef.current = compressedView;
+
+    // Only adjust on actual change
+    if (wasCompressed === compressedView) return;
+
+    if (compressedView) {
+      // Switching to compressed: map viewport position from original to compressed
+      const newViewportStart = mapOriginalToCompressed(viewportStartMs);
+      scrollTo(Math.max(0, newViewportStart));
+    } else {
+      // Switching to full: map viewport position from compressed to original
+      const newViewportStart = mapCompressedToOriginal(viewportStartMs);
+      scrollTo(Math.max(0, newViewportStart));
+    }
+  }, [compressedView, viewportStartMs, mapOriginalToCompressed, mapCompressedToOriginal, scrollTo]);
+
   // Calculate waveform display data based on viewport
   const waveformDisplayData = useMemo(() => {
     if (!waveformRawData) return null;
 
-    const pxPerMs = (100 * zoomLevel) / 1000;
+    const pxPerMs = getPxPerMs(zoomLevel);
     const visibleDurationMs = containerWidth / pxPerMs;
     const startMs = Math.max(0, viewportStartMs);
     const endMs = Math.min(durationMs, viewportStartMs + visibleDurationMs);
@@ -177,7 +220,7 @@ export function SegmentTimeline({
         setZoomLevel(newZoom);
       } else {
         // Pan horizontally
-        const pxPerMs = (100 * zoomLevel) / 1000;
+        const pxPerMs = getPxPerMs(zoomLevel);
         const deltaMs = e.deltaX / pxPerMs;
         const newStart = Math.max(0, viewportStartMs + deltaMs);
         scrollTo(newStart);
@@ -196,15 +239,17 @@ export function SegmentTimeline({
 
   // Auto-scroll to keep playhead visible
   useEffect(() => {
-    const pxPerMs = (100 * zoomLevel) / 1000;
+    const pxPerMs = getPxPerMs(zoomLevel);
     const visibleDurationMs = containerWidth / pxPerMs;
-    const playheadRelative = currentTimeMs - viewportStartMs;
+    // Use effective playhead position for proper scrolling in compressed view
+    const playheadPosition = effectivePlayheadMs;
+    const playheadRelative = playheadPosition - viewportStartMs;
 
     // If playhead is outside visible range, scroll to it
     if (playheadRelative < 0 || playheadRelative > visibleDurationMs) {
-      scrollTo(Math.max(0, currentTimeMs - visibleDurationMs * 0.2));
+      scrollTo(Math.max(0, playheadPosition - visibleDurationMs * 0.2));
     }
-  }, [currentTimeMs, zoomLevel, viewportStartMs, containerWidth, scrollTo]);
+  }, [effectivePlayheadMs, zoomLevel, viewportStartMs, containerWidth, scrollTo]);
 
   const handleFitToView = useCallback(() => {
     fitToView(durationMs);
@@ -232,7 +277,7 @@ export function SegmentTimeline({
   );
 
   // Viewport width for components
-  const viewportWidthPx = containerWidth - 80; // Account for label column
+  const viewportWidthPx = containerWidth - LABEL_COLUMN_WIDTH;
 
   return (
     <div className={cn("flex flex-col border rounded-lg bg-background", className)}>
@@ -354,7 +399,7 @@ export function SegmentTimeline({
                 for (let j = 0; j < i; j++) {
                   offset += enabledSegments[j].endMs - enabledSegments[j].startMs;
                 }
-                const pxPerMs = (100 * zoomLevel) / 1000;
+                const pxPerMs = getPxPerMs(zoomLevel);
                 const x = (offset - viewportStartMs) * pxPerMs;
                 const width = segmentDuration * pxPerMs;
 

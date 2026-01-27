@@ -1,3 +1,5 @@
+import { LABEL_COLUMN_WIDTH, getPxPerMs } from "./constants";
+
 interface TimelinePlayheadProps {
   playheadMs: number;
   zoomLevel: number;
@@ -9,8 +11,7 @@ export function TimelinePlayhead({
   zoomLevel,
   viewportStartMs,
 }: TimelinePlayheadProps) {
-  // Calculate pixels per millisecond based on zoom level
-  const pxPerMs = (100 * zoomLevel) / 1000;
+  const pxPerMs = getPxPerMs(zoomLevel);
   const x = (playheadMs - viewportStartMs) * pxPerMs;
 
   // Only render if playhead is in visible viewport
@@ -19,7 +20,7 @@ export function TimelinePlayhead({
   return (
     <div
       className="absolute top-0 bottom-0 pointer-events-none z-20"
-      style={{ left: `calc(80px + ${x}px)` }}
+      style={{ left: `calc(${LABEL_COLUMN_WIDTH}px + ${x}px)` }}
     >
       {/* Playhead handle */}
       <div className="absolute -top-1 -left-2 w-4 h-3 bg-red-500 rounded-t-sm">
