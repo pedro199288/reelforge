@@ -23,7 +23,6 @@ import type { Caption } from "@/core/script/align";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PipelineResetActions } from "@/components/PipelineResetActions";
 import {
-  ProcessingStatusPanel,
   type ProcessingStepInfo,
   type ProcessingStatus,
 } from "@/components/ProcessingStatusPanel";
@@ -293,9 +292,6 @@ function PipelinePage() {
   // Get params from URL
   const { videoId, tab } = Route.useParams();
   const navigate = useNavigate();
-
-  // Header actions context
-  const { setHeaderActions } = usePipelineHeader();
 
   // Derive selected video from params
   const selectedVideo = useMemo(() => {
@@ -780,6 +776,9 @@ function PipelinePage() {
     return pipelineStateToStepInfo(pipelineState, currentStep);
   }, [pipelineState, processProgress?.step]);
 
+  // Access parent context
+  const { setHeaderActions, setProgressState } = usePipelineHeader();
+
   // Register header actions in the parent layout
   useEffect(() => {
     if (!selectedVideo) {
@@ -821,6 +820,18 @@ function PipelinePage() {
 
     return () => setHeaderActions(null);
   }, [selectedVideo, progressPercent, isProcessing, handleRefresh, cancelProcess, startAutoProcess, setHeaderActions]);
+
+  // Sync progress state to parent layout for the progress column
+  useEffect(() => {
+    setProgressState({
+      stepInfoList,
+      progressPercent,
+      isProcessing,
+      processProgress,
+    });
+
+    return () => setProgressState(null);
+  }, [stepInfoList, progressPercent, isProcessing, processProgress, setProgressState]);
 
   const getStepCommand = (step: PipelineStep): string => {
     if (!selectedVideo) return "";
@@ -913,49 +924,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
   }
 
   return (
-    <div className="flex flex-col gap-6 flex-1 min-h-0">
-      {/* Auto-Process Progress */}
-      {isProcessing && processProgress && (
-        <Card className="border-green-500/50 bg-green-500/5 flex-none">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3 mb-3">
-              <LoaderIcon className="w-5 h-5 animate-spin text-green-600" />
-              <div className="flex-1">
-                <div className="text-sm font-medium text-green-700">
-                  Procesando automaticamente...
-                </div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  {processProgress.message}
-                </div>
-              </div>
-              <Badge variant="outline" className="text-green-600 border-green-500">
-                {processProgress.progress}%
-              </Badge>
-            </div>
-            <Progress value={processProgress.progress} className="h-2" />
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Progress Overview */}
-      <Card className="flex-none">
-        <CardContent className="pt-6">
-          <div className="flex items-center gap-4 mb-4">
-            <div className="flex-1">
-              <div className="text-sm font-medium mb-2">
-                {selectedVideo.title}
-              </div>
-              <Progress value={progressPercent} />
-            </div>
-          </div>
-          <ProcessingStatusPanel
-            steps={stepInfoList}
-            activeStep={activeStep}
-            onStepClick={(key) => handleSetActiveStep(key as PipelineStep)}
-          />
-        </CardContent>
-      </Card>
-
+    <div className="flex flex-col flex-1 min-h-0">
       {/* Pipeline Tabs */}
       {pipelineState && (
         <Tabs

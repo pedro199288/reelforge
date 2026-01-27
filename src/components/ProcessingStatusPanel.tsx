@@ -207,6 +207,88 @@ export function ProcessingStatusPanel({
   );
 }
 
+// Vertical version for progress column
+export function ProcessingStatusPanelVertical({
+  steps,
+  activeStep,
+  onStepClick,
+}: ProcessingStatusPanelProps) {
+  const completedCount = steps.filter((s) => s.status === "completed").length;
+  const hasErrors = steps.some((s) => s.status === "error");
+  const isProcessing = steps.some((s) => s.status === "processing");
+
+  return (
+    <div className="space-y-2">
+      {/* Summary header */}
+      <div className="flex items-center justify-between text-xs mb-3">
+        <div className="flex items-center gap-2">
+          {isProcessing && (
+            <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200 text-xs">
+              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+              Procesando
+            </Badge>
+          )}
+          {hasErrors && (
+            <Badge variant="destructive" className="text-xs">
+              <AlertCircle className="w-3 h-3 mr-1" />
+              Error
+            </Badge>
+          )}
+        </div>
+        <span className="text-muted-foreground">
+          {completedCount}/{steps.length}
+        </span>
+      </div>
+
+      {/* Vertical step badges */}
+      <div className="flex flex-col gap-1.5">
+        {steps.map((step) => (
+          <ProcessingStepBadgeVertical
+            key={step.key}
+            step={step}
+            isActive={activeStep === step.key}
+            onClick={onStepClick ? () => onStepClick(step.key) : undefined}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ProcessingStepBadgeVertical({
+  step,
+  isActive,
+  onClick,
+}: {
+  step: ProcessingStepInfo;
+  isActive?: boolean;
+  onClick?: () => void;
+}) {
+  const config = STATUS_CONFIG[step.status];
+  const StatusIcon = config.icon;
+  const StepIcon = STEP_ICONS[step.key] || Film;
+
+  return (
+    <button
+      onClick={onClick}
+      className={`
+        w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left text-xs
+        transition-colors border
+        ${config.bgColor} ${config.borderColor} ${config.color}
+        ${step.status === "processing" ? "animate-pulse" : ""}
+        ${isActive ? "ring-2 ring-primary ring-offset-1" : ""}
+        ${onClick ? "cursor-pointer hover:opacity-80" : "cursor-default"}
+      `}
+    >
+      <StepIcon className="w-3.5 h-3.5 flex-shrink-0" />
+      <span className="flex-1 font-medium truncate">{step.label}</span>
+      <StatusIcon
+        className={`w-3.5 h-3.5 flex-shrink-0 ${step.status === "processing" ? "animate-spin" : ""}`}
+      />
+    </button>
+  );
+}
+
 // Compact inline version for video list items
 export function ProcessingStatusInline({
   steps,

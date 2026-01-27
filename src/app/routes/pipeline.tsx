@@ -6,6 +6,7 @@ import type { Video } from "@/components/VideoList";
 import { useWorkspaceStore } from "@/store/workspace";
 import { useTimelineStore } from "@/store/timeline";
 import { VideoSidebarSkeleton } from "@/components/VideoSidebarSkeleton";
+import { PipelineProgressColumn } from "@/components/PipelineProgressColumn";
 import {
   ProcessingStatusInline,
   type ProcessingStepInfo,
@@ -14,9 +15,24 @@ import {
 
 const API_URL = "http://localhost:3012";
 
+// Types for progress state shared between layout and child routes
+interface ProcessProgress {
+  step: string;
+  progress: number;
+  message: string;
+}
+
 // Context for header actions - allows child routes to render controls in the header
 interface PipelineHeaderContextValue {
   setHeaderActions: (actions: ReactNode) => void;
+  setProgressState: (state: ProgressState | null) => void;
+}
+
+interface ProgressState {
+  stepInfoList: ProcessingStepInfo[];
+  progressPercent: number;
+  isProcessing: boolean;
+  processProgress: ProcessProgress | null;
 }
 
 const PipelineHeaderContext = createContext<PipelineHeaderContextValue | null>(null);
@@ -147,6 +163,7 @@ function PipelineLayout() {
   const [loading, setLoading] = useState(true);
   const [allVideoStatuses, setAllVideoStatuses] = useState<Record<string, BackendPipelineStatus>>({});
   const [headerActions, setHeaderActions] = useState<ReactNode>(null);
+  const [progressState, setProgressState] = useState<ProgressState | null>(null);
 
   const takeSelections = useWorkspaceStore((state) => state.takeSelections);
   const timelines = useTimelineStore((state) => state.timelines);
@@ -154,6 +171,7 @@ function PipelineLayout() {
   const navigate = useNavigate();
   const params = useParams({ strict: false });
   const selectedVideoId = params.videoId as string | undefined;
+  const activeTab = (params.tab as string) || "raw";
 
   // Load videos from manifest
   useEffect(() => {
@@ -241,15 +259,30 @@ function PipelineLayout() {
     });
   }, [videos, loading, takeSelections, timelines, allVideoStatuses, selectedVideoId, handleSelectVideo]);
 
+  // Get selected video
+  const selectedVideo = useMemo(() => {
+    return videos.find((v) => v.id === selectedVideoId) ?? null;
+  }, [videos, selectedVideoId]);
+
+  // Handle step click navigation
+  const handleStepClick = useCallback((step: string) => {
+    if (selectedVideoId) {
+      navigate({
+        to: "/pipeline/$videoId/$tab",
+        params: { videoId: selectedVideoId, tab: step },
+      });
+    }
+  }, [navigate, selectedVideoId]);
+
   const headerContextValue = useMemo(
-    () => ({ setHeaderActions }),
-    [setHeaderActions]
+    () => ({ setHeaderActions, setProgressState }),
+    [setHeaderActions, setProgressState]
   );
 
   return (
     <PipelineHeaderContext.Provider value={headerContextValue}>
-      <div className="p-6 max-w-6xl mx-auto h-full flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between mb-6 flex-none">
+      <div className="px-4 py-4 h-full flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between mb-4 flex-none">
           <h1 className="text-2xl font-bold">Pipeline Dashboard</h1>
           {headerActions && (
             <div className="flex items-center gap-3">
@@ -258,9 +291,9 @@ function PipelineLayout() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1 min-h-0">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0">
           {/* Video Sidebar */}
-          <Card className="lg:col-span-1 min-h-0 overflow-hidden">
+          <Card className="lg:col-span-2 min-h-0 overflow-hidden">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium">Videos</CardTitle>
             </CardHeader>
@@ -269,8 +302,21 @@ function PipelineLayout() {
             </CardContent>
           </Card>
 
+          {/* Progress Column */}
+          <div className="lg:col-span-2 min-h-0">
+            <PipelineProgressColumn
+              videoTitle={selectedVideo?.title ?? null}
+              progressPercent={progressState?.progressPercent ?? 0}
+              stepInfoList={progressState?.stepInfoList ?? []}
+              activeTab={activeTab}
+              onStepClick={handleStepClick}
+              isProcessing={progressState?.isProcessing}
+              processProgress={progressState?.processProgress}
+            />
+          </div>
+
           {/* Main Content Area */}
-          <div className="lg:col-span-3 flex flex-col min-h-0">
+          <div className="lg:col-span-8 flex flex-col min-h-0">
             <Outlet />
           </div>
         </div>
