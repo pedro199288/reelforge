@@ -5,22 +5,34 @@ import {
   calculateCaptionedVideoMetadata,
   captionedVideoSchema,
 } from "./CaptionedVideo";
+import { Tutorial } from "./Tutorial";
 
 // Each <Composition> is an entry in the sidebar!
 
 export const RemotionRoot: React.FC = () => {
   return (
-    <Composition
-      id="CaptionedVideo"
-      component={CaptionedVideo}
-      calculateMetadata={calculateCaptionedVideoMetadata}
-      schema={captionedVideoSchema}
-      width={1080}
-      height={1920}
-      defaultProps={{
-        src: staticFile("videos/Errores empezando gimnasio.mp4"),
-        // src: staticFile("videos/sample-video.mp4"),
-      }}
-    />
+    <>
+      <Composition
+        id="CaptionedVideo"
+        component={CaptionedVideo}
+        calculateMetadata={calculateCaptionedVideoMetadata}
+        schema={captionedVideoSchema}
+        width={1080}
+        height={1920}
+        defaultProps={{
+          src: staticFile("videos/Errores empezando gimnasio.mp4"),
+          // src: staticFile("videos/sample-video.mp4"),
+        }}
+      />
+      {/* Tutorial interactivo para aprender Remotion paso a paso */}
+      <Composition
+        id="Tutorial"
+        component={Tutorial}
+        durationInFrames={150}
+        fps={30}
+        width={1080}
+        height={1920}
+      />
+    </>
   );
 };
