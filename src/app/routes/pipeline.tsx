@@ -985,7 +985,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                 value={activeStep}
                 onValueChange={(v) => setActiveStep(v as PipelineStep)}
               >
-                <TabsList className="w-full justify-start">
+                <TabsList className="w-full justify-start overflow-x-auto scrollbar-subtle pb-1">
                   {STEPS.map((step) => (
                     <TabsTrigger
                       key={step.key}
