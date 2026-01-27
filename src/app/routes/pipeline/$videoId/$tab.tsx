@@ -16,6 +16,7 @@ import { X } from "lucide-react";
 import { useTimelineStore } from "@/store/timeline";
 import { ScriptAlignmentPanel } from "@/components/ScriptAlignmentPanel";
 import { TakeDetectionPanel } from "@/components/TakeDetectionPanel";
+import { EffectsAnalysisPanel } from "@/components/EffectsAnalysisPanel";
 import { SegmentReviewPanel } from "@/components/SegmentReviewPanel";
 import type { Caption } from "@/core/script/align";
 import { VideoSidebarSkeleton } from "@/components/VideoSidebarSkeleton";
@@ -103,17 +104,32 @@ interface SemanticResult {
   createdAt: string;
 }
 
-type StepResult = SilencesResult | SegmentsResult | CutResult | CaptionsResult | CaptionsRawResult | SemanticResult;
+interface EffectsAnalysisResultMeta {
+  mainTopic: string;
+  topicKeywords: string[];
+  overallTone: string;
+  language: string;
+  wordCount: number;
+  enrichedCaptionsCount: number;
+  captionsHash: string;
+  model: string;
+  processingTimeMs: number;
+  createdAt: string;
+}
+
+type StepResult = SilencesResult | SegmentsResult | CutResult | CaptionsResult | CaptionsRawResult | SemanticResult | EffectsAnalysisResultMeta;
 
 // Step dependencies
 // Note: captions-raw can run in parallel with silences (no dependencies)
 // semantic requires both captions-raw and silences to classify silences
+// effects-analysis requires captions-raw for AI analysis
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   raw: [],
   silences: [],
   "captions-raw": [],
   segments: ["silences"],
   semantic: ["captions-raw", "silences"],
+  "effects-analysis": ["captions-raw"],
   cut: ["segments"],
   captions: ["cut"],
   script: ["captions"],
@@ -135,6 +151,7 @@ type PipelineStep =
   | "captions-raw"
   | "segments"
   | "semantic"
+  | "effects-analysis"
   | "cut"
   | "captions"
   | "script"
@@ -147,6 +164,7 @@ interface PipelineState {
   "captions-raw": boolean;
   segments: boolean;
   semantic: boolean;
+  "effects-analysis": boolean;
   cut: boolean;
   captions: boolean;
   script: boolean;
@@ -177,6 +195,12 @@ const STEPS: { key: PipelineStep; label: string; description: string; optional?:
     key: "semantic",
     label: "Análisis Semántico",
     description: "Clasificar silencios (inter vs intra-oración)",
+    optional: true,
+  },
+  {
+    key: "effects-analysis",
+    label: "Auto-Efectos",
+    description: "Análisis con IA para detectar zooms y highlights automáticos",
     optional: true,
   },
   { key: "cut", label: "Cortado", description: "Cortar video sin silencios" },
@@ -216,6 +240,7 @@ function getVideoPipelineState(
       "captions-raw": backendStatus.steps["captions-raw"]?.status === "completed",
       segments: backendStatus.steps.segments?.status === "completed",
       semantic: backendStatus.steps.semantic?.status === "completed",
+      "effects-analysis": backendStatus.steps["effects-analysis"]?.status === "completed",
       cut: backendStatus.steps.cut?.status === "completed",
       captions: backendStatus.steps.captions?.status === "completed" || video.hasCaptions,
       script: hasScriptEvents ?? false,
@@ -232,6 +257,7 @@ function getVideoPipelineState(
     "captions-raw": false,
     segments: false,
     semantic: false,
+    "effects-analysis": false,
     cut: false,
     captions: false,
     script: hasScriptEvents ?? false,
@@ -283,7 +309,7 @@ function PipelinePage() {
 
   // Validate and use tab from params (default to "raw" if invalid)
   const validTabs: PipelineStep[] = [
-    "raw", "silences", "captions-raw", "segments", "semantic",
+    "raw", "silences", "captions-raw", "segments", "semantic", "effects-analysis",
     "cut", "captions", "script", "take-selection", "rendered"
   ];
   const activeStep: PipelineStep = validTabs.includes(tab as PipelineStep)
@@ -1045,7 +1071,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                 className="flex-1 min-h-0 flex flex-col"
               >
                 {STEPS.map((step) => {
-                  const isExecutableStep = ["silences", "captions-raw", "segments", "semantic", "cut", "captions"].includes(step.key);
+                  const isExecutableStep = ["silences", "captions-raw", "segments", "semantic", "effects-analysis", "cut", "captions"].includes(step.key);
                   const { canExecute, missingDeps } = canExecuteStepCheck(step.key, pipelineState);
                   const isStepRunning = stepProcessing === step.key;
                   const stepResult = stepResults[step.key];
@@ -1400,6 +1426,13 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                 />
                               )}
 
+                              {/* Effects analysis panel */}
+                              {step.key === "effects-analysis" && pipelineState["effects-analysis"] && (
+                                <EffectsAnalysisPanel
+                                  videoId={selectedVideo.id}
+                                />
+                              )}
+
                               {/* Step results display */}
                               {stepResult && (
                                 <StepResultDisplay step={step.key} result={stepResult} selectedVideo={selectedVideo} />
@@ -1746,6 +1779,39 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
             <div className="text-sm text-muted-foreground">
               Tiempo a cortar: {(r.totalCuttableDurationMs / 1000).toFixed(1)}s |
               Pausas preservadas: {(r.totalPreservedPauseDurationMs / 1000).toFixed(1)}s
+            </div>
+          </div>
+        );
+      }
+      case "effects-analysis": {
+        const r = result as EffectsAnalysisResultMeta;
+        return (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <span className="text-muted-foreground">Tema:</span>
+                <span className="ml-2 font-medium">{r.mainTopic}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Tono:</span>
+                <span className="ml-2 font-medium">{r.overallTone}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Palabras:</span>
+                <span className="ml-2 font-medium">{r.wordCount}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Tiempo:</span>
+                <span className="ml-2 font-medium">{(r.processingTimeMs / 1000).toFixed(1)}s</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {r.topicKeywords.slice(0, 8).map((kw, i) => (
+                <Badge key={i} variant="outline" className="text-xs">{kw}</Badge>
+              ))}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Modelo: {r.model} | Idioma: {r.language.toUpperCase()}
             </div>
           </div>
         );

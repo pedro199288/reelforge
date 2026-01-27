@@ -17,6 +17,7 @@ import {
   saveStepResult,
   loadStepResult,
   getPipelineDir,
+  getStepResultPath,
   type PipelineStep,
   type SilencesResult,
   type SegmentsResult,
@@ -926,7 +927,7 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     // Validate step name
-    const validSteps: PipelineStep[] = ["silences", "segments", "cut", "captions", "captions-raw", "semantic"];
+    const validSteps: PipelineStep[] = ["silences", "segments", "cut", "captions", "captions-raw", "semantic", "effects-analysis"];
     if (!validSteps.includes(step)) {
       return new Response(JSON.stringify({ error: `Invalid step: ${step}` }), {
         status: 400,
@@ -1414,6 +1415,96 @@ async function handleRequest(req: Request): Promise<Response> {
             });
 
             sendEvent("complete", { step, result });
+            break;
+          }
+
+          case "effects-analysis": {
+            // AI-powered effects analysis using Claude
+            sendEvent("progress", { step, progress: 5, message: "Verificando API key..." });
+
+            // Get API key from environment
+            const apiKey = process.env.ANTHROPIC_API_KEY;
+            if (!apiKey) {
+              throw new Error("ANTHROPIC_API_KEY no está configurada. Añádela a tu archivo .env");
+            }
+
+            sendEvent("progress", { step, progress: 10, message: "Cargando captions..." });
+
+            // Load captions from raw video
+            const captionsRawResult = loadStepResult<CaptionsRawResult>(videoId, "captions-raw");
+            if (!captionsRawResult) {
+              throw new Error("Captions (raw) not found. Run captions-raw step first.");
+            }
+
+            const captionsPath = join(process.cwd(), captionsRawResult.captionsPath);
+            if (!existsSync(captionsPath)) {
+              throw new Error(`Captions file not found: ${captionsRawResult.captionsPath}`);
+            }
+
+            const captions: Caption[] = JSON.parse(await Bun.file(captionsPath).text());
+
+            // Check for cached result with valid hash
+            const cachedResultPath = getStepResultPath(videoId, "effects-analysis");
+            if (existsSync(cachedResultPath)) {
+              try {
+                const cached = JSON.parse(await Bun.file(cachedResultPath).text());
+                const { hashCaptions: hash } = await import("../src/core/effects/ai-analyzer");
+                if (cached.metadata?.captionsHash === hash(captions)) {
+                  sendEvent("progress", { step, progress: 100, message: "Usando análisis cacheado..." });
+
+                  updateStepStatus(videoId, step, {
+                    status: "completed",
+                    completedAt: new Date().toISOString(),
+                    resultFile: cachedResultPath,
+                  });
+
+                  sendEvent("complete", { step, result: cached, cached: true });
+                  break;
+                }
+              } catch {
+                // Cache invalid, continue with fresh analysis
+              }
+            }
+
+            sendEvent("progress", { step, progress: 20, message: "Analizando con Claude AI..." });
+
+            // Get script from request if provided
+            const requestBody = body as { script?: string };
+
+            // Import and call the analyzer
+            const { analyzeWithClaude } = await import("../src/core/effects/ai-analyzer");
+
+            const analysisResult = await analyzeWithClaude(captions, {
+              apiKey,
+              script: requestBody.script,
+            });
+
+            sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
+
+            // Save full analysis result
+            const resultPath = saveStepResult(videoId, step, analysisResult);
+
+            // Create summary for step status
+            const resultSummary = {
+              mainTopic: analysisResult.metadata.mainTopic,
+              topicKeywords: analysisResult.metadata.topicKeywords,
+              overallTone: analysisResult.metadata.overallTone,
+              language: analysisResult.metadata.language,
+              wordCount: analysisResult.metadata.wordCount,
+              enrichedCaptionsCount: analysisResult.enrichedCaptions.length,
+              captionsHash: analysisResult.metadata.captionsHash,
+              model: analysisResult.model,
+              processingTimeMs: analysisResult.processingTimeMs,
+              createdAt: new Date().toISOString(),
+            };
+
+            updateStepStatus(videoId, step, {
+              status: "completed",
+              completedAt: new Date().toISOString(),
+              resultFile: resultPath,
+            });
+
+            sendEvent("complete", { step, result: resultSummary });
             break;
           }
         }
