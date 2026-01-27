@@ -6,7 +6,7 @@
  */
 
 import { spawn, type Subprocess } from "bun";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { join, basename, extname, dirname } from "node:path";
 
 import {
@@ -901,7 +901,7 @@ async function handleRequest(req: Request): Promise<Response> {
   // POST /api/pipeline/step - Execute a single pipeline step (SSE)
   if (path === "/api/pipeline/step" && req.method === "POST") {
     const body = await req.json();
-    const { videoId, filename, step, config, selectedSegments } = body as {
+    const { videoId, filename, step, config, selectedSegments, script } = body as {
       videoId: string;
       filename: string;
       step: PipelineStep;
@@ -913,6 +913,7 @@ async function handleRequest(req: Request): Promise<Response> {
         crf?: number;
       };
       selectedSegments?: number[];
+      script?: string; // Optional script to improve Whisper transcription
     };
 
     if (!videoId || !filename || !step) {
@@ -1190,16 +1191,40 @@ async function handleRequest(req: Request): Promise<Response> {
               throw new Error(`Video not found: ${videoPath}`);
             }
 
+            // Build command args for sub.mjs
+            const subArgs = ["node", "sub.mjs"];
+            let tempScriptPath: string | null = null;
+
+            // If script is provided, save to temp file to use as Whisper prompt
+            if (script && script.trim()) {
+              const pipelineDir = getPipelineDir(videoId);
+              tempScriptPath = join(pipelineDir, "temp-script.txt");
+              writeFileSync(tempScriptPath, script, "utf-8");
+              subArgs.push("--script", tempScriptPath);
+              sendEvent("progress", { step, progress: 15, message: "Usando guión para mejorar transcripción..." });
+            }
+
+            subArgs.push(videoPath);
+
             sendEvent("progress", { step, progress: 20, message: "Generando subtítulos con Whisper (video original)..." });
 
             // Run sub.mjs on the raw video
-            const proc = spawn(["node", "sub.mjs", videoPath], {
+            const proc = spawn(subArgs, {
               cwd: process.cwd(),
               stdout: "pipe",
               stderr: "pipe",
             });
 
             const exitCode = await proc.exited;
+
+            // Clean up temp script file
+            if (tempScriptPath && existsSync(tempScriptPath)) {
+              try {
+                unlinkSync(tempScriptPath);
+              } catch {
+                // Ignore cleanup errors
+              }
+            }
 
             if (exitCode !== 0) {
               throw new Error(`Subtitle generation failed with code ${exitCode}`);

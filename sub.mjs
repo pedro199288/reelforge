@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
 } from "node:fs";
 import path from "path";
 import {
@@ -22,6 +23,37 @@ import {
 } from "@remotion/install-whisper-cpp";
 import { fullCleanup } from "./src/core/captions/cleanup.mjs";
 
+/**
+ * Clean script text by removing markers [zoom], [zoom:slow], {highlight}
+ * and normalizing whitespace
+ */
+const cleanScriptForPrompt = (script) => {
+  return script
+    .replace(/\[zoom(?::\w+)?\]/g, "") // Remove [zoom] and [zoom:slow]
+    .replace(/\{([^}]+)\}/g, "$1") // Replace {word} with just word
+    .replace(/\s+/g, " ") // Normalize whitespace
+    .trim();
+};
+
+/**
+ * Extract initial prompt from script for Whisper.
+ * Whisper prompt is limited to ~224 tokens, so we take the first ~500 chars
+ * which is enough to help with vocabulary, names, and context.
+ */
+const extractPromptFromScript = (script) => {
+  const cleaned = cleanScriptForPrompt(script);
+  // Take first ~500 characters (roughly 100-150 tokens)
+  // This helps Whisper with vocabulary and proper nouns
+  const maxLength = 500;
+  if (cleaned.length <= maxLength) {
+    return cleaned;
+  }
+  // Cut at word boundary
+  const truncated = cleaned.slice(0, maxLength);
+  const lastSpace = truncated.lastIndexOf(" ");
+  return lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated;
+};
+
 const extractToTempAudioFile = (fileToTranscribe, tempOutFile) => {
   // Extracting audio from mp4 and save it as 16khz wav file
   // Added audio preprocessing:
@@ -33,13 +65,23 @@ const extractToTempAudioFile = (fileToTranscribe, tempOutFile) => {
   );
 };
 
-const subFile = async (filePath, fileName, folder) => {
+const subFile = async (filePath, fileName, folder, promptText = null) => {
   const outPath = path.join(
     process.cwd(),
     "public",
     folder,
     fileName.replace(".wav", ".json"),
   );
+
+  // Build additional args, optionally including prompt from script
+  const additionalArgs = [
+    ["--max-len", "1"], // Max 1 token per segment for better granularity
+  ];
+
+  if (promptText) {
+    console.log(`  Using script prompt (${promptText.length} chars)`);
+    additionalArgs.push(["--prompt", promptText]);
+  }
 
   const whisperCppOutput = await transcribe({
     inputPath: filePath,
@@ -53,9 +95,7 @@ const subFile = async (filePath, fileName, folder) => {
     splitOnWord: true,
     // Optimization parameters for better accuracy
     flashAttention: true,
-    additionalArgs: [
-      ["--max-len", "1"], // Max 1 token per segment for better granularity
-    ],
+    additionalArgs,
   });
 
   const { captions } = toCaptions({
@@ -79,7 +119,7 @@ const subFile = async (filePath, fileName, folder) => {
   );
 };
 
-const processVideo = async (fullPath, entry, directory) => {
+const processVideo = async (fullPath, entry, directory, promptText = null) => {
   if (
     !fullPath.endsWith(".mp4") &&
     !fullPath.endsWith(".webm") &&
@@ -115,6 +155,7 @@ const processVideo = async (fullPath, entry, directory) => {
     tempOutFilePath,
     tempWavFileName,
     path.relative("public", directory),
+    promptText,
   );
   if (shouldRemoveTempDirectory) {
     rmSync(path.join(process.cwd(), "temp"), { recursive: true });
@@ -139,15 +180,43 @@ const processDirectory = async (directory) => {
 await installWhisperCpp({ to: WHISPER_PATH, version: WHISPER_VERSION });
 await downloadWhisperModel({ folder: WHISPER_PATH, model: WHISPER_MODEL });
 
-// Read arguments for filename if given else process all files in the directory
-const hasArgs = process.argv.length > 2;
+// Parse arguments: node sub.mjs [--script <file>] <video-files...>
+const args = process.argv.slice(2);
+let scriptPath = null;
+let promptText = null;
+const videoArgs = [];
+
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--script" && i + 1 < args.length) {
+    scriptPath = args[i + 1];
+    i++; // Skip next arg
+  } else {
+    videoArgs.push(args[i]);
+  }
+}
+
+// Load and extract prompt from script if provided
+if (scriptPath) {
+  const fullScriptPath = path.isAbsolute(scriptPath)
+    ? scriptPath
+    : path.join(process.cwd(), scriptPath);
+  if (existsSync(fullScriptPath)) {
+    const rawScript = readFileSync(fullScriptPath, "utf-8");
+    promptText = extractPromptFromScript(rawScript);
+    console.log(`Loaded script from ${scriptPath}`);
+  } else {
+    console.warn(`Warning: Script file not found: ${scriptPath}`);
+  }
+}
+
+const hasArgs = videoArgs.length > 0;
 
 if (!hasArgs) {
   await processDirectory(path.join(process.cwd(), "public"));
   process.exit(0);
 }
 
-for (const arg of process.argv.slice(2)) {
+for (const arg of videoArgs) {
   const fullPath = path.join(process.cwd(), arg);
   const stat = lstatSync(fullPath);
 
@@ -159,5 +228,5 @@ for (const arg of process.argv.slice(2)) {
   console.log(`Processing file ${fullPath}`);
   const directory = path.dirname(fullPath);
   const fileName = path.basename(fullPath);
-  await processVideo(fullPath, fileName, directory);
+  await processVideo(fullPath, fileName, directory, promptText);
 }
