@@ -1177,11 +1177,28 @@ async function handleRequest(req: Request): Promise<Response> {
               stderr: "pipe",
             });
 
+            // Capture stderr for error reporting
+            const stderrChunks: string[] = [];
+            const stderrReader = proc.stderr.getReader();
+            const decoder = new TextDecoder();
+            (async () => {
+              try {
+                while (true) {
+                  const { done, value } = await stderrReader.read();
+                  if (done) break;
+                  stderrChunks.push(decoder.decode(value, { stream: true }));
+                }
+              } catch {
+                // Ignore read errors
+              }
+            })();
+
             // Wait for completion
             const exitCode = await proc.exited;
 
             if (exitCode !== 0) {
-              throw new Error(`Subtitle generation failed with code ${exitCode}`);
+              const stderrOutput = stderrChunks.join("").trim();
+              throw new Error(`Subtitle generation failed with code ${exitCode}${stderrOutput ? `: ${stderrOutput}` : ""}`);
             }
 
             // Determine output subs path
@@ -1252,6 +1269,22 @@ async function handleRequest(req: Request): Promise<Response> {
               stderr: "pipe",
             });
 
+            // Capture stderr for error reporting
+            const stderrChunks: string[] = [];
+            const stderrReader = proc.stderr.getReader();
+            const decoder = new TextDecoder();
+            (async () => {
+              try {
+                while (true) {
+                  const { done, value } = await stderrReader.read();
+                  if (done) break;
+                  stderrChunks.push(decoder.decode(value, { stream: true }));
+                }
+              } catch {
+                // Ignore read errors
+              }
+            })();
+
             const exitCode = await proc.exited;
 
             // Clean up temp script file
@@ -1264,7 +1297,8 @@ async function handleRequest(req: Request): Promise<Response> {
             }
 
             if (exitCode !== 0) {
-              throw new Error(`Subtitle generation failed with code ${exitCode}`);
+              const stderrOutput = stderrChunks.join("").trim();
+              throw new Error(`Subtitle generation failed with code ${exitCode}${stderrOutput ? `: ${stderrOutput}` : ""}`);
             }
 
             // Determine output subs path (raw video subs)
