@@ -376,6 +376,8 @@ function PipelinePage() {
           },
           // Pass selected segment indices for the cut step
           selectedSegments: step === "cut" && segmentSelection.length > 0 ? segmentSelection : undefined,
+          // Pass script for phases that can use it (semantic, captions, etc.)
+          script: scriptState?.rawScript || undefined,
         }),
       });
 
@@ -435,7 +437,7 @@ function PipelinePage() {
       setStepProcessing(null);
       setStepProgress(null);
     }
-  }, [selectedVideo, stepProcessing, config, loadPipelineStatus]);
+  }, [selectedVideo, stepProcessing, config, loadPipelineStatus, scriptState, segmentSelection]);
 
   // Execute all steps up to and including the target step
   const executeUntilStep = useCallback(async (targetStep: PipelineStep) => {
@@ -482,6 +484,8 @@ function PipelinePage() {
               minDurationSec: config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec,
               paddingSec: config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
             },
+            // Pass script for phases that can use it
+            script: scriptState?.rawScript || undefined,
           }),
         });
 
@@ -553,7 +557,7 @@ function PipelinePage() {
     });
     setStepProcessing(null);
     setStepProgress(null);
-  }, [selectedVideo, stepProcessing, config, loadPipelineStatus, backendStatus]);
+  }, [selectedVideo, stepProcessing, config, loadPipelineStatus, backendStatus, scriptState]);
 
   // Load pipeline status when video changes
   useEffect(() => {
