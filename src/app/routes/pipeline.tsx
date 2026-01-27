@@ -797,15 +797,27 @@ function PipelinePage() {
     const videoPath = `public/videos/${selectedVideo.filename}`;
 
     switch (step) {
+      case "raw":
+        return `# Video importado desde
+${videoPath}`;
       case "silences":
         return `# Detectar silencios en el video
 bun run src/core/silence/detect.ts "${videoPath}" \\
   --threshold ${config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb} \\
   --min-duration ${config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec}`;
+      case "captions-raw":
+        return `# Transcribir video original con Whisper
+node sub.mjs "${videoPath}"`;
       case "segments":
         return `# Generar segmentos de contenido
 bun run src/core/silence/segments.ts "${videoPath}" \\
   --padding ${config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec}`;
+      case "semantic":
+        return `# Análisis semántico de silencios
+# Clasifica silencios usando la transcripción:
+# - Pausas importantes (entre oraciones)
+# - Silencios eliminables (muertos)
+# Requiere: silences + captions-raw completados`;
       case "cut":
         return `# Cortar video (remover silencios)
 bun run src/core/cut/index.ts "${videoPath}" \\
@@ -813,13 +825,21 @@ bun run src/core/cut/index.ts "${videoPath}" \\
       case "captions":
         return `# Generar captions con Whisper
 bun run create-subtitles "${videoPath}"`;
+      case "script":
+        return `# Guión del video
+# Ingresa el texto del guión en el campo de arriba
+# Se usa para mejorar la transcripción y el análisis semántico`;
+      case "take-selection":
+        return `# Selección de tomas
+# Revisa y selecciona las mejores tomas del video
+# Interfaz interactiva en el panel de resultados`;
       case "rendered":
         return `# Renderizar video final con Remotion
 bunx remotion render src/index.ts CaptionedVideo \\
   --props='{"videoSrc":"${selectedVideo.filename}"}' \\
   out/${selectedVideo.id}_final.mp4`;
       default:
-        return "# Video ya importado";
+        return "";
     }
   };
 
