@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { parseScript } from "@/core/script/parser";
 import { X } from "lucide-react";
 import { useTimelineStore } from "@/store/timeline";
+import { usePipelineHeader } from "../../pipeline";
 import { ScriptAlignmentPanel } from "@/components/ScriptAlignmentPanel";
 import { TakeDetectionPanel } from "@/components/TakeDetectionPanel";
 import { EffectsAnalysisPanel } from "@/components/EffectsAnalysisPanel";
@@ -292,6 +293,9 @@ function PipelinePage() {
   // Get params from URL
   const { videoId, tab } = Route.useParams();
   const navigate = useNavigate();
+
+  // Header actions context
+  const { setHeaderActions } = usePipelineHeader();
 
   // Derive selected video from params
   const selectedVideo = useMemo(() => {
@@ -776,6 +780,48 @@ function PipelinePage() {
     return pipelineStateToStepInfo(pipelineState, currentStep);
   }, [pipelineState, processProgress?.step]);
 
+  // Register header actions in the parent layout
+  useEffect(() => {
+    if (!selectedVideo) {
+      setHeaderActions(null);
+      return;
+    }
+
+    setHeaderActions(
+      <>
+        <Badge variant="outline" className="text-sm">
+          {progressPercent}% completado
+        </Badge>
+        <PipelineResetActions
+          videoId={selectedVideo.id}
+          disabled={isProcessing}
+          hasCaptions={selectedVideo.hasCaptions}
+          onReset={handleRefresh}
+        />
+        {isProcessing ? (
+          <Button
+            variant="destructive"
+            onClick={cancelProcess}
+            className="gap-2"
+          >
+            <StopIcon className="w-4 h-4" />
+            Cancelar
+          </Button>
+        ) : (
+          <Button
+            onClick={startAutoProcess}
+            className="gap-2 bg-green-600 hover:bg-green-700"
+          >
+            <ZapIcon className="w-4 h-4" />
+            Procesar Todo
+          </Button>
+        )}
+      </>
+    );
+
+    return () => setHeaderActions(null);
+  }, [selectedVideo, progressPercent, isProcessing, handleRefresh, cancelProcess, startAutoProcess, setHeaderActions]);
+
   const getStepCommand = (step: PipelineStep): string => {
     if (!selectedVideo) return "";
     const videoPath = `public/videos/${selectedVideo.filename}`;
@@ -868,37 +914,6 @@ bunx remotion render src/index.ts CaptionedVideo \\
 
   return (
     <div className="flex flex-col gap-6 flex-1 min-h-0">
-      {/* Header with actions */}
-      <div className="flex items-center justify-end gap-3 flex-none">
-        <Badge variant="outline" className="text-sm">
-          {progressPercent}% completado
-        </Badge>
-        <PipelineResetActions
-          videoId={selectedVideo.id}
-          disabled={isProcessing}
-          hasCaptions={selectedVideo.hasCaptions}
-          onReset={handleRefresh}
-        />
-        {isProcessing ? (
-          <Button
-            variant="destructive"
-            onClick={cancelProcess}
-            className="gap-2"
-          >
-            <StopIcon className="w-4 h-4" />
-            Cancelar
-          </Button>
-        ) : (
-          <Button
-            onClick={startAutoProcess}
-            className="gap-2 bg-green-600 hover:bg-green-700"
-          >
-            <ZapIcon className="w-4 h-4" />
-            Procesar Todo
-          </Button>
-        )}
-      </div>
-
       {/* Auto-Process Progress */}
       {isProcessing && processProgress && (
         <Card className="border-green-500/50 bg-green-500/5 flex-none">

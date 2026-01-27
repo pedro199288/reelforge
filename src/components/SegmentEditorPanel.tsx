@@ -20,6 +20,7 @@ import {
   useTimelineActions,
   type TimelineSegment,
 } from "@/store/timeline";
+import { SegmentTimeline } from "./SegmentTimeline";
 
 interface Segment {
   startTime: number;
@@ -323,6 +324,19 @@ export function SegmentEditorPanel({
           </div>
         </CardContent>
       </Card>
+
+      {/* Timeline with waveform and segments */}
+      <SegmentTimeline
+        videoId={videoId}
+        videoPath={videoPath}
+        durationMs={totalDuration * 1000}
+        currentTimeMs={currentTime * 1000}
+        onSeek={(ms) => {
+          if (videoRef.current) {
+            videoRef.current.currentTime = ms / 1000;
+          }
+        }}
+      />
 
       {/* Segments Review Section */}
       <Card className="flex-1 min-h-0 flex flex-col">

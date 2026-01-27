@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, createContext, useContext, type ReactNode } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import type { Video } from "@/components/VideoList";
@@ -13,6 +13,21 @@ import {
 } from "@/components/ProcessingStatusPanel";
 
 const API_URL = "http://localhost:3012";
+
+// Context for header actions - allows child routes to render controls in the header
+interface PipelineHeaderContextValue {
+  setHeaderActions: (actions: ReactNode) => void;
+}
+
+const PipelineHeaderContext = createContext<PipelineHeaderContextValue | null>(null);
+
+export function usePipelineHeader() {
+  const context = useContext(PipelineHeaderContext);
+  if (!context) {
+    throw new Error("usePipelineHeader must be used within PipelineLayout");
+  }
+  return context;
+}
 
 type PipelineStep =
   | "raw"
@@ -131,6 +146,7 @@ function PipelineLayout() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
   const [allVideoStatuses, setAllVideoStatuses] = useState<Record<string, BackendPipelineStatus>>({});
+  const [headerActions, setHeaderActions] = useState<ReactNode>(null);
 
   const takeSelections = useWorkspaceStore((state) => state.takeSelections);
   const timelines = useTimelineStore((state) => state.timelines);
@@ -225,28 +241,40 @@ function PipelineLayout() {
     });
   }, [videos, loading, takeSelections, timelines, allVideoStatuses, selectedVideoId, handleSelectVideo]);
 
+  const headerContextValue = useMemo(
+    () => ({ setHeaderActions }),
+    [setHeaderActions]
+  );
+
   return (
-    <div className="p-6 max-w-6xl mx-auto h-full flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between mb-6 flex-none">
-        <h1 className="text-2xl font-bold">Pipeline Dashboard</h1>
-      </div>
+    <PipelineHeaderContext.Provider value={headerContextValue}>
+      <div className="p-6 max-w-6xl mx-auto h-full flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between mb-6 flex-none">
+          <h1 className="text-2xl font-bold">Pipeline Dashboard</h1>
+          {headerActions && (
+            <div className="flex items-center gap-3">
+              {headerActions}
+            </div>
+          )}
+        </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1 min-h-0">
-        {/* Video Sidebar */}
-        <Card className="lg:col-span-1 min-h-0 overflow-hidden">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Videos</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 overflow-y-auto">
-            {sidebarContent}
-          </CardContent>
-        </Card>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1 min-h-0">
+          {/* Video Sidebar */}
+          <Card className="lg:col-span-1 min-h-0 overflow-hidden">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium">Videos</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 overflow-y-auto">
+              {sidebarContent}
+            </CardContent>
+          </Card>
 
-        {/* Main Content Area */}
-        <div className="lg:col-span-3 flex flex-col min-h-0">
-          <Outlet />
+          {/* Main Content Area */}
+          <div className="lg:col-span-3 flex flex-col min-h-0">
+            <Outlet />
+          </div>
         </div>
       </div>
-    </div>
+    </PipelineHeaderContext.Provider>
   );
 }
