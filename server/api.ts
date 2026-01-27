@@ -1125,17 +1125,29 @@ async function handleRequest(req: Request): Promise<Response> {
             const name = basename(filename, ext);
             const outputPath = join(process.cwd(), "public", "videos", `${name}-cut${ext}`);
 
-            sendEvent("progress", { step, progress: 20, message: "Cortando video..." });
+            sendEvent("progress", { step, progress: 0, message: "Cortando video..." });
+
+            // Calculate total output duration for progress tracking
+            const totalOutputDuration = segmentsToUse.reduce((sum, s) => sum + s.duration, 0);
+
             // Use re-encoding (codecCopy=false) by default for precise frame-accurate cuts
             await cutVideo(videoPath, segmentsToUse, outputPath, {
               codecCopy: config?.codecCopy ?? false,
               crf: config?.crf ?? 18,
+              totalDurationSec: totalOutputDuration,
+              onProgress: (p) => {
+                sendEvent("progress", {
+                  step,
+                  progress: p.percent,
+                  message: `Cortando video... ${p.percent}% (${p.time}, ${p.speed})`,
+                });
+              },
             });
 
             // Calculate actual edited duration from selected segments
             const editedDuration = segmentsToUse.reduce((sum, s) => sum + s.duration, 0);
 
-            sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
+            sendEvent("progress", { step, progress: 100, message: "Guardando resultados..." });
             const result: CutResult = {
               outputPath: outputPath.replace(process.cwd() + "/", ""),
               originalDuration: segmentsResult.totalDuration,
@@ -1429,7 +1441,7 @@ async function handleRequest(req: Request): Promise<Response> {
 
   // GET /api/stream/* - Stream video files with HTTP Range Request support
   if (path.startsWith("/api/stream/") && req.method === "GET") {
-    const filePath = path.replace("/api/stream/", "");
+    const filePath = decodeURIComponent(path.replace("/api/stream/", ""));
     const fullPath = join(process.cwd(), "public", filePath);
 
     if (!existsSync(fullPath)) {
@@ -1532,4 +1544,5 @@ console.log("  POST /api/reset        - Reset pipeline phases (cut, captions, me
 Bun.serve({
   port: PORT,
   fetch: handleRequest,
+  idleTimeout: 255, // Max allowed by Bun (4+ minutes) for long-running operations
 });

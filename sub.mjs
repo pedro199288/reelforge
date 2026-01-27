@@ -66,12 +66,12 @@ const extractToTempAudioFile = (fileToTranscribe, tempOutFile) => {
 };
 
 const subFile = async (filePath, fileName, folder, promptText = null) => {
-  const outPath = path.join(
-    process.cwd(),
-    "public",
-    folder,
-    fileName.replace(".wav", ".json"),
-  );
+  // Always save subtitles to public/subs/ directory
+  const subsDir = path.join(process.cwd(), "public", "subs");
+  if (!existsSync(subsDir)) {
+    mkdirSync(subsDir, { recursive: true });
+  }
+  const outPath = path.join(subsDir, fileName.replace(".wav", ".json"));
 
   // Build additional args, optionally including prompt from script
   const additionalArgs = [
@@ -113,10 +113,7 @@ const subFile = async (filePath, fileName, folder, promptText = null) => {
     `  Cleaned: ${captions.length} -> ${cleanedCaptions.length} captions`,
   );
 
-  writeFileSync(
-    outPath.replace("webcam", "subs"),
-    JSON.stringify(cleanedCaptions, null, 2),
-  );
+  writeFileSync(outPath, JSON.stringify(cleanedCaptions, null, 2));
 };
 
 const processVideo = async (fullPath, entry, directory, promptText = null) => {
@@ -217,7 +214,7 @@ if (!hasArgs) {
 }
 
 for (const arg of videoArgs) {
-  const fullPath = path.join(process.cwd(), arg);
+  const fullPath = path.isAbsolute(arg) ? arg : path.join(process.cwd(), arg);
   const stat = lstatSync(fullPath);
 
   if (stat.isDirectory()) {

@@ -1,8 +1,110 @@
-import { execSync } from "node:child_process";
+import { spawn } from "bun";
 import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import type { Segment } from "../silence/segments";
+
+/** Progress callback for FFmpeg operations */
+export type ProgressCallback = (progress: { percent: number; time: string; speed: string }) => void;
+
+/**
+ * Parse FFmpeg progress from stderr line
+ * FFmpeg outputs lines like: frame= 123 fps= 45 q=28.0 size= 1234kB time=00:00:05.12 bitrate= 123.4kbits/s speed=1.23x
+ */
+function parseFfmpegProgress(line: string, totalDurationSec: number): { percent: number; time: string; speed: string } | null {
+  const timeMatch = line.match(/time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
+  const speedMatch = line.match(/speed=\s*([\d.]+)x/);
+
+  if (!timeMatch) return null;
+
+  const hours = parseInt(timeMatch[1], 10);
+  const minutes = parseInt(timeMatch[2], 10);
+  const seconds = parseInt(timeMatch[3], 10);
+  const centiseconds = parseInt(timeMatch[4], 10);
+
+  const currentTimeSec = hours * 3600 + minutes * 60 + seconds + centiseconds / 100;
+  const percent = totalDurationSec > 0 ? Math.min(99, Math.round((currentTimeSec / totalDurationSec) * 100)) : 0;
+  const time = `${timeMatch[1]}:${timeMatch[2]}:${timeMatch[3]}`;
+  const speed = speedMatch ? `${speedMatch[1]}x` : "...";
+
+  return { percent, time, speed };
+}
+
+/**
+ * Execute a shell command asynchronously using Bun's spawn
+ * This prevents blocking the event loop during long FFmpeg operations
+ */
+async function execAsync(
+  cmd: string,
+  options?: { onProgress?: ProgressCallback; totalDurationSec?: number }
+): Promise<void> {
+  const proc = spawn(["sh", "-c", cmd], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  // Must consume stderr while process runs (FFmpeg writes progress to stderr)
+  // If we don't read it, the buffer fills up and the process hangs
+  const stderrChunks: string[] = [];
+  const decoder = new TextDecoder();
+  let lastProgressUpdate = 0;
+
+  const stderrPromise = (async () => {
+    const reader = proc.stderr.getReader();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        stderrChunks.push(text);
+
+        // Parse FFmpeg progress if callback provided
+        if (options?.onProgress && options?.totalDurationSec) {
+          buffer += text;
+          // FFmpeg uses \r for progress updates
+          const lines = buffer.split(/[\r\n]/);
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const progress = parseFfmpegProgress(line, options.totalDurationSec);
+            if (progress) {
+              // Throttle updates to avoid overwhelming SSE
+              const now = Date.now();
+              if (now - lastProgressUpdate > 500) {
+                lastProgressUpdate = now;
+                options.onProgress(progress);
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore read errors
+    }
+  })();
+
+  // Also consume stdout to prevent buffer issues
+  const stdoutPromise = (async () => {
+    const reader = proc.stdout.getReader();
+    try {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch {
+      // Ignore read errors
+    }
+  })();
+
+  // Wait for process and stream consumption
+  const [exitCode] = await Promise.all([proc.exited, stderrPromise, stdoutPromise]);
+
+  if (exitCode !== 0) {
+    const stderr = stderrChunks.join("");
+    throw new Error(`Command failed with exit code ${exitCode}: ${stderr.slice(0, 500)}`);
+  }
+}
 
 export interface CutConfig {
   /** Use codec copy for faster processing (may be less precise at cut points) */
@@ -13,6 +115,10 @@ export interface CutConfig {
   audioCodec: string;
   /** CRF value for quality (lower = better, default: 18) */
   crf: number;
+  /** Callback for progress updates during FFmpeg processing */
+  onProgress?: ProgressCallback;
+  /** Total duration of the output video in seconds (needed for progress calculation) */
+  totalDurationSec?: number;
 }
 
 const DEFAULT_CONFIG: CutConfig = {
@@ -28,19 +134,24 @@ let cachedFfmpegPath: string | null = null;
  * Get the ffmpeg command to use.
  * Prefers system ffmpeg for better filter support, falls back to Remotion's bundled version.
  */
-function getFfmpegCommand(): string {
+async function getFfmpegCommand(): Promise<string> {
   if (cachedFfmpegPath !== null) {
     return cachedFfmpegPath;
   }
 
   try {
-    execSync("ffmpeg -version", { stdio: "pipe", encoding: "utf-8" });
-    cachedFfmpegPath = "ffmpeg";
-    return cachedFfmpegPath;
+    const proc = spawn(["ffmpeg", "-version"], { stdout: "pipe", stderr: "pipe" });
+    const exitCode = await proc.exited;
+    if (exitCode === 0) {
+      cachedFfmpegPath = "ffmpeg";
+      return cachedFfmpegPath;
+    }
   } catch {
-    cachedFfmpegPath = "npx remotion ffmpeg";
-    return cachedFfmpegPath;
+    // Ignore and fall through to fallback
   }
+
+  cachedFfmpegPath = "npx remotion ffmpeg";
+  return cachedFfmpegPath;
 }
 
 /**
@@ -72,119 +183,121 @@ export async function cutVideo(
     mkdirSync(outputDir, { recursive: true });
   }
 
-  if (codecCopy) {
-    await cutWithConcatDemuxer(input, segments, output);
-  } else {
-    await cutWithFilterComplex(input, segments, output, {
-      videoCodec,
-      audioCodec,
-      crf,
-    });
-  }
-}
+  // Calculate total output duration for progress tracking
+  const totalDurationSec = config.totalDurationSec ?? segments.reduce((sum, s) => sum + s.duration, 0);
 
-/**
- * Cut using filter_complex with trim/concat filters
- * More precise cuts but requires re-encoding
- */
-async function cutWithFilterComplex(
-  input: string,
-  segments: Segment[],
-  output: string,
-  opts: { videoCodec: string; audioCodec: string; crf: number },
-): Promise<void> {
-  const { videoCodec, audioCodec, crf } = opts;
-
-  // Build filter_complex string
-  const videoFilters: string[] = [];
-  const audioFilters: string[] = [];
-  const streamLabels: string[] = [];
-
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    videoFilters.push(
-      `[0:v]trim=start=${seg.startTime}:end=${seg.endTime},setpts=PTS-STARTPTS[v${i}]`,
-    );
-    audioFilters.push(
-      `[0:a]atrim=start=${seg.startTime}:end=${seg.endTime},asetpts=PTS-STARTPTS[a${i}]`,
-    );
-    streamLabels.push(`[v${i}][a${i}]`);
-  }
-
-  const filterComplex = [
-    ...videoFilters,
-    ...audioFilters,
-    `${streamLabels.join("")}concat=n=${segments.length}:v=1:a=1[outv][outa]`,
-  ].join(";");
-
-  const ffmpeg = getFfmpegCommand();
-  const cmd = [
-    `${ffmpeg} -y`,
-    `-i "${input}"`,
-    `-filter_complex "${filterComplex}"`,
-    `-map "[outv]" -map "[outa]"`,
-    `-c:v ${videoCodec} -crf ${crf}`,
-    `-c:a ${audioCodec}`,
-    `-preset fast`,
-    `"${output}"`,
-  ].join(" ");
-
-  execSync(cmd, {
-    encoding: "utf-8",
-    stdio: "pipe",
-    maxBuffer: 200 * 1024 * 1024,
+  // Always use the segment-by-segment method with input seeking
+  // This is MUCH faster than filter_complex because it seeks directly to each segment
+  // instead of decoding the entire input video
+  await cutWithInputSeeking(input, segments, output, {
+    codecCopy,
+    videoCodec,
+    audioCodec,
+    crf,
+    onProgress: config.onProgress,
+    totalDurationSec,
   });
 }
 
 /**
- * Cut using concat demuxer with re-encoding for frame-accurate cuts
- * Each segment is re-encoded to ensure precise cut points without audio/video desync
+ * Cut using input seeking (-ss before -i) for each segment
+ * This is MUCH faster than filter_complex because FFmpeg seeks directly to each point
+ * instead of decoding the entire input video from the beginning
  */
-async function cutWithConcatDemuxer(
+async function cutWithInputSeeking(
   input: string,
   segments: Segment[],
   output: string,
+  opts: {
+    codecCopy: boolean;
+    videoCodec: string;
+    audioCodec: string;
+    crf: number;
+    onProgress?: ProgressCallback;
+    totalDurationSec?: number;
+  },
 ): Promise<void> {
+  const { codecCopy, videoCodec, audioCodec, crf, onProgress, totalDurationSec } = opts;
   const tempDir = join(tmpdir(), `reelforge-cut-${Date.now()}`);
   mkdirSync(tempDir, { recursive: true });
-  const ffmpeg = getFfmpegCommand();
+  const ffmpeg = await getFfmpegCommand();
+
+  let processedDuration = 0;
 
   try {
     const segmentFiles: string[] = [];
 
-    // Extract each segment with re-encoding for precise cuts
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i];
       const segmentFile = join(tempDir, `segment_${i.toString().padStart(4, "0")}.mp4`);
       segmentFiles.push(segmentFile);
 
-      // Use -ss after -i (input seeking) with trim filter for frame-accurate cuts
-      // Re-encode to avoid keyframe alignment issues
-      const cmd = [
-        `${ffmpeg} -y`,
-        `-i "${input}"`,
-        `-vf "trim=start=${seg.startTime}:end=${seg.endTime},setpts=PTS-STARTPTS"`,
-        `-af "atrim=start=${seg.startTime}:end=${seg.endTime},asetpts=PTS-STARTPTS"`,
-        `-c:v libx264 -crf 18 -preset fast`,
-        `-c:a aac`,
-        `"${segmentFile}"`,
-      ].join(" ");
+      // Use -ss BEFORE -i for fast input seeking (seeks at demuxer level)
+      // Then use -t for duration (more reliable than -to with input seeking)
+      const duration = seg.endTime - seg.startTime;
 
-      execSync(cmd, {
-        encoding: "utf-8",
-        stdio: "pipe",
-        maxBuffer: 200 * 1024 * 1024,
-      });
+      let cmd: string;
+      if (codecCopy) {
+        // Codec copy: very fast but cuts only at keyframes
+        cmd = [
+          `${ffmpeg} -y`,
+          `-ss ${seg.startTime}`,
+          `-i "${input}"`,
+          `-t ${duration}`,
+          `-c copy`,
+          `-avoid_negative_ts make_zero`,
+          `"${segmentFile}"`,
+        ].join(" ");
+      } else {
+        // Re-encode: slower but frame-accurate cuts
+        cmd = [
+          `${ffmpeg} -y`,
+          `-ss ${seg.startTime}`,
+          `-i "${input}"`,
+          `-t ${duration}`,
+          `-c:v ${videoCodec} -crf ${crf} -preset fast`,
+          `-c:a ${audioCodec}`,
+          `-avoid_negative_ts make_zero`,
+          `"${segmentFile}"`,
+        ].join(" ");
+      }
+
+      // Progress callback for this segment
+      const segmentProgress = onProgress && totalDurationSec
+        ? (p: { percent: number; time: string; speed: string }) => {
+            const basePercent = (processedDuration / totalDurationSec) * 100;
+            const segmentContribution = (seg.duration / totalDurationSec) * p.percent;
+            onProgress({
+              percent: Math.min(99, Math.round(basePercent + segmentContribution)),
+              time: `Segmento ${i + 1}/${segments.length}`,
+              speed: p.speed,
+            });
+          }
+        : undefined;
+
+      await execAsync(cmd, { onProgress: segmentProgress, totalDurationSec: duration });
+      processedDuration += seg.duration;
+
+      // Report segment completion
+      if (onProgress && totalDurationSec) {
+        onProgress({
+          percent: Math.min(98, Math.round((processedDuration / totalDurationSec) * 100)),
+          time: `Segmento ${i + 1}/${segments.length} completado`,
+          speed: "...",
+        });
+      }
     }
 
     // Create concat file list
     const concatFile = join(tempDir, "concat.txt");
-    const concatContent = segmentFiles
-      .map((f) => `file '${f}'`)
-      .join("\n");
+    const concatContent = segmentFiles.map((f) => `file '${f}'`).join("\n");
     writeFileSync(concatFile, concatContent);
 
-    // Concatenate segments - can use codec copy now since segments are already re-encoded
+    if (onProgress) {
+      onProgress({ percent: 99, time: "Concatenando...", speed: "..." });
+    }
+
+    // Concatenate all segments - always use codec copy here since segments are already processed
     const concatCmd = [
       `${ffmpeg} -y`,
       `-f concat -safe 0`,
@@ -193,11 +306,7 @@ async function cutWithConcatDemuxer(
       `"${output}"`,
     ].join(" ");
 
-    execSync(concatCmd, {
-      encoding: "utf-8",
-      stdio: "pipe",
-      maxBuffer: 200 * 1024 * 1024,
-    });
+    await execAsync(concatCmd);
   } finally {
     // Cleanup temp files
     rmSync(tempDir, { recursive: true, force: true });
