@@ -73,7 +73,7 @@ export function SegmentEditorPanel({
 
   // State and refs for jump control (prevents race conditions in preview mode)
   const [isJumping, setIsJumping] = useState(false);
-  const lastJumpTimeRef = useRef<number>(0);
+  const lastJumpTargetRef = useRef<number | null>(null);
 
   // Get segments from timeline store (these are the editable ones with enabled state)
   const timelineSegments = useVideoSegments(videoId);
@@ -151,17 +151,21 @@ export function SegmentEditorPanel({
     isJumpingRef.current = isJumping;
   }, [isJumping]);
 
-  // Perform jump with debounce and seeked event handling
+  // Perform jump with position-based deduplication and seeked event handling
   const performJump = useCallback((targetTime: number) => {
     const video = videoRef.current;
     if (!video || isJumpingRef.current) return;
 
-    // Debounce: avoid redundant jumps within 100ms
-    const now = Date.now();
-    if (now - lastJumpTimeRef.current < 100) return;
+    // Avoid redundant jump to the SAME destination (within 50ms tolerance)
+    if (
+      lastJumpTargetRef.current !== null &&
+      Math.abs(targetTime - lastJumpTargetRef.current) < 0.05
+    ) {
+      return;
+    }
 
     setIsJumping(true);
-    lastJumpTimeRef.current = now;
+    lastJumpTargetRef.current = targetTime;
 
     video.currentTime = targetTime;
 
@@ -171,6 +175,9 @@ export function SegmentEditorPanel({
       video.removeEventListener("seeked", handleSeeked);
     };
     video.addEventListener("seeked", handleSeeked, { once: true });
+
+    // Safety timeout in case seeked event doesn't fire
+    setTimeout(() => setIsJumping(false), 200);
   }, []);
 
   // Handle video events (play/pause/ended)
@@ -193,7 +200,13 @@ export function SegmentEditorPanel({
     };
   }, []);
 
-  // Preview mode: detect gaps and jump to next segment (synced with playhead at 60fps)
+  // Reset jump state when switching modes
+  useEffect(() => {
+    setIsJumping(false);
+    lastJumpTargetRef.current = null;
+  }, [mode]);
+
+  // Preview mode: proactive edge detection with lookahead
   useEffect(() => {
     // Only process in preview mode while playing
     if (mode !== "preview" || !isPlaying || isJumping) return;
@@ -201,18 +214,40 @@ export function SegmentEditorPanel({
     const video = videoRef.current;
     if (!video) return;
 
-    const editedMs = mapTimeToEdited(currentTimeMs);
-    if (editedMs === null) {
-      // We're in a silence region - jump to next segment
-      const nextSegment = enabledSegments.find((s) => s.startMs > currentTimeMs);
-      if (nextSegment) {
-        performJump(nextSegment.startMs / 1000);
-      } else {
-        // No more segments - end of video
-        video.pause();
+    // Find the current segment we're in
+    const currentSegment = enabledSegments.find(
+      (s) => currentTimeMs >= s.startMs && currentTimeMs <= s.endMs
+    );
+
+    if (currentSegment) {
+      // We're inside a segment - check if we're approaching the end
+      const msToEnd = currentSegment.endMs - currentTimeMs;
+      const LOOKAHEAD_MS = 50; // Jump 50ms before hitting the gap
+
+      if (msToEnd <= LOOKAHEAD_MS && msToEnd > 0) {
+        // About to exit this segment - find and jump to next
+        const nextSegment = enabledSegments.find(
+          (s) => s.startMs > currentSegment.endMs
+        );
+        if (nextSegment) {
+          performJump(nextSegment.startMs / 1000);
+        } else {
+          // No more segments - pause at end
+          video.pause();
+        }
       }
+      return;
     }
-  }, [currentTimeMs, mode, isPlaying, isJumping, enabledSegments, mapTimeToEdited, performJump]);
+
+    // Fallback: we're already in a gap (shouldn't happen often with lookahead)
+    const nextSegment = enabledSegments.find((s) => s.startMs > currentTimeMs);
+    if (nextSegment) {
+      performJump(nextSegment.startMs / 1000);
+    } else {
+      // No more segments - end of video
+      video.pause();
+    }
+  }, [currentTimeMs, mode, isPlaying, isJumping, enabledSegments, performJump]);
 
   const togglePlayback = useCallback(() => {
     const video = videoRef.current;

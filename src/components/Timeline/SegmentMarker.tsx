@@ -33,7 +33,9 @@ export function SegmentMarker({
   const pxPerMs = (100 * zoomLevel) / 1000;
 
   const x = (segment.startMs - viewportStartMs) * pxPerMs;
-  const width = Math.max((segment.endMs - segment.startMs) * pxPerMs, 20); // Minimum 20px width
+  const actualWidth = (segment.endMs - segment.startMs) * pxPerMs;
+  const width = Math.max(actualWidth, 20); // Minimum 20px width for visibility
+  const isCompressedDisplay = actualWidth < 20; // Segment is visually compressed
 
   // Handle drag start
   const handlePointerDown = useCallback(
@@ -123,7 +125,8 @@ export function SegmentMarker({
           ? "bg-emerald-500/30 border-emerald-500 text-emerald-700 dark:text-emerald-300"
           : "bg-gray-500/20 border-gray-400 text-gray-500 dark:text-gray-400",
         isSelected && "ring-2 ring-primary ring-offset-1",
-        dragMode && "cursor-ew-resize opacity-80"
+        dragMode && "cursor-ew-resize opacity-80",
+        isCompressedDisplay && "border-dashed opacity-80"
       )}
       style={{
         left: x,
