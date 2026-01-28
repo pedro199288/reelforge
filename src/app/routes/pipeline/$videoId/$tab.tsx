@@ -9,7 +9,12 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import type { Video } from "@/components/VideoList";
-import { useWorkspaceStore, useSelection, useScript, SILENCE_DEFAULTS } from "@/store/workspace";
+import {
+  useWorkspaceStore,
+  useSelection,
+  useScript,
+  SILENCE_DEFAULTS,
+} from "@/store/workspace";
 import { Textarea } from "@/components/ui/textarea";
 import { parseScript } from "@/core/script/parser";
 import { X } from "lucide-react";
@@ -62,7 +67,12 @@ interface SilencesResult {
 }
 
 interface SegmentsResult {
-  segments: Array<{ startTime: number; endTime: number; duration: number; index: number }>;
+  segments: Array<{
+    startTime: number;
+    endTime: number;
+    duration: number;
+    index: number;
+  }>;
   totalDuration: number;
   editedDuration: number;
   timeSaved: number;
@@ -135,7 +145,14 @@ interface EffectsAnalysisResultMeta {
   createdAt: string;
 }
 
-type StepResult = SilencesResult | SegmentsResult | CutResult | CaptionsResult | CaptionsRawResult | SemanticResult | EffectsAnalysisResultMeta;
+type StepResult =
+  | SilencesResult
+  | SegmentsResult
+  | CutResult
+  | CaptionsResult
+  | CaptionsRawResult
+  | SemanticResult
+  | EffectsAnalysisResultMeta;
 
 // Step dependencies
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
@@ -187,8 +204,12 @@ interface PipelineState {
   rendered: boolean;
 }
 
-
-const STEPS: { key: PipelineStep; label: string; description: string; optional?: boolean }[] = [
+const STEPS: {
+  key: PipelineStep;
+  label: string;
+  description: string;
+  optional?: boolean;
+}[] = [
   { key: "raw", label: "Raw", description: "Video original importado" },
   {
     key: "silences",
@@ -245,18 +266,22 @@ function getVideoPipelineState(
   video: Video,
   hasTakeSelections?: boolean,
   hasScriptEvents?: boolean,
-  backendStatus?: BackendPipelineStatus | null
+  backendStatus?: BackendPipelineStatus | null,
 ): PipelineState {
   if (backendStatus) {
     return {
       raw: true,
       silences: backendStatus.steps.silences?.status === "completed",
-      "captions-raw": backendStatus.steps["captions-raw"]?.status === "completed",
+      "captions-raw":
+        backendStatus.steps["captions-raw"]?.status === "completed",
       segments: backendStatus.steps.segments?.status === "completed",
       semantic: backendStatus.steps.semantic?.status === "completed",
-      "effects-analysis": backendStatus.steps["effects-analysis"]?.status === "completed",
+      "effects-analysis":
+        backendStatus.steps["effects-analysis"]?.status === "completed",
       cut: backendStatus.steps.cut?.status === "completed",
-      captions: backendStatus.steps.captions?.status === "completed" || video.hasCaptions,
+      captions:
+        backendStatus.steps.captions?.status === "completed" ||
+        video.hasCaptions,
       script: hasScriptEvents ?? false,
       "take-selection": hasTakeSelections ?? false,
       rendered: false,
@@ -284,7 +309,7 @@ function getCompletedSteps(state: PipelineState): number {
 
 function pipelineStateToStepInfo(
   state: PipelineState,
-  currentProcessingStep?: string
+  currentProcessingStep?: string,
 ): ProcessingStepInfo[] {
   return STEPS.map((step) => {
     let status: ProcessingStatus = "pending";
@@ -320,8 +345,17 @@ function PipelinePage() {
 
   // Validate and use tab from params
   const validTabs: PipelineStep[] = [
-    "raw", "silences", "captions-raw", "segments", "semantic", "effects-analysis",
-    "cut", "captions", "script", "take-selection", "rendered"
+    "raw",
+    "silences",
+    "captions-raw",
+    "segments",
+    "semantic",
+    "effects-analysis",
+    "cut",
+    "captions",
+    "script",
+    "take-selection",
+    "rendered",
   ];
   const activeStep: PipelineStep = validTabs.includes(tab as PipelineStep)
     ? (tab as PipelineStep)
@@ -329,18 +363,28 @@ function PipelinePage() {
 
   // Auto-process state
   const [isProcessing, setIsProcessing] = useState(false);
-  const [processProgress, setProcessProgress] = useState<ProcessProgress | null>(null);
+  const [processProgress, setProcessProgress] =
+    useState<ProcessProgress | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Individual step execution state
-  const [backendStatus, setBackendStatus] = useState<BackendPipelineStatus | null>(null);
-  const [stepProcessing, setStepProcessing] = useState<PipelineStep | null>(null);
-  const [stepProgress, setStepProgress] = useState<ProcessProgress | null>(null);
-  const [stepResults, setStepResults] = useState<Record<string, StepResult>>({});
+  const [backendStatus, setBackendStatus] =
+    useState<BackendPipelineStatus | null>(null);
+  const [stepProcessing, setStepProcessing] = useState<PipelineStep | null>(
+    null,
+  );
+  const [stepProgress, setStepProgress] = useState<ProcessProgress | null>(
+    null,
+  );
+  const [stepResults, setStepResults] = useState<Record<string, StepResult>>(
+    {},
+  );
 
   // Pipeline config from persistent store
   const config = useWorkspaceStore((state) => state.pipelineConfig);
-  const setPipelineConfig = useWorkspaceStore((state) => state.setPipelineConfig);
+  const setPipelineConfig = useWorkspaceStore(
+    (state) => state.setPipelineConfig,
+  );
   const takeSelections = useWorkspaceStore((state) => state.takeSelections);
   const timelines = useTimelineStore((state) => state.timelines);
 
@@ -356,163 +400,73 @@ function PipelinePage() {
   const [captions, setCaptions] = useState<Caption[]>([]);
 
   // Load result of a specific step
-  const loadStepResult = useCallback(async (videoId: string, step: PipelineStep) => {
-    try {
-      const res = await fetch(
-        `${API_URL}/api/pipeline/result?videoId=${encodeURIComponent(videoId)}&step=${step}`
-      );
-      if (res.ok) {
-        const result = await res.json() as StepResult;
-        setStepResults((prev) => ({ ...prev, [step]: result }));
+  const loadStepResult = useCallback(
+    async (videoId: string, step: PipelineStep) => {
+      try {
+        const res = await fetch(
+          `${API_URL}/api/pipeline/result?videoId=${encodeURIComponent(videoId)}&step=${step}`,
+        );
+        if (res.ok) {
+          const result = (await res.json()) as StepResult;
+          setStepResults((prev) => ({ ...prev, [step]: result }));
+        }
+      } catch (err) {
+        console.error(`Error loading ${step} result:`, err);
       }
-    } catch (err) {
-      console.error(`Error loading ${step} result:`, err);
-    }
-  }, []);
+    },
+    [],
+  );
 
   // Load backend pipeline status
-  const loadPipelineStatus = useCallback(async (videoId: string, filename: string) => {
-    try {
-      const res = await fetch(
-        `${API_URL}/api/pipeline/status?videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(filename)}`
-      );
-      if (res.ok) {
-        const status = await res.json() as BackendPipelineStatus;
-        setBackendStatus(status);
+  const loadPipelineStatus = useCallback(
+    async (videoId: string, filename: string) => {
+      try {
+        const res = await fetch(
+          `${API_URL}/api/pipeline/status?videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(filename)}`,
+        );
+        if (res.ok) {
+          const status = (await res.json()) as BackendPipelineStatus;
+          setBackendStatus(status);
 
-        // Load results for completed steps
-        const completedSteps = Object.entries(status.steps)
-          .filter(([, state]) => state.status === "completed")
-          .map(([step]) => step as PipelineStep);
+          // Load results for completed steps
+          const completedSteps = Object.entries(status.steps)
+            .filter(([, state]) => state.status === "completed")
+            .map(([step]) => step as PipelineStep);
 
-        for (const step of completedSteps) {
-          loadStepResult(videoId, step);
-        }
-      }
-    } catch (err) {
-      console.error("Error loading pipeline status:", err);
-    }
-  }, [loadStepResult]);
-
-  // Check if a step can be executed
-  const canExecuteStepCheck = useCallback((step: PipelineStep, state: PipelineState): { canExecute: boolean; missingDeps: PipelineStep[] } => {
-    const deps = STEP_DEPENDENCIES[step];
-    const missingDeps = deps.filter((dep) => !state[dep]);
-    return { canExecute: missingDeps.length === 0, missingDeps };
-  }, []);
-
-  // Execute a single pipeline step
-  const executeStep = useCallback(async (step: PipelineStep) => {
-    if (!selectedVideo || stepProcessing) return;
-
-    const videoId = selectedVideo.id;
-    const filename = selectedVideo.filename;
-
-    setStepProcessing(step);
-    setStepProgress({ step, progress: 0, message: "Iniciando..." });
-
-    try {
-      const response = await fetch(`${API_URL}/api/pipeline/step`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          videoId,
-          filename,
-          step,
-          config: {
-            thresholdDb: config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb,
-            minDurationSec: config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec,
-            paddingSec: config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
-          },
-          selectedSegments: step === "cut" && segmentSelection.length > 0 ? segmentSelection : undefined,
-          script: scriptState?.rawScript || undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || "Error al ejecutar el paso");
-      }
-
-      // Read SSE stream
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("No response body");
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() || "";
-
-        for (const chunk of lines) {
-          if (!chunk.trim()) continue;
-
-          const eventMatch = chunk.match(/event: (\w+)/);
-          const dataMatch = chunk.match(/data: (.+)/);
-
-          if (eventMatch && dataMatch) {
-            const eventType = eventMatch[1];
-            const data = JSON.parse(dataMatch[1]);
-
-            switch (eventType) {
-              case "progress":
-                setStepProgress(data);
-                break;
-              case "complete":
-                toast.success(`${step} completado`, {
-                  description: `Paso "${step}" ejecutado correctamente`,
-                });
-                setStepResults((prev) => ({ ...prev, [step]: data.result }));
-                await loadPipelineStatus(videoId, filename);
-                break;
-              case "error":
-                throw new Error(data.error);
-            }
+          for (const step of completedSteps) {
+            loadStepResult(videoId, step);
           }
         }
+      } catch (err) {
+        console.error("Error loading pipeline status:", err);
       }
-    } catch (err) {
-      toast.error(`Error en ${step}`, {
-        description: err instanceof Error ? err.message : "Error desconocido",
-      });
-    } finally {
-      setStepProcessing(null);
-      setStepProgress(null);
-    }
-  }, [selectedVideo, stepProcessing, config, loadPipelineStatus, scriptState, segmentSelection]);
+    },
+    [loadStepResult],
+  );
 
-  // Execute all steps up to and including the target step
-  const executeUntilStep = useCallback(async (targetStep: PipelineStep) => {
-    if (!selectedVideo || stepProcessing) return;
+  // Check if a step can be executed
+  const canExecuteStepCheck = useCallback(
+    (
+      step: PipelineStep,
+      state: PipelineState,
+    ): { canExecute: boolean; missingDeps: PipelineStep[] } => {
+      const deps = STEP_DEPENDENCIES[step];
+      const missingDeps = deps.filter((dep) => !state[dep]);
+      return { canExecute: missingDeps.length === 0, missingDeps };
+    },
+    [],
+  );
 
-    const videoId = selectedVideo.id;
-    const filename = selectedVideo.filename;
+  // Execute a single pipeline step
+  const executeStep = useCallback(
+    async (step: PipelineStep) => {
+      if (!selectedVideo || stepProcessing) return;
 
-    const executableSteps: PipelineStep[] = ["silences", "segments", "cut", "captions"];
-    const targetIndex = executableSteps.indexOf(targetStep);
+      const videoId = selectedVideo.id;
+      const filename = selectedVideo.filename;
 
-    if (targetIndex === -1) return;
-
-    const currentStatus = backendStatus;
-
-    const stepsToExecute = executableSteps.slice(0, targetIndex + 1).filter((step) => {
-      const stepState = currentStatus?.steps[step];
-      return stepState?.status !== "completed";
-    });
-
-    if (stepsToExecute.length === 0) {
-      toast.info("Todos los pasos ya estan completados");
-      return;
-    }
-
-    for (const step of stepsToExecute) {
       setStepProcessing(step);
-      setStepProgress({ step, progress: 0, message: `Iniciando ${step}...` });
+      setStepProgress({ step, progress: 0, message: "Iniciando..." });
 
       try {
         const response = await fetch(`${API_URL}/api/pipeline/step`, {
@@ -523,25 +477,33 @@ function PipelinePage() {
             filename,
             step,
             config: {
-              thresholdDb: config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb,
-              minDurationSec: config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec,
-              paddingSec: config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
+              thresholdDb:
+                config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb,
+              minDurationSec:
+                config.silence.minDurationSec ??
+                SILENCE_DEFAULTS.minDurationSec,
+              paddingSec:
+                config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
             },
+            selectedSegments:
+              step === "cut" && segmentSelection.length > 0
+                ? segmentSelection
+                : undefined,
             script: scriptState?.rawScript || undefined,
           }),
         });
 
         if (!response.ok) {
           const err = await response.json();
-          throw new Error(err.error || `Error al ejecutar ${step}`);
+          throw new Error(err.error || "Error al ejecutar el paso");
         }
 
+        // Read SSE stream
         const reader = response.body?.getReader();
         if (!reader) throw new Error("No response body");
 
         const decoder = new TextDecoder();
         let buffer = "";
-        let stepCompleted = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -566,8 +528,11 @@ function PipelinePage() {
                   setStepProgress(data);
                   break;
                 case "complete":
+                  toast.success(`${step} completado`, {
+                    description: `Paso "${step}" ejecutado correctamente`,
+                  });
                   setStepResults((prev) => ({ ...prev, [step]: data.result }));
-                  stepCompleted = true;
+                  await loadPipelineStatus(videoId, filename);
                   break;
                 case "error":
                   throw new Error(data.error);
@@ -575,29 +540,161 @@ function PipelinePage() {
             }
           }
         }
-
-        if (!stepCompleted) {
-          throw new Error(`Paso ${step} no se completo correctamente`);
-        }
-
-        await loadPipelineStatus(videoId, filename);
-
       } catch (err) {
         toast.error(`Error en ${step}`, {
           description: err instanceof Error ? err.message : "Error desconocido",
         });
+      } finally {
         setStepProcessing(null);
         setStepProgress(null);
+      }
+    },
+    [
+      selectedVideo,
+      stepProcessing,
+      config,
+      loadPipelineStatus,
+      scriptState,
+      segmentSelection,
+    ],
+  );
+
+  // Execute all steps up to and including the target step
+  const executeUntilStep = useCallback(
+    async (targetStep: PipelineStep) => {
+      if (!selectedVideo || stepProcessing) return;
+
+      const videoId = selectedVideo.id;
+      const filename = selectedVideo.filename;
+
+      const executableSteps: PipelineStep[] = [
+        "silences",
+        "segments",
+        "cut",
+        "captions",
+      ];
+      const targetIndex = executableSteps.indexOf(targetStep);
+
+      if (targetIndex === -1) return;
+
+      const currentStatus = backendStatus;
+
+      const stepsToExecute = executableSteps
+        .slice(0, targetIndex + 1)
+        .filter((step) => {
+          const stepState = currentStatus?.steps[step];
+          return stepState?.status !== "completed";
+        });
+
+      if (stepsToExecute.length === 0) {
+        toast.info("Todos los pasos ya estan completados");
         return;
       }
-    }
 
-    toast.success("Ejecucion completada", {
-      description: `Se ejecutaron ${stepsToExecute.length} paso(s) correctamente`,
-    });
-    setStepProcessing(null);
-    setStepProgress(null);
-  }, [selectedVideo, stepProcessing, config, loadPipelineStatus, backendStatus, scriptState]);
+      for (const step of stepsToExecute) {
+        setStepProcessing(step);
+        setStepProgress({ step, progress: 0, message: `Iniciando ${step}...` });
+
+        try {
+          const response = await fetch(`${API_URL}/api/pipeline/step`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              videoId,
+              filename,
+              step,
+              config: {
+                thresholdDb:
+                  config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb,
+                minDurationSec:
+                  config.silence.minDurationSec ??
+                  SILENCE_DEFAULTS.minDurationSec,
+                paddingSec:
+                  config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
+              },
+              script: scriptState?.rawScript || undefined,
+            }),
+          });
+
+          if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || `Error al ejecutar ${step}`);
+          }
+
+          const reader = response.body?.getReader();
+          if (!reader) throw new Error("No response body");
+
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let stepCompleted = false;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n\n");
+            buffer = lines.pop() || "";
+
+            for (const chunk of lines) {
+              if (!chunk.trim()) continue;
+
+              const eventMatch = chunk.match(/event: (\w+)/);
+              const dataMatch = chunk.match(/data: (.+)/);
+
+              if (eventMatch && dataMatch) {
+                const eventType = eventMatch[1];
+                const data = JSON.parse(dataMatch[1]);
+
+                switch (eventType) {
+                  case "progress":
+                    setStepProgress(data);
+                    break;
+                  case "complete":
+                    setStepResults((prev) => ({
+                      ...prev,
+                      [step]: data.result,
+                    }));
+                    stepCompleted = true;
+                    break;
+                  case "error":
+                    throw new Error(data.error);
+                }
+              }
+            }
+          }
+
+          if (!stepCompleted) {
+            throw new Error(`Paso ${step} no se completo correctamente`);
+          }
+
+          await loadPipelineStatus(videoId, filename);
+        } catch (err) {
+          toast.error(`Error en ${step}`, {
+            description:
+              err instanceof Error ? err.message : "Error desconocido",
+          });
+          setStepProcessing(null);
+          setStepProgress(null);
+          return;
+        }
+      }
+
+      toast.success("Ejecucion completada", {
+        description: `Se ejecutaron ${stepsToExecute.length} paso(s) correctamente`,
+      });
+      setStepProcessing(null);
+      setStepProgress(null);
+    },
+    [
+      selectedVideo,
+      stepProcessing,
+      config,
+      loadPipelineStatus,
+      backendStatus,
+      scriptState,
+    ],
+  );
 
   // Load pipeline status when video changes
   useEffect(() => {
@@ -640,7 +737,11 @@ function PipelinePage() {
     if (!selectedVideo || isProcessing) return;
 
     setIsProcessing(true);
-    setProcessProgress({ step: "starting", progress: 0, message: "Iniciando..." });
+    setProcessProgress({
+      step: "starting",
+      progress: 0,
+      message: "Iniciando...",
+    });
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
@@ -767,21 +868,31 @@ function PipelinePage() {
   }, []);
 
   // Navigate to different tab
-  const handleSetActiveStep = useCallback((step: PipelineStep) => {
-    navigate({
-      to: "/pipeline/$videoId/$tab",
-      params: { videoId, tab: step },
-    });
-  }, [navigate, videoId]);
+  const handleSetActiveStep = useCallback(
+    (step: PipelineStep) => {
+      navigate({
+        to: "/pipeline/$videoId/$tab",
+        params: { videoId, tab: step },
+      });
+    },
+    [navigate, videoId],
+  );
 
   const pipelineState = useMemo(() => {
     if (!selectedVideo) return null;
-    const hasTakeSelections = selectedVideo.id in takeSelections &&
-      Object.keys(takeSelections[selectedVideo.id]?.selections || {}).length > 0;
+    const hasTakeSelections =
+      selectedVideo.id in takeSelections &&
+      Object.keys(takeSelections[selectedVideo.id]?.selections || {}).length >
+        0;
     const timeline = timelines[selectedVideo.id];
-    const hasScriptEvents = timeline &&
-      (timeline.zooms.length > 0 || timeline.highlights.length > 0);
-    return getVideoPipelineState(selectedVideo, hasTakeSelections, hasScriptEvents, backendStatus);
+    const hasScriptEvents =
+      timeline && (timeline.zooms.length > 0 || timeline.highlights.length > 0);
+    return getVideoPipelineState(
+      selectedVideo,
+      hasTakeSelections,
+      hasScriptEvents,
+      backendStatus,
+    );
   }, [selectedVideo, takeSelections, timelines, backendStatus]);
 
   const progressPercent = useMemo(() => {
@@ -835,11 +946,19 @@ function PipelinePage() {
             Procesar Todo
           </Button>
         )}
-      </>
+      </>,
     );
 
     return () => setHeaderActions(null);
-  }, [selectedVideo, progressPercent, isProcessing, handleRefresh, cancelProcess, startAutoProcess, setHeaderActions]);
+  }, [
+    selectedVideo,
+    progressPercent,
+    isProcessing,
+    handleRefresh,
+    cancelProcess,
+    startAutoProcess,
+    setHeaderActions,
+  ]);
 
   // Sync progress state to parent layout for the progress column
   useEffect(() => {
@@ -851,7 +970,13 @@ function PipelinePage() {
     });
 
     return () => setProgressState(null);
-  }, [stepInfoList, progressPercent, isProcessing, processProgress, setProgressState]);
+  }, [
+    stepInfoList,
+    progressPercent,
+    isProcessing,
+    processProgress,
+    setProgressState,
+  ]);
 
   const getStepCommand = (step: PipelineStep): string => {
     if (!selectedVideo) return "";
@@ -932,9 +1057,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
     return (
       <Card className="flex-1 flex items-center justify-center">
         <CardContent className="py-12 text-center">
-          <div className="text-muted-foreground mb-2">
-            Video no encontrado
-          </div>
+          <div className="text-muted-foreground mb-2">Video no encontrado</div>
           <p className="text-sm text-muted-foreground/70">
             El video seleccionado no existe o fue eliminado
           </p>
@@ -953,13 +1076,28 @@ bunx remotion render src/index.ts CaptionedVideo \\
           className="flex-1 min-h-0 flex flex-col"
         >
           {STEPS.map((step) => {
-            const isExecutableStep = ["silences", "captions-raw", "segments", "semantic", "effects-analysis", "cut", "captions"].includes(step.key);
-            const { canExecute, missingDeps } = canExecuteStepCheck(step.key, pipelineState);
+            const isExecutableStep = [
+              "silences",
+              "captions-raw",
+              "segments",
+              "semantic",
+              "effects-analysis",
+              "cut",
+              "captions",
+            ].includes(step.key);
+            const { canExecute, missingDeps } = canExecuteStepCheck(
+              step.key,
+              pipelineState,
+            );
             const isStepRunning = stepProcessing === step.key;
             const stepResult = stepResults[step.key];
 
             return (
-              <TabsContent key={step.key} value={step.key} className="flex-1 min-h-0 flex flex-col data-[state=inactive]:hidden">
+              <TabsContent
+                key={step.key}
+                value={step.key}
+                className="flex-1 min-h-0 flex flex-col data-[state=inactive]:hidden"
+              >
                 <Card className="flex-1 min-h-0 flex flex-col">
                   <CardHeader className="flex-none">
                     <div className="flex items-center justify-between">
@@ -974,7 +1112,9 @@ bunx remotion render src/index.ts CaptionedVideo \\
                               Completado
                             </Badge>
                           )}
-                          {backendStatus?.steps[step.key as keyof typeof backendStatus.steps]?.status === "error" && (
+                          {backendStatus?.steps[
+                            step.key as keyof typeof backendStatus.steps
+                          ]?.status === "error" && (
                             <Badge variant="destructive">Error</Badge>
                           )}
                         </CardTitle>
@@ -985,15 +1125,21 @@ bunx remotion render src/index.ts CaptionedVideo \\
                       <div className="flex items-center gap-2">
                         {isExecutableStep && (
                           <>
-                            {!canExecute && missingDeps.length > 0 && !stepProcessing && (
-                              <span className="text-xs text-muted-foreground">
-                                Requiere: {missingDeps.join(", ")}
-                              </span>
-                            )}
+                            {!canExecute &&
+                              missingDeps.length > 0 &&
+                              !stepProcessing && (
+                                <span className="text-xs text-muted-foreground">
+                                  Requiere: {missingDeps.join(", ")}
+                                </span>
+                              )}
                             {step.key !== "silences" && (
                               <Button
                                 onClick={() => executeUntilStep(step.key)}
-                                disabled={isStepRunning || isProcessing || !!stepProcessing}
+                                disabled={
+                                  isStepRunning ||
+                                  isProcessing ||
+                                  !!stepProcessing
+                                }
                                 variant="outline"
                                 className="gap-2"
                               >
@@ -1012,8 +1158,15 @@ bunx remotion render src/index.ts CaptionedVideo \\
                             )}
                             <Button
                               onClick={() => executeStep(step.key)}
-                              disabled={!canExecute || isStepRunning || isProcessing || !!stepProcessing}
-                              variant={pipelineState[step.key] ? "outline" : "default"}
+                              disabled={
+                                !canExecute ||
+                                isStepRunning ||
+                                isProcessing ||
+                                !!stepProcessing
+                              }
+                              variant={
+                                pipelineState[step.key] ? "outline" : "default"
+                              }
                               className="gap-2"
                             >
                               {isStepRunning ? (
@@ -1035,21 +1188,23 @@ bunx remotion render src/index.ts CaptionedVideo \\
                             </Button>
                           </>
                         )}
-                        {step.key !== "raw" && !pipelineState[step.key] && !isExecutableStep && (
-                          <Button
-                            onClick={() => {
-                              navigator.clipboard.writeText(
-                                getStepCommand(step.key)
-                              );
-                              toast.success("Comando copiado", {
-                                description: `Comando para "${step.label}" copiado al portapapeles`,
-                              });
-                            }}
-                          >
-                            <CopyIcon className="w-4 h-4 mr-2" />
-                            Copiar comando
-                          </Button>
-                        )}
+                        {step.key !== "raw" &&
+                          !pipelineState[step.key] &&
+                          !isExecutableStep && (
+                            <Button
+                              onClick={() => {
+                                navigator.clipboard.writeText(
+                                  getStepCommand(step.key),
+                                );
+                                toast.success("Comando copiado", {
+                                  description: `Comando para "${step.label}" copiado al portapapeles`,
+                                });
+                              }}
+                            >
+                              <CopyIcon className="w-4 h-4 mr-2" />
+                              Copiar comando
+                            </Button>
+                          )}
                       </div>
                     </div>
                   </CardHeader>
@@ -1062,17 +1217,23 @@ bunx remotion render src/index.ts CaptionedVideo \\
                           <span className="text-sm font-medium text-blue-700">
                             {stepProgress.message}
                           </span>
-                          <Badge variant="outline" className="ml-auto text-blue-600 border-blue-300">
+                          <Badge
+                            variant="outline"
+                            className="ml-auto text-blue-600 border-blue-300"
+                          >
                             {stepProgress.progress}%
                           </Badge>
                         </div>
-                        <Progress value={stepProgress.progress} className="h-2" />
+                        <Progress
+                          value={stepProgress.progress}
+                          className="h-2"
+                        />
                       </div>
                     )}
 
                     {step.key === "raw" ? (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div className="space-y-4 flex-col flex h-full">
+                        <div className="grid grid-cols-2 gap-4 text-sm min-h-0">
                           <div>
                             <span className="text-muted-foreground">
                               Archivo:
@@ -1092,8 +1253,8 @@ bunx remotion render src/index.ts CaptionedVideo \\
                         </div>
 
                         {/* Script Input Section */}
-                        <div className="space-y-2 pt-2 border-t">
-                          <div className="flex items-center justify-between">
+                        <div className="space-y-2 pt-2 border-t grow min-h-0 flex flex-col">
+                          <div className="flex items-center justify-between flex-none">
                             <label className="text-sm font-medium">
                               Guion original (opcional)
                             </label>
@@ -1112,37 +1273,57 @@ bunx remotion render src/index.ts CaptionedVideo \\
                           <Textarea
                             placeholder="Pega aqui tu guion original. Puedes usar marcadores como [zoom], [zoom:slow] o {palabra} para efectos..."
                             value={scriptState?.rawScript ?? ""}
-                            onChange={(e) => setScript(selectedVideo.id, e.target.value)}
-                            className="min-h-[120px] text-sm font-mono resize-y"
+                            onChange={(e) =>
+                              setScript(selectedVideo.id, e.target.value)
+                            }
+                            className="min-h-[260px] text-sm font-mono resize-y grow min-h-0"
                           />
-                          {scriptState?.rawScript && (() => {
-                            const parsed = parseScript(scriptState.rawScript);
-                            const zoomCount = parsed.markers.filter((m) => m.type === "zoom").length;
-                            const highlightCount = parsed.markers.filter((m) => m.type === "highlight").length;
-                            const totalMarkers = zoomCount + highlightCount;
-                            return (
-                              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                                <span>{scriptState.rawScript.length} caracteres</span>
-                                {totalMarkers > 0 && (
-                                  <>
-                                    <span className="text-muted-foreground/50">|</span>
-                                    {zoomCount > 0 && (
-                                      <Badge variant="secondary" className="text-xs h-5">
-                                        {zoomCount} zoom{zoomCount !== 1 ? "s" : ""}
-                                      </Badge>
-                                    )}
-                                    {highlightCount > 0 && (
-                                      <Badge variant="secondary" className="text-xs h-5">
-                                        {highlightCount} highlight{highlightCount !== 1 ? "s" : ""}
-                                      </Badge>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })()}
+                          {scriptState?.rawScript &&
+                            (() => {
+                              const parsed = parseScript(scriptState.rawScript);
+                              const zoomCount = parsed.markers.filter(
+                                (m) => m.type === "zoom",
+                              ).length;
+                              const highlightCount = parsed.markers.filter(
+                                (m) => m.type === "highlight",
+                              ).length;
+                              const totalMarkers = zoomCount + highlightCount;
+                              return (
+                                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                  <span>
+                                    {scriptState.rawScript.length} caracteres
+                                  </span>
+                                  {totalMarkers > 0 && (
+                                    <>
+                                      <span className="text-muted-foreground/50">
+                                        |
+                                      </span>
+                                      {zoomCount > 0 && (
+                                        <Badge
+                                          variant="secondary"
+                                          className="text-xs h-5"
+                                        >
+                                          {zoomCount} zoom
+                                          {zoomCount !== 1 ? "s" : ""}
+                                        </Badge>
+                                      )}
+                                      {highlightCount > 0 && (
+                                        <Badge
+                                          variant="secondary"
+                                          className="text-xs h-5"
+                                        >
+                                          {highlightCount} highlight
+                                          {highlightCount !== 1 ? "s" : ""}
+                                        </Badge>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           <p className="text-xs text-muted-foreground">
-                            Este guion se usara para mejorar la deteccion de silencios y transcripcion.
+                            Este guion se usara para mejorar la deteccion de
+                            silencios y transcripcion.
                           </p>
                         </div>
                       </div>
@@ -1164,7 +1345,10 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                     setPipelineConfig({
                                       silence: {
                                         ...config.silence,
-                                        thresholdDb: e.target.value === "" ? undefined : Number(e.target.value),
+                                        thresholdDb:
+                                          e.target.value === ""
+                                            ? undefined
+                                            : Number(e.target.value),
                                       },
                                     })
                                   }
@@ -1176,7 +1360,10 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                     type="button"
                                     onClick={() =>
                                       setPipelineConfig({
-                                        silence: { ...config.silence, thresholdDb: undefined },
+                                        silence: {
+                                          ...config.silence,
+                                          thresholdDb: undefined,
+                                        },
                                       })
                                     }
                                     className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
@@ -1187,8 +1374,8 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                 )}
                               </div>
                               <p className="text-xs text-muted-foreground mt-1">
-                                Nivel de ruido para detectar silencio
-                                (-60 a -20)
+                                Nivel de ruido para detectar silencio (-60 a
+                                -20)
                               </p>
                             </div>
                             <div>
@@ -1205,19 +1392,26 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                     setPipelineConfig({
                                       silence: {
                                         ...config.silence,
-                                        minDurationSec: e.target.value === "" ? undefined : Number(e.target.value),
+                                        minDurationSec:
+                                          e.target.value === ""
+                                            ? undefined
+                                            : Number(e.target.value),
                                       },
                                     })
                                   }
                                   className="pr-8"
                                   disabled={isStepRunning}
                                 />
-                                {config.silence.minDurationSec !== undefined && (
+                                {config.silence.minDurationSec !==
+                                  undefined && (
                                   <button
                                     type="button"
                                     onClick={() =>
                                       setPipelineConfig({
-                                        silence: { ...config.silence, minDurationSec: undefined },
+                                        silence: {
+                                          ...config.silence,
+                                          minDurationSec: undefined,
+                                        },
                                       })
                                     }
                                     className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
@@ -1250,7 +1444,10 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                   setPipelineConfig({
                                     silence: {
                                       ...config.silence,
-                                      paddingSec: e.target.value === "" ? undefined : Number(e.target.value),
+                                      paddingSec:
+                                        e.target.value === ""
+                                          ? undefined
+                                          : Number(e.target.value),
                                     },
                                   })
                                 }
@@ -1262,7 +1459,10 @@ bunx remotion render src/index.ts CaptionedVideo \\
                                   type="button"
                                   onClick={() =>
                                     setPipelineConfig({
-                                      silence: { ...config.silence, paddingSec: undefined },
+                                      silence: {
+                                        ...config.silence,
+                                        paddingSec: undefined,
+                                      },
                                     })
                                   }
                                   className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
@@ -1273,8 +1473,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                               )}
                             </div>
                             <p className="text-xs text-muted-foreground mt-1">
-                              Espacio adicional antes/despues de cada
-                              segmento
+                              Espacio adicional antes/despues de cada segmento
                             </p>
                           </div>
                         )}
@@ -1285,9 +1484,13 @@ bunx remotion render src/index.ts CaptionedVideo \\
                             videoId={selectedVideo.id}
                             captions={captions}
                             cutFilename={(() => {
-                              const cutResult = stepResults.cut as CutResult | undefined;
+                              const cutResult = stepResults.cut as
+                                | CutResult
+                                | undefined;
                               if (cutResult?.outputPath) {
-                                const match = cutResult.outputPath.match(/([^/]+)\.(mp4|mkv|mov|webm)$/i);
+                                const match = cutResult.outputPath.match(
+                                  /([^/]+)\.(mp4|mkv|mov|webm)$/i,
+                                );
                                 return match ? match[1] : undefined;
                               }
                               return undefined;
@@ -1304,15 +1507,18 @@ bunx remotion render src/index.ts CaptionedVideo \\
                         )}
 
                         {/* Effects analysis panel */}
-                        {step.key === "effects-analysis" && pipelineState["effects-analysis"] && (
-                          <EffectsAnalysisPanel
-                            videoId={selectedVideo.id}
-                          />
-                        )}
+                        {step.key === "effects-analysis" &&
+                          pipelineState["effects-analysis"] && (
+                            <EffectsAnalysisPanel videoId={selectedVideo.id} />
+                          )}
 
                         {/* Step results display */}
                         {stepResult && (
-                          <StepResultDisplay step={step.key} result={stepResult} selectedVideo={selectedVideo} />
+                          <StepResultDisplay
+                            step={step.key}
+                            result={stepResult}
+                            selectedVideo={selectedVideo}
+                          />
                         )}
 
                         {/* Command preview (collapsed if result exists) */}
@@ -1331,12 +1537,12 @@ bunx remotion render src/index.ts CaptionedVideo \\
                   </CardContent>
                 </Card>
               </TabsContent>
-            )
+            );
           })}
         </Tabs>
       )}
     </div>
-  )
+  );
 }
 
 function formatFileSize(bytes: number): string {
@@ -1478,7 +1684,15 @@ function FastForwardIcon({ className }: { className?: string }) {
   );
 }
 
-function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep; result: StepResult; selectedVideo?: Video | null }) {
+function StepResultDisplay({
+  step,
+  result,
+  selectedVideo,
+}: {
+  step: PipelineStep;
+  result: StepResult;
+  selectedVideo?: Video | null;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   const renderSummary = () => {
@@ -1493,7 +1707,9 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
             </div>
             <div>
               <span className="text-muted-foreground">Duracion:</span>
-              <span className="ml-2 font-medium">{r.videoDuration.toFixed(2)}s</span>
+              <span className="ml-2 font-medium">
+                {r.videoDuration.toFixed(2)}s
+              </span>
             </div>
             <div>
               <span className="text-muted-foreground">Threshold:</span>
@@ -1501,7 +1717,9 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
             </div>
             <div>
               <span className="text-muted-foreground">Min duracion:</span>
-              <span className="ml-2 font-medium">{r.config.minDurationSec}s</span>
+              <span className="ml-2 font-medium">
+                {r.config.minDurationSec}s
+              </span>
             </div>
           </div>
         );
@@ -1517,21 +1735,35 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
               </div>
               <div>
                 <span className="text-muted-foreground">Original:</span>
-                <span className="ml-2 font-medium">{r.totalDuration.toFixed(2)}s</span>
+                <span className="ml-2 font-medium">
+                  {r.totalDuration.toFixed(2)}s
+                </span>
               </div>
               <div>
                 <span className="text-muted-foreground">Editado:</span>
-                <span className="ml-2 font-medium">{r.editedDuration.toFixed(2)}s</span>
+                <span className="ml-2 font-medium">
+                  {r.editedDuration.toFixed(2)}s
+                </span>
               </div>
               <div>
                 <span className="text-muted-foreground">Ahorro:</span>
-                <span className="ml-2 font-medium text-green-600">{r.percentSaved.toFixed(1)}%</span>
+                <span className="ml-2 font-medium text-green-600">
+                  {r.percentSaved.toFixed(1)}%
+                </span>
               </div>
               {r.config?.usedSemanticAnalysis && (
                 <div className="col-span-full">
                   <span className="inline-flex items-center gap-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
-                    <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    <svg
+                      className="w-3 h-3"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                        clipRule="evenodd"
+                      />
                     </svg>
                     Cortes respetan limites de oraciones del guion
                   </span>
@@ -1560,21 +1792,31 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
               <div>
                 <span className="text-muted-foreground">Segmentos:</span>
-                <span className="ml-2 font-medium">{r.segmentsCount ?? "N/A"}</span>
+                <span className="ml-2 font-medium">
+                  {r.segmentsCount ?? "N/A"}
+                </span>
               </div>
               <div>
-                <span className="text-muted-foreground">Duracion original:</span>
-                <span className="ml-2 font-medium">{r.originalDuration?.toFixed(2) ?? "N/A"}s</span>
+                <span className="text-muted-foreground">
+                  Duracion original:
+                </span>
+                <span className="ml-2 font-medium">
+                  {r.originalDuration?.toFixed(2) ?? "N/A"}s
+                </span>
               </div>
               <div>
                 <span className="text-muted-foreground">Duracion final:</span>
-                <span className="ml-2 font-medium">{r.editedDuration?.toFixed(2) ?? "N/A"}s</span>
+                <span className="ml-2 font-medium">
+                  {r.editedDuration?.toFixed(2) ?? "N/A"}s
+                </span>
               </div>
             </div>
             <div className="flex items-center gap-4">
               <div className="text-sm">
                 <span className="text-muted-foreground">Output:</span>
-                <span className="ml-2 font-mono text-xs">{r.outputPath ?? "N/A"}</span>
+                <span className="ml-2 font-mono text-xs">
+                  {r.outputPath ?? "N/A"}
+                </span>
               </div>
               {videoUrl && (
                 <a
@@ -1611,7 +1853,9 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
         return (
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
-              <span className="text-muted-foreground">Captions (video original):</span>
+              <span className="text-muted-foreground">
+                Captions (video original):
+              </span>
               <span className="ml-2 font-medium">{r.captionsCount}</span>
             </div>
             <div>
@@ -1631,21 +1875,30 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
                 <span className="ml-2 font-medium">{r.sentenceCount}</span>
               </div>
               <div>
-                <span className="text-muted-foreground">Cortes semanticos:</span>
-                <span className="ml-2 font-medium text-green-600">{r.semanticCutCount}</span>
+                <span className="text-muted-foreground">
+                  Cortes semanticos:
+                </span>
+                <span className="ml-2 font-medium text-green-600">
+                  {r.semanticCutCount}
+                </span>
               </div>
               <div>
                 <span className="text-muted-foreground">Pausas naturales:</span>
-                <span className="ml-2 font-medium text-blue-600">{r.naturalPauseCount}</span>
+                <span className="ml-2 font-medium text-blue-600">
+                  {r.naturalPauseCount}
+                </span>
               </div>
               <div>
                 <span className="text-muted-foreground">Confianza:</span>
-                <span className="ml-2 font-medium">{(r.overallConfidence * 100).toFixed(0)}%</span>
+                <span className="ml-2 font-medium">
+                  {(r.overallConfidence * 100).toFixed(0)}%
+                </span>
               </div>
             </div>
             <div className="text-sm text-muted-foreground">
-              Tiempo a cortar: {(r.totalCuttableDurationMs / 1000).toFixed(1)}s |
-              Pausas preservadas: {(r.totalPreservedPauseDurationMs / 1000).toFixed(1)}s
+              Tiempo a cortar: {(r.totalCuttableDurationMs / 1000).toFixed(1)}s
+              | Pausas preservadas:{" "}
+              {(r.totalPreservedPauseDurationMs / 1000).toFixed(1)}s
             </div>
           </div>
         );
@@ -1669,12 +1922,16 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
               </div>
               <div>
                 <span className="text-muted-foreground">Tiempo:</span>
-                <span className="ml-2 font-medium">{(r.processingTimeMs / 1000).toFixed(1)}s</span>
+                <span className="ml-2 font-medium">
+                  {(r.processingTimeMs / 1000).toFixed(1)}s
+                </span>
               </div>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {r.topicKeywords.slice(0, 8).map((kw, i) => (
-                <Badge key={i} variant="outline" className="text-xs">{kw}</Badge>
+                <Badge key={i} variant="outline" className="text-xs">
+                  {kw}
+                </Badge>
               ))}
             </div>
             <div className="text-xs text-muted-foreground">
