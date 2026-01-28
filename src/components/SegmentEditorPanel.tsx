@@ -14,6 +14,7 @@ import {
   XCircle,
   Eye,
   Film,
+  Crosshair,
 } from "lucide-react";
 import {
   useVideoSegments,
@@ -59,6 +60,7 @@ export function SegmentEditorPanel({
   onSegmentsChange,
 }: SegmentEditorPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [isPlaying, setIsPlaying] = useState(false);
   const [mode, setMode] = useState<"full" | "preview">("full");
 
@@ -143,29 +145,11 @@ export function SegmentEditorPanel({
     [enabledSegments]
   );
 
-  // Refs for stable access in callbacks (avoids recreating handlers)
-  const modeRef = useRef(mode);
-  const isPlayingRef = useRef(isPlaying);
+  // Ref for jump debounce (needs stable reference across renders)
   const isJumpingRef = useRef(isJumping);
-  const enabledSegmentsRef = useRef(enabledSegments);
-  const mapTimeToEditedRef = useRef(mapTimeToEdited);
-
-  // Sync refs with state
-  useEffect(() => {
-    modeRef.current = mode;
-  }, [mode]);
-  useEffect(() => {
-    isPlayingRef.current = isPlaying;
-  }, [isPlaying]);
   useEffect(() => {
     isJumpingRef.current = isJumping;
   }, [isJumping]);
-  useEffect(() => {
-    enabledSegmentsRef.current = enabledSegments;
-  }, [enabledSegments]);
-  useEffect(() => {
-    mapTimeToEditedRef.current = mapTimeToEdited;
-  }, [mapTimeToEdited]);
 
   // Perform jump with debounce and seeked event handling
   const performJump = useCallback((targetTime: number) => {
@@ -189,52 +173,46 @@ export function SegmentEditorPanel({
     video.addEventListener("seeked", handleSeeked, { once: true });
   }, []);
 
-  // Handle video time update (stable handler, no re-registration needed)
+  // Handle video events (play/pause/ended)
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-
-    const handleTimeUpdate = () => {
-      // Note: currentTime is now managed by usePlayheadSync hook for smooth updates
-      const currentMs = video.currentTime * 1000;
-
-      // Skip processing if we're in the middle of a jump
-      if (isJumpingRef.current) return;
-
-      // Only process in preview mode while playing
-      if (modeRef.current !== "preview" || !isPlayingRef.current) return;
-
-      const editedMs = mapTimeToEditedRef.current(currentMs);
-      if (editedMs === null) {
-        // We're in a silence region - schedule a jump
-        const nextSegment = enabledSegmentsRef.current.find(
-          (s) => s.startMs > currentMs
-        );
-        if (nextSegment) {
-          performJump(nextSegment.startMs / 1000);
-        } else {
-          // End of video
-          video.pause();
-        }
-      }
-    };
 
     const handlePlay = () => setIsPlaying(true);
     const handlePause = () => setIsPlaying(false);
     const handleEnded = () => setIsPlaying(false);
 
-    video.addEventListener("timeupdate", handleTimeUpdate);
     video.addEventListener("play", handlePlay);
     video.addEventListener("pause", handlePause);
     video.addEventListener("ended", handleEnded);
 
     return () => {
-      video.removeEventListener("timeupdate", handleTimeUpdate);
       video.removeEventListener("play", handlePlay);
       video.removeEventListener("pause", handlePause);
       video.removeEventListener("ended", handleEnded);
     };
-  }, [performJump]); // Only depends on performJump which is stable
+  }, []);
+
+  // Preview mode: detect gaps and jump to next segment (synced with playhead at 60fps)
+  useEffect(() => {
+    // Only process in preview mode while playing
+    if (mode !== "preview" || !isPlaying || isJumping) return;
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    const editedMs = mapTimeToEdited(currentTimeMs);
+    if (editedMs === null) {
+      // We're in a silence region - jump to next segment
+      const nextSegment = enabledSegments.find((s) => s.startMs > currentTimeMs);
+      if (nextSegment) {
+        performJump(nextSegment.startMs / 1000);
+      } else {
+        // No more segments - end of video
+        video.pause();
+      }
+    }
+  }, [currentTimeMs, mode, isPlaying, isJumping, enabledSegments, mapTimeToEdited, performJump]);
 
   const togglePlayback = useCallback(() => {
     const video = videoRef.current;
@@ -298,6 +276,15 @@ export function SegmentEditorPanel({
       (s) => currentMs >= s.startMs && currentMs <= s.endMs
     );
   }, [currentTime, timelineSegments]);
+
+  // Scroll to the current segment in the list
+  const scrollToCurrentSegment = useCallback(() => {
+    if (currentSegmentIndex < 0) return;
+    const segment = timelineSegments[currentSegmentIndex];
+    if (!segment) return;
+    const element = segmentRefs.current.get(segment.id);
+    element?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [currentSegmentIndex, timelineSegments]);
 
   return (
     <div className="flex flex-col gap-4 h-full">
@@ -409,6 +396,15 @@ export function SegmentEditorPanel({
               Segmentos
             </CardTitle>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={scrollToCurrentSegment}
+                disabled={currentSegmentIndex < 0}
+                title="Ir al segmento actual"
+              >
+                <Crosshair className="w-4 h-4" />
+              </Button>
               <Button variant="outline" size="sm" onClick={handleSelectAll}>
                 Todos
               </Button>
@@ -471,6 +467,13 @@ export function SegmentEditorPanel({
               return (
                 <div
                   key={segment.id}
+                  ref={(el) => {
+                    if (el) {
+                      segmentRefs.current.set(segment.id, el);
+                    } else {
+                      segmentRefs.current.delete(segment.id);
+                    }
+                  }}
                   className={cn(
                     "flex items-center gap-3 p-3 rounded-lg border transition-colors",
                     selected

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize2, Crosshair } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Waveform, WaveformPlaceholder } from "@/components/Timeline/Waveform";
 import { TimelineRuler } from "@/components/Timeline/TimelineRuler";
@@ -18,6 +18,7 @@ import {
   useTimelineZoomLevel,
   useViewportStart,
   useTimelineSelection,
+  useTimelineStore,
 } from "@/store/timeline";
 
 interface SegmentTimelineProps {
@@ -45,9 +46,11 @@ export function SegmentTimeline({
   const [compressedView, setCompressedView] = useState(false);
   const prevCompressedViewRef = useRef(compressedView);
   const hasInitializedFitRef = useRef(false);
-  // Track user scroll interaction to disable auto-scroll temporarily
+  // Track user scroll interaction to disable auto-scroll until center button is clicked
   const userScrolledRef = useRef(false);
-  const userScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref for RAF-based auto-scroll (updated every frame, read outside React cycle)
+  const playheadMsRef = useRef(currentTimeMs);
+  const autoScrollRafRef = useRef<number | null>(null);
 
   // Waveform data
   const { rawData: waveformRawData, loading: waveformLoading } = useWaveform(
@@ -161,15 +164,6 @@ export function SegmentTimeline({
     return () => observer.disconnect();
   }, []);
 
-  // Cleanup user scroll timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (userScrollTimeoutRef.current) {
-        clearTimeout(userScrollTimeoutRef.current);
-      }
-    };
-  }, []);
-
   // Auto-fit to view on initial mount when we have container width and duration
   useEffect(() => {
     if (!hasInitializedFitRef.current && containerWidth > 0 && durationMs > 0) {
@@ -238,16 +232,9 @@ export function SegmentTimeline({
   }, [waveformRawData, zoomLevel, viewportStartMs, durationMs, containerWidth]);
 
   // Handle horizontal scroll - mark user interaction to disable auto-scroll
+  // Mark that user has scrolled manually - disables auto-scroll until they click center button
   const markUserScrolled = useCallback(() => {
     userScrolledRef.current = true;
-    // Clear any existing timeout
-    if (userScrollTimeoutRef.current) {
-      clearTimeout(userScrollTimeoutRef.current);
-    }
-    // Reset after 2 seconds of no interaction
-    userScrollTimeoutRef.current = setTimeout(() => {
-      userScrolledRef.current = false;
-    }, 2000);
   }, []);
 
   // Native wheel handler for proper preventDefault with passive: false
@@ -295,28 +282,62 @@ export function SegmentTimeline({
     [onSeek, durationMs]
   );
 
-  // Auto-scroll to keep playhead visible (disabled during user interaction)
+  // Keep playhead ref in sync (for RAF-based auto-scroll)
   useEffect(() => {
-    // Skip auto-scroll if user recently scrolled manually
-    if (userScrolledRef.current) return;
+    playheadMsRef.current = effectivePlayheadMs;
+  }, [effectivePlayheadMs]);
 
-    const pxPerMs = getPxPerMs(zoomLevel);
-    const visibleDurationMs = containerWidth / pxPerMs;
-    // Use effective playhead position for proper scrolling in compressed view
-    const playheadPosition = effectivePlayheadMs;
-    const playheadRelative = playheadPosition - viewportStartMs;
+  // RAF-based auto-scroll - runs outside React render cycle for smooth tracking
+  useEffect(() => {
+    const tick = () => {
+      // Skip if user has manually scrolled
+      if (!userScrolledRef.current) {
+        // Read current values directly from store and refs (no React state dependency)
+        const { zoomLevel: currentZoom, viewportStartMs: currentViewport } =
+          useTimelineStore.getState();
+        const playheadMs = playheadMsRef.current;
 
-    // If playhead is outside visible range, scroll to it
-    if (playheadRelative < 0 || playheadRelative > visibleDurationMs) {
-      scrollTo(Math.max(0, playheadPosition - visibleDurationMs * 0.2));
-    }
-  }, [effectivePlayheadMs, zoomLevel, viewportStartMs, containerWidth, scrollTo]);
+        const pxPerMs = getPxPerMs(currentZoom);
+        const visibleDurationMs = containerWidth / pxPerMs;
+        const playheadRelative = playheadMs - currentViewport;
+
+        // If playhead is outside visible range (with some margin), scroll to keep it visible
+        const margin = visibleDurationMs * 0.1; // 10% margin
+        if (playheadRelative < margin || playheadRelative > visibleDurationMs - margin) {
+          // Scroll to put playhead at 20% from the left edge
+          const targetViewport = Math.max(0, playheadMs - visibleDurationMs * 0.2);
+          useTimelineStore.getState().scrollTo(targetViewport);
+        }
+      }
+
+      autoScrollRafRef.current = requestAnimationFrame(tick);
+    };
+
+    autoScrollRafRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (autoScrollRafRef.current !== null) {
+        cancelAnimationFrame(autoScrollRafRef.current);
+      }
+    };
+  }, [containerWidth]); // Only depends on containerWidth which rarely changes
 
   const handleFitToView = useCallback(() => {
     const viewportWidth = containerWidth - LABEL_COLUMN_WIDTH;
     // Use effective duration (compressed or full) for proper fit
     fitToView(effectiveDurationMs, viewportWidth > 0 ? viewportWidth : undefined);
   }, [fitToView, effectiveDurationMs, containerWidth]);
+
+  // Center the viewport on the current playhead position and re-enable auto-scroll
+  const handleCenterOnPlayhead = useCallback(() => {
+    const pxPerMs = getPxPerMs(zoomLevel);
+    const visibleDurationMs = containerWidth / pxPerMs;
+    // Center the playhead in the middle of the viewport
+    const newViewportStart = effectivePlayheadMs - visibleDurationMs / 2;
+    scrollTo(Math.max(0, newViewportStart));
+    // Re-enable auto-scroll
+    userScrolledRef.current = false;
+  }, [zoomLevel, containerWidth, effectivePlayheadMs, scrollTo]);
 
   const handleResizeSegment = useCallback(
     (id: string, field: "startMs" | "endMs", value: number) => {
@@ -381,8 +402,11 @@ export function SegmentTimeline({
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={zoomIn}>
             <ZoomIn className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleFitToView}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleFitToView} title="Ajustar a la vista">
             <Maximize2 className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleCenterOnPlayhead} title="Centrar en playhead">
+            <Crosshair className="h-4 w-4" />
           </Button>
         </div>
       </div>
@@ -466,12 +490,15 @@ export function SegmentTimeline({
                 const x = (offset - viewportStartMs) * pxPerMs;
                 const width = segmentDuration * pxPerMs;
 
+                // Skip rendering if completely outside viewport
+                if (x + width < 0 || x > viewportWidthPx) return null;
+
                 return (
                   <div
                     key={segment.id}
                     className="absolute top-1 bottom-1 bg-green-500/60 border border-green-600/40 rounded"
                     style={{
-                      left: Math.max(0, x),
+                      left: x,
                       width: Math.max(width, 2),
                     }}
                   >
