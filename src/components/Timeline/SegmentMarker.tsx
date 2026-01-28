@@ -160,6 +160,19 @@ export function SegmentMarker({
           onPointerUp={handlePointerUp}
         />
       )}
+
+      {/* DEBUG: exact endMs marker - thin line at the TRUE endMs position (ignoring min-width) */}
+      {segment.enabled && (
+        <div
+          className="absolute top-0 bottom-0 w-0.5 bg-yellow-400 z-50 pointer-events-none"
+          style={{
+            // actualWidth is the TRUE calculated width, width may be expanded to min 20px
+            // This shows where endMs REALLY is
+            left: actualWidth - 1, // -1 to account for the line's own width
+          }}
+          title={`endMs: ${segment.endMs}ms (actualWidth: ${actualWidth.toFixed(1)}px)`}
+        />
+      )}
     </div>
   );
 }
