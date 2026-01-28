@@ -222,7 +222,7 @@ export function SegmentEditorPanel({
     if (currentSegment) {
       // We're inside a segment - check if we're approaching the end
       const msToEnd = currentSegment.endMs - currentTimeMs;
-      const LOOKAHEAD_MS = 50; // Jump 50ms before hitting the gap
+      const LOOKAHEAD_MS = 17; // ~1 frame at 60fps - jump just before hitting the gap
 
       if (msToEnd <= LOOKAHEAD_MS && msToEnd > 0) {
         // About to exit this segment - find and jump to next
