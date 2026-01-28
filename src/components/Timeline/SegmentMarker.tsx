@@ -163,9 +163,14 @@ export function SegmentMarker({
         />
       )}
 
-      {/* DEBUG MARKERS - Comment out the block below to hide */}
+      {/* ================================================================
+          DEBUG MARKERS - DO NOT DELETE THIS CODE
+          These markers are essential for debugging segment alignment issues.
+          To enable: change `false &&` to `true &&` below.
+          Pink = startMs (left edge), Yellow = endMs (right edge)
+          ================================================================ */}
       {/* START DEBUG MARKERS */}
-      {segment.enabled && (
+      {false && segment.enabled && (
         <>
           {/* Pink marker at startMs (left edge) */}
           <div
