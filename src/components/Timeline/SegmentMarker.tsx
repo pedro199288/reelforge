@@ -119,7 +119,7 @@ export function SegmentMarker({
     <div
       ref={markerRef}
       className={cn(
-        "absolute top-1 bottom-1 rounded transition-shadow select-none",
+        "absolute top-1 bottom-1 rounded transition-shadow select-none box-border",
         "border-2 flex items-center justify-center text-xs font-medium",
         segment.enabled
           ? "bg-emerald-500/30 border-emerald-500 text-emerald-700 dark:text-emerald-300"
