@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, basename, extname } from "node:path";
 import type { SilenceRange } from "../src/core/silence/detect";
 import type { Segment } from "../src/core/silence/segments";
+import type { PreselectionStats, PreselectedSegment } from "../src/core/preselection";
 
 export type PipelineStep = "silences" | "segments" | "cut" | "captions" | "captions-raw" | "semantic" | "effects-analysis";
 
@@ -48,6 +49,13 @@ export interface SegmentsResult {
     paddingSec: number;
     /** Whether semantic analysis was used for script-aware segmentation */
     usedSemanticAnalysis?: boolean;
+  };
+  /** Preselection data (when captions-raw is available) */
+  preselection?: {
+    /** Segments with preselection metadata */
+    segments: PreselectedSegment[];
+    /** Preselection statistics */
+    stats: PreselectionStats;
   };
   createdAt: string;
 }

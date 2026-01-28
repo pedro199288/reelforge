@@ -6,6 +6,7 @@ import { shallow } from "zustand/shallow";
 import { nanoid } from "nanoid";
 import type { AlignedEvent, ZoomEvent, HighlightEvent } from "@/core/script/align";
 import type { SilenceRange } from "@/core/silence/detect";
+import type { PreselectedSegment } from "@/core/preselection";
 
 /**
  * Timeline zoom (video zoom effect, not timeline zoom level)
@@ -37,6 +38,10 @@ export interface TimelineSegment {
   startMs: number;
   endMs: number;
   enabled: boolean; // When disabled, this segment will be cut too
+  /** Preselection score (0-100), undefined if not preselected */
+  preselectionScore?: number;
+  /** Human-readable reason for preselection decision */
+  preselectionReason?: string;
 }
 
 /**
@@ -128,6 +133,11 @@ interface TimelineStore {
   importSemanticSegments: (
     videoId: string,
     segments: Array<{ startMs: number; endMs: number }>,
+    silences: SilenceRange[]
+  ) => void;
+  importPreselectedSegments: (
+    videoId: string,
+    preselected: PreselectedSegment[],
     silences: SilenceRange[]
   ) => void;
   toggleSegment: (videoId: string, id: string) => void;
@@ -432,6 +442,32 @@ export const useTimelineStore = create<TimelineStore>()(
             startMs: seg.startMs,
             endMs: seg.endMs,
             enabled: true,
+          }));
+
+          set((state) => {
+            const timeline = state.timelines[videoId] || createEmptyTimeline(videoId);
+            return {
+              timelines: {
+                ...state.timelines,
+                [videoId]: {
+                  ...timeline,
+                  segments: segments.sort((a, b) => a.startMs - b.startMs),
+                  silences,
+                },
+              },
+            };
+          });
+        },
+
+        // Import preselected segments with scores and reasons
+        importPreselectedSegments: (videoId, preselected, silences) => {
+          const segments: TimelineSegment[] = preselected.map((seg) => ({
+            id: seg.id,
+            startMs: seg.startMs,
+            endMs: seg.endMs,
+            enabled: seg.enabled,
+            preselectionScore: seg.score,
+            preselectionReason: seg.reason,
           }));
 
           set((state) => {
@@ -770,6 +806,7 @@ export const useTimelineActions = () =>
       deleteSelected: state.deleteSelected,
       importSilences: state.importSilences,
       importSemanticSegments: state.importSemanticSegments,
+      importPreselectedSegments: state.importPreselectedSegments,
       toggleSegment: state.toggleSegment,
       resizeSegment: state.resizeSegment,
       addSegment: state.addSegment,

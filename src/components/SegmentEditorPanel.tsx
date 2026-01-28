@@ -15,7 +15,15 @@ import {
   Eye,
   Film,
   Crosshair,
+  Sparkles,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import type { PreselectedSegment, PreselectionStats } from "@/core/preselection";
 import {
   useVideoSegments,
   useTimelineActions,
@@ -37,6 +45,11 @@ interface SegmentEditorPanelProps {
   segments: Segment[];
   totalDuration: number;
   onSegmentsChange?: (segments: TimelineSegment[]) => void;
+  /** Preselection data from the pipeline */
+  preselection?: {
+    segments: PreselectedSegment[];
+    stats: PreselectionStats;
+  };
 }
 
 function formatTime(seconds: number): string {
@@ -58,6 +71,7 @@ export function SegmentEditorPanel({
   segments,
   totalDuration,
   onSegmentsChange,
+  preselection,
 }: SegmentEditorPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -77,18 +91,24 @@ export function SegmentEditorPanel({
 
   // Get segments from timeline store (these are the editable ones with enabled state)
   const timelineSegments = useVideoSegments(videoId);
-  const { importSemanticSegments, toggleSegment } = useTimelineActions();
+  const { importSemanticSegments, importPreselectedSegments, toggleSegment } = useTimelineActions();
 
   // Initialize timeline segments from prop segments if empty
   useEffect(() => {
     if (timelineSegments.length === 0 && segments.length > 0) {
-      const segmentsForStore = segments.map((s) => ({
-        startMs: s.startTime * 1000,
-        endMs: s.endTime * 1000,
-      }));
-      importSemanticSegments(videoId, segmentsForStore, []);
+      // If preselection data is available, use it
+      if (preselection && preselection.segments.length > 0) {
+        importPreselectedSegments(videoId, preselection.segments, []);
+      } else {
+        // Fallback to basic import (all enabled)
+        const segmentsForStore = segments.map((s) => ({
+          startMs: s.startTime * 1000,
+          endMs: s.endTime * 1000,
+        }));
+        importSemanticSegments(videoId, segmentsForStore, []);
+      }
     }
-  }, [videoId, segments, timelineSegments.length, importSemanticSegments]);
+  }, [videoId, segments, timelineSegments.length, importSemanticSegments, importPreselectedSegments, preselection]);
 
   // Notify parent when segments change
   useEffect(() => {
@@ -481,6 +501,31 @@ export function SegmentEditorPanel({
             </div>
           </div>
 
+          {/* Preselection stats (if available) */}
+          {preselection && (
+            <div className="flex items-center gap-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-blue-600" />
+                <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                  Preseleccion automatica
+                </span>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-blue-600 dark:text-blue-400">
+                <span>
+                  Cobertura guion: {preselection.stats.scriptCoverage.toFixed(0)}%
+                </span>
+                {preselection.stats.repetitionsRemoved > 0 && (
+                  <span>
+                    Repeticiones eliminadas: {preselection.stats.repetitionsRemoved}
+                  </span>
+                )}
+                <span>
+                  Puntuacion promedio: {preselection.stats.averageScore.toFixed(0)}%
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Progress bar */}
           <div className="space-y-1 flex-shrink-0">
             <div className="flex justify-between text-xs text-muted-foreground">
@@ -491,6 +536,7 @@ export function SegmentEditorPanel({
           </div>
 
           {/* Segment list */}
+          <TooltipProvider>
           <div className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-subtle">
             {timelineSegments.map((segment, index) => {
               const selected = segment.enabled;
@@ -498,6 +544,7 @@ export function SegmentEditorPanel({
               const startTime = segment.startMs / 1000;
               const endTime = segment.endMs / 1000;
               const duration = endTime - startTime;
+              const hasPreselection = segment.preselectionScore !== undefined;
 
               return (
                 <div
@@ -534,6 +581,29 @@ export function SegmentEditorPanel({
                       <span className="text-sm font-mono text-muted-foreground">
                         {formatTime(startTime)} → {formatTime(endTime)}
                       </span>
+                      {/* Preselection score badge */}
+                      {hasPreselection && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                "text-[10px] h-5 cursor-help",
+                                segment.preselectionScore! >= 70
+                                  ? "bg-green-100 text-green-700 border-green-300"
+                                  : segment.preselectionScore! >= 50
+                                    ? "bg-yellow-100 text-yellow-700 border-yellow-300"
+                                    : "bg-red-100 text-red-700 border-red-300"
+                              )}
+                            >
+                              {segment.preselectionScore}%
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs">
+                            <p className="text-sm">{segment.preselectionReason}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
                     </div>
                   </div>
 
@@ -569,6 +639,7 @@ export function SegmentEditorPanel({
               </div>
             )}
           </div>
+          </TooltipProvider>
         </CardContent>
       </Card>
     </div>

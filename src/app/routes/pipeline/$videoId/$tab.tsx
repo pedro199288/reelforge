@@ -68,6 +68,26 @@ interface SegmentsResult {
   timeSaved: number;
   percentSaved: number;
   config: { paddingSec: number; usedSemanticAnalysis?: boolean };
+  preselection?: {
+    segments: Array<{
+      id: string;
+      startMs: number;
+      endMs: number;
+      enabled: boolean;
+      score: number;
+      reason: string;
+    }>;
+    stats: {
+      totalSegments: number;
+      selectedSegments: number;
+      originalDurationMs: number;
+      selectedDurationMs: number;
+      scriptCoverage: number;
+      repetitionsRemoved: number;
+      averageScore: number;
+      ambiguousSegments: number;
+    };
+  };
   createdAt: string;
 }
 
@@ -1524,6 +1544,7 @@ function StepResultDisplay({ step, result, selectedVideo }: { step: PipelineStep
                 videoPath={`${API_URL}/api/stream/videos/${selectedVideo.filename}`}
                 segments={r.segments}
                 totalDuration={r.totalDuration}
+                preselection={r.preselection}
               />
             )}
           </div>

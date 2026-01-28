@@ -40,6 +40,11 @@ import {
   getTotalDuration,
 } from "../src/core/silence";
 import { cutVideo } from "../src/core/cut";
+import {
+  preselectSegments,
+  type PreselectionStats,
+  type PreselectedSegment,
+} from "../src/core/preselection";
 
 const PORT = 3012;
 const CORS_HEADERS = {
@@ -1071,6 +1076,51 @@ async function handleRequest(req: Request): Promise<Response> {
             const editedDuration = getTotalDuration(segments);
             const timeSaved = silencesResult.videoDuration - editedDuration;
 
+            // Apply preselection if captions-raw is available
+            sendEvent("progress", { step, progress: 70, message: "Aplicando preselección automática..." });
+            let preselectionData: { segments: PreselectedSegment[]; stats: PreselectionStats } | undefined;
+
+            const captionsRawResult = loadStepResult<CaptionsRawResult>(videoId, "captions-raw");
+            if (captionsRawResult) {
+              try {
+                // Load raw captions
+                const captionsPath = captionsRawResult.captionsPath;
+                const captionsFullPath = join(process.cwd(), captionsPath);
+                if (existsSync(captionsFullPath)) {
+                  const captions: Caption[] = JSON.parse(
+                    await Bun.file(captionsFullPath).text()
+                  );
+
+                  // Convert segments to ms-based format for preselection
+                  const segmentsMs = segments.map((seg) => ({
+                    startMs: seg.startTime * 1000,
+                    endMs: seg.endTime * 1000,
+                  }));
+
+                  // Apply preselection
+                  const preselectionResult = await preselectSegments(segmentsMs, {
+                    captions,
+                    script: script || undefined,
+                    videoDurationMs: silencesResult.videoDuration * 1000,
+                  });
+
+                  preselectionData = {
+                    segments: preselectionResult.segments,
+                    stats: preselectionResult.stats,
+                  };
+
+                  sendEvent("progress", {
+                    step,
+                    progress: 85,
+                    message: `Preselección: ${preselectionResult.stats.selectedSegments}/${preselectionResult.stats.totalSegments} segmentos seleccionados`,
+                  });
+                }
+              } catch (err) {
+                console.error("Error applying preselection:", err);
+                // Continue without preselection
+              }
+            }
+
             sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
             const result: SegmentsResult = {
               segments,
@@ -1082,6 +1132,7 @@ async function handleRequest(req: Request): Promise<Response> {
                 paddingSec: config?.paddingSec ?? 0.05,
                 usedSemanticAnalysis,
               },
+              preselection: preselectionData,
               createdAt: new Date().toISOString(),
             };
 
