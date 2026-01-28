@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Progress } from "@/components/ui/progress";
+// import { Progress } from "@/components/ui/progress"; // Commented - keep for potential future use
 import { cn } from "@/lib/utils";
 import {
   Play,
@@ -93,11 +93,38 @@ export function SegmentEditorPanel({
   const timelineSegments = useVideoSegments(videoId);
   const { importSemanticSegments, importPreselectedSegments, toggleSegment } = useTimelineActions();
 
-  // Initialize timeline segments from prop segments if empty
+  // Track if we've already imported for this video/preselection combination
+  const lastImportRef = useRef<{ videoId: string; hasPreselection: boolean } | null>(null);
+
+  // Initialize timeline segments from prop segments
+  // Re-import if preselection data is available but current segments don't have it
   useEffect(() => {
-    if (timelineSegments.length === 0 && segments.length > 0) {
-      // If preselection data is available, use it
-      if (preselection && preselection.segments.length > 0) {
+    if (segments.length === 0) return;
+
+    const hasPreselectionData = preselection && preselection.segments.length > 0;
+    const importKey = { videoId, hasPreselection: !!hasPreselectionData };
+
+    // Check if we've already imported with these parameters
+    if (
+      lastImportRef.current?.videoId === importKey.videoId &&
+      lastImportRef.current?.hasPreselection === importKey.hasPreselection &&
+      timelineSegments.length > 0
+    ) {
+      return;
+    }
+
+    const currentSegmentsHavePreselection =
+      timelineSegments.length > 0 &&
+      timelineSegments.some((s) => s.preselectionScore !== undefined);
+
+    // Import if no segments yet, or if preselection available but not applied
+    const shouldImport =
+      timelineSegments.length === 0 ||
+      (hasPreselectionData && !currentSegmentsHavePreselection);
+
+    if (shouldImport) {
+      lastImportRef.current = importKey;
+      if (hasPreselectionData) {
         importPreselectedSegments(videoId, preselection.segments, []);
       } else {
         // Fallback to basic import (all enabled)
@@ -108,7 +135,7 @@ export function SegmentEditorPanel({
         importSemanticSegments(videoId, segmentsForStore, []);
       }
     }
-  }, [videoId, segments, timelineSegments.length, importSemanticSegments, importPreselectedSegments, preselection]);
+  }, [videoId, segments, timelineSegments, importSemanticSegments, importPreselectedSegments, preselection]);
 
   // Notify parent when segments change
   useEffect(() => {
@@ -537,7 +564,7 @@ export function SegmentEditorPanel({
             </div>
           )}
 
-          {/* Progress bar */}
+          {/* Progress bar - commented out, keep for potential future use
           <div className="space-y-1 flex-shrink-0">
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>Contenido seleccionado</span>
@@ -545,6 +572,7 @@ export function SegmentEditorPanel({
             </div>
             <Progress value={stats.percentKept} className="h-2" />
           </div>
+          */}
 
           {/* Segment list */}
           <TooltipProvider>
