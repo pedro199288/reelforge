@@ -32,10 +32,15 @@ export function SegmentMarker({
   // Calculate pixels per millisecond based on zoom level
   const pxPerMs = (100 * zoomLevel) / 1000;
 
-  const x = (segment.startMs - viewportStartMs) * pxPerMs;
+  const baseX = (segment.startMs - viewportStartMs) * pxPerMs;
   const actualWidth = (segment.endMs - segment.startMs) * pxPerMs;
   const width = Math.max(actualWidth, 20); // Minimum 20px width for visibility
   const isCompressedDisplay = actualWidth < 20; // Segment is visually compressed
+
+  // When segment is expanded to minimum width, expand LEFT so the RIGHT edge
+  // (endMs) stays aligned with the playhead. This is critical for preview mode.
+  const widthExpansion = width - actualWidth;
+  const x = baseX - widthExpansion; // Shift left by the expansion amount
 
   // Handle drag start
   const handlePointerDown = useCallback(
@@ -161,18 +166,6 @@ export function SegmentMarker({
         />
       )}
 
-      {/* DEBUG: exact endMs marker - thin line at the TRUE endMs position (ignoring min-width) */}
-      {segment.enabled && (
-        <div
-          className="absolute top-0 bottom-0 w-0.5 bg-yellow-400 z-50 pointer-events-none"
-          style={{
-            // actualWidth is the TRUE calculated width, width may be expanded to min 20px
-            // This shows where endMs REALLY is
-            left: actualWidth - 1, // -1 to account for the line's own width
-          }}
-          title={`endMs: ${segment.endMs}ms (actualWidth: ${actualWidth.toFixed(1)}px)`}
-        />
-      )}
     </div>
   );
 }
