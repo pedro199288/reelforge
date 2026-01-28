@@ -21,6 +21,24 @@ interface UseWaveformResult {
   error: string | null;
 }
 
+/**
+ * Extract filename from a video path or URL.
+ * Handles formats like:
+ * - "video.mp4" (plain filename)
+ * - "/path/to/video.mp4" (local path)
+ * - "http://localhost:3012/api/stream/videos/video.mp4" (streaming URL)
+ */
+function extractFilename(pathOrUrl: string): string {
+  // If it's a URL with /api/stream/videos/, extract the filename
+  const streamMatch = pathOrUrl.match(/\/api\/stream\/videos\/(.+)$/);
+  if (streamMatch) {
+    return decodeURIComponent(streamMatch[1]);
+  }
+  // Otherwise, get the last segment of the path
+  const segments = pathOrUrl.split("/");
+  return segments[segments.length - 1];
+}
+
 export function useWaveform(
   videoPath: string | null,
   options: UseWaveformOptions = {}
@@ -36,7 +54,9 @@ export function useWaveform(
       return;
     }
 
-    const cacheKey = `${videoPath}:${samplesPerSecond}`;
+    // Extract just the filename for the API request
+    const filename = extractFilename(videoPath);
+    const cacheKey = `${filename}:${samplesPerSecond}`;
 
     // Check cache first
     if (waveformCache.has(cacheKey)) {
@@ -51,7 +71,7 @@ export function useWaveform(
     fetch(`${API_BASE}/api/waveform`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ videoPath, samplesPerSecond }),
+      body: JSON.stringify({ videoPath: filename, samplesPerSecond }),
     })
       .then((res) => {
         if (!res.ok) throw new Error(`Failed to fetch waveform: ${res.status}`);
