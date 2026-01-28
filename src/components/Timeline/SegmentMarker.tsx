@@ -126,7 +126,7 @@ export function SegmentMarker({
           : "bg-gray-500/20 border-gray-400 text-gray-500 dark:text-gray-400",
         isSelected && "ring-2 ring-primary ring-offset-1",
         dragMode && "cursor-ew-resize opacity-80",
-        isCompressedDisplay && "border-dashed opacity-80"
+        isCompressedDisplay && "border-dashed"
       )}
       style={{
         left: x,

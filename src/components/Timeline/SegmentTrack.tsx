@@ -161,55 +161,52 @@ export function SegmentTrack({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
       >
-        {/* Container for all positioned elements - normalized with marginLeft */}
-        <div style={{ marginLeft: LABEL_COLUMN_WIDTH }} className="absolute inset-0">
-          {/* Render silences as dark background regions */}
-          {silences.map((silence, index) => {
-            const startMs = silence.start * 1000;
-            const endMs = silence.end * 1000;
-            const x = (startMs - viewportStartMs) * pxPerMs;
-            const width = (endMs - startMs) * pxPerMs;
+        {/* Render silences as dark background regions */}
+        {silences.map((silence, index) => {
+          const startMs = silence.start * 1000;
+          const endMs = silence.end * 1000;
+          const x = (startMs - viewportStartMs) * pxPerMs;
+          const width = (endMs - startMs) * pxPerMs;
 
-            // Don't render if outside viewport
-            if (x + width < -50 || x > 2000) return null;
+          // Don't render if outside viewport
+          if (x + width < -50 || x > 2000) return null;
 
-            return (
-              <div
-                key={`silence-${index}`}
-                className="absolute top-0 bottom-0 bg-red-900/30 border-x border-red-500/20"
-                style={{
-                  left: x,
-                  width: Math.max(width, 2),
-                }}
-              />
-            );
-          })}
-
-          {/* Render segments */}
-          {segments.map((segment) => (
-            <SegmentMarker
-              key={segment.id}
-              segment={segment}
-              zoomLevel={zoomLevel}
-              viewportStartMs={viewportStartMs}
-              isSelected={selection?.type === "segment" && selection.id === segment.id}
-              onSelect={() => onSelect({ type: "segment", id: segment.id })}
-              onResize={(field, value) => onResizeSegment(segment.id, field, value)}
-              onToggleEnabled={() => onToggleSegment(segment.id)}
-            />
-          ))}
-
-          {/* Drag preview */}
-          {dragPreview && (
+          return (
             <div
-              className="absolute top-1 bottom-1 bg-green-500/30 border-2 border-dashed border-green-500 rounded pointer-events-none"
+              key={`silence-${index}`}
+              className="absolute top-0 bottom-0 bg-red-900/30 border-x border-red-500/20"
               style={{
-                left: (dragPreview.startMs - viewportStartMs) * pxPerMs,
-                width: Math.max((dragPreview.endMs - dragPreview.startMs) * pxPerMs, 4),
+                left: x,
+                width: Math.max(width, 2),
               }}
             />
-          )}
-        </div>
+          );
+        })}
+
+        {/* Render segments */}
+        {segments.map((segment) => (
+          <SegmentMarker
+            key={segment.id}
+            segment={segment}
+            zoomLevel={zoomLevel}
+            viewportStartMs={viewportStartMs}
+            isSelected={selection?.type === "segment" && selection.id === segment.id}
+            onSelect={() => onSelect({ type: "segment", id: segment.id })}
+            onResize={(field, value) => onResizeSegment(segment.id, field, value)}
+            onToggleEnabled={() => onToggleSegment(segment.id)}
+          />
+        ))}
+
+        {/* Drag preview */}
+        {dragPreview && (
+          <div
+            className="absolute top-1 bottom-1 bg-green-500/30 border-2 border-dashed border-green-500 rounded pointer-events-none"
+            style={{
+              left: (dragPreview.startMs - viewportStartMs) * pxPerMs,
+              width: Math.max((dragPreview.endMs - dragPreview.startMs) * pxPerMs, 4),
+            }}
+          />
+        )}
 
         {/* Summary overlay */}
         {segments.length > 0 && (
