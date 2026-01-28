@@ -569,6 +569,7 @@ function PipelinePage() {
 
       const executableSteps: PipelineStep[] = [
         "silences",
+        "captions-raw",
         "segments",
         "cut",
         "captions",

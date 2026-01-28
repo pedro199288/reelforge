@@ -503,26 +503,37 @@ export function SegmentEditorPanel({
 
           {/* Preselection stats (if available) */}
           {preselection && (
-            <div className="flex items-center gap-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-blue-600" />
-                <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
-                  Preseleccion automatica
-                </span>
-              </div>
-              <div className="flex items-center gap-4 text-xs text-blue-600 dark:text-blue-400">
-                <span>
-                  Cobertura guion: {preselection.stats.scriptCoverage.toFixed(0)}%
-                </span>
-                {preselection.stats.repetitionsRemoved > 0 && (
-                  <span>
-                    Repeticiones eliminadas: {preselection.stats.repetitionsRemoved}
+            <div className="flex flex-col gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 flex-shrink-0">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-blue-600" />
+                  <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                    Preseleccion automatica
                   </span>
-                )}
-                <span>
-                  Puntuacion promedio: {preselection.stats.averageScore.toFixed(0)}%
-                </span>
+                </div>
+                <div className="flex items-center gap-4 text-xs text-blue-600 dark:text-blue-400">
+                  {preselection.stats.scriptCoverage < 100 && (
+                    <span>
+                      Cobertura guion: {preselection.stats.scriptCoverage.toFixed(0)}%
+                    </span>
+                  )}
+                  {preselection.stats.repetitionsRemoved > 0 && (
+                    <span>
+                      Repeticiones eliminadas: {preselection.stats.repetitionsRemoved}
+                    </span>
+                  )}
+                  <span>
+                    Puntuacion promedio: {preselection.stats.averageScore.toFixed(0)}%
+                  </span>
+                </div>
               </div>
+              {/* Note when no script is available */}
+              {preselection.stats.scriptCoverage === 100 &&
+                preselection.stats.repetitionsRemoved === 0 && (
+                  <p className="text-xs text-blue-500 dark:text-blue-400 italic">
+                    Sin guion ni repeticiones detectadas. Agrega un guion en la fase Raw para mejor discriminacion.
+                  </p>
+                )}
             </div>
           )}
 
@@ -589,9 +600,9 @@ export function SegmentEditorPanel({
                               variant="outline"
                               className={cn(
                                 "text-[10px] h-5 cursor-help",
-                                segment.preselectionScore! >= 70
+                                segment.preselectionScore! >= 85
                                   ? "bg-green-100 text-green-700 border-green-300"
-                                  : segment.preselectionScore! >= 50
+                                  : segment.preselectionScore! >= 60
                                     ? "bg-yellow-100 text-yellow-700 border-yellow-300"
                                     : "bg-red-100 text-red-700 border-red-300"
                               )}
