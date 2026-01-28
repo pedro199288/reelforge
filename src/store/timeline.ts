@@ -88,7 +88,7 @@ interface TimelineStore {
   scrollTo: (ms: number) => void;
   zoomIn: () => void;
   zoomOut: () => void;
-  fitToView: (durationMs: number) => void;
+  fitToView: (durationMs: number, viewportWidthPx?: number) => void;
 
   // Video context
   setActiveVideo: (videoId: string | null) => void;
@@ -208,10 +208,14 @@ export const useTimelineStore = create<TimelineStore>()(
             zoomLevel: Math.max(MIN_ZOOM_LEVEL, state.zoomLevel / 1.5),
           })),
 
-        fitToView: (durationMs) => {
-          // Adjust zoom level to fit entire duration in view
-          // Assuming viewport width of ~1000px at zoom level 1 = 10 seconds
-          const targetZoom = (10000 / durationMs) * 1;
+        fitToView: (durationMs, viewportWidthPx) => {
+          // Calculate zoom level to fit entire duration in the viewport
+          // pxPerMs = (100 * zoomLevel) / 1000 = zoomLevel / 10
+          // To fit durationMs in viewportWidthPx: viewportWidthPx = durationMs * pxPerMs
+          // viewportWidthPx = durationMs * (zoomLevel / 10)
+          // zoomLevel = (viewportWidthPx * 10) / durationMs
+          const effectiveWidth = viewportWidthPx ?? 800;
+          const targetZoom = (effectiveWidth * 10) / durationMs;
           set({
             zoomLevel: Math.max(MIN_ZOOM_LEVEL, Math.min(MAX_ZOOM_LEVEL, targetZoom)),
             viewportStartMs: 0,

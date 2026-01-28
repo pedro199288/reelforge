@@ -4,12 +4,15 @@ interface TimelinePlayheadProps {
   playheadMs: number;
   zoomLevel: number;
   viewportStartMs: number;
+  /** Enable CSS transition for smooth movement during playback */
+  enableTransition?: boolean;
 }
 
 export function TimelinePlayhead({
   playheadMs,
   zoomLevel,
   viewportStartMs,
+  enableTransition = false,
 }: TimelinePlayheadProps) {
   const pxPerMs = getPxPerMs(zoomLevel);
   const x = (playheadMs - viewportStartMs) * pxPerMs;
@@ -20,7 +23,14 @@ export function TimelinePlayhead({
   return (
     <div
       className="absolute top-0 bottom-0 pointer-events-none z-20"
-      style={{ left: `calc(${LABEL_COLUMN_WIDTH}px + ${x}px)` }}
+      style={{
+        // Use transform for GPU-accelerated movement
+        transform: `translateX(${LABEL_COLUMN_WIDTH + x}px)`,
+        // Short transition for smooth movement, disabled during seek
+        transition: enableTransition ? "transform 33ms linear" : "none",
+        willChange: enableTransition ? "transform" : "auto",
+        left: 0,
+      }}
     >
       {/* Playhead handle */}
       <div className="absolute -top-1 -left-2 w-4 h-3 bg-red-500 rounded-t-sm">

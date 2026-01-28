@@ -21,6 +21,7 @@ import {
   type TimelineSegment,
 } from "@/store/timeline";
 import { SegmentTimeline } from "./SegmentTimeline";
+import { usePlayheadSync } from "@/hooks/usePlayheadSync";
 
 interface Segment {
   startTime: number;
@@ -59,8 +60,14 @@ export function SegmentEditorPanel({
 }: SegmentEditorPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
   const [mode, setMode] = useState<"full" | "preview">("full");
+
+  // Smooth playhead sync using RAF during playback
+  const { currentTimeMs, isTransitioning } = usePlayheadSync({
+    videoRef,
+    isPlaying,
+  });
+  const currentTime = currentTimeMs / 1000;
 
   // State and refs for jump control (prevents race conditions in preview mode)
   const [isJumping, setIsJumping] = useState(false);
@@ -188,8 +195,8 @@ export function SegmentEditorPanel({
     if (!video) return;
 
     const handleTimeUpdate = () => {
+      // Note: currentTime is now managed by usePlayheadSync hook for smooth updates
       const currentMs = video.currentTime * 1000;
-      setCurrentTime(video.currentTime);
 
       // Skip processing if we're in the middle of a jump
       if (isJumpingRef.current) return;
@@ -381,12 +388,13 @@ export function SegmentEditorPanel({
               videoId={videoId}
               videoPath={videoPath}
               durationMs={totalDuration * 1000}
-              currentTimeMs={currentTime * 1000}
+              currentTimeMs={currentTimeMs}
               onSeek={(ms) => {
                 if (videoRef.current) {
                   videoRef.current.currentTime = ms / 1000;
                 }
               }}
+              enablePlayheadTransition={isTransitioning}
             />
           </div>
         </CardContent>

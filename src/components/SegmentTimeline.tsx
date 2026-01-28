@@ -27,6 +27,8 @@ interface SegmentTimelineProps {
   currentTimeMs: number;
   onSeek: (ms: number) => void;
   className?: string;
+  /** Enable smooth CSS transitions on playhead (during playback) */
+  enablePlayheadTransition?: boolean;
 }
 
 export function SegmentTimeline({
@@ -36,11 +38,13 @@ export function SegmentTimeline({
   currentTimeMs,
   onSeek,
   className,
+  enablePlayheadTransition = false,
 }: SegmentTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(800);
   const [compressedView, setCompressedView] = useState(false);
   const prevCompressedViewRef = useRef(compressedView);
+  const hasInitializedFitRef = useRef(false);
 
   // Waveform data
   const { rawData: waveformRawData, loading: waveformLoading } = useWaveform(
@@ -154,6 +158,18 @@ export function SegmentTimeline({
     return () => observer.disconnect();
   }, []);
 
+  // Auto-fit to view on initial mount when we have container width and duration
+  useEffect(() => {
+    if (!hasInitializedFitRef.current && containerWidth > 0 && durationMs > 0) {
+      hasInitializedFitRef.current = true;
+      // Calculate viewport width (container minus label column)
+      const viewportWidth = containerWidth - LABEL_COLUMN_WIDTH;
+      if (viewportWidth > 0) {
+        fitToView(durationMs, viewportWidth);
+      }
+    }
+  }, [containerWidth, durationMs, fitToView]);
+
   // Sync viewport when switching between full and compressed view
   useEffect(() => {
     const wasCompressed = prevCompressedViewRef.current;
@@ -252,8 +268,9 @@ export function SegmentTimeline({
   }, [effectivePlayheadMs, zoomLevel, viewportStartMs, containerWidth, scrollTo]);
 
   const handleFitToView = useCallback(() => {
-    fitToView(durationMs);
-  }, [fitToView, durationMs]);
+    const viewportWidth = containerWidth - LABEL_COLUMN_WIDTH;
+    fitToView(durationMs, viewportWidth > 0 ? viewportWidth : undefined);
+  }, [fitToView, durationMs, containerWidth]);
 
   const handleResizeSegment = useCallback(
     (id: string, field: "startMs" | "endMs", value: number) => {
@@ -430,6 +447,7 @@ export function SegmentTimeline({
           playheadMs={effectivePlayheadMs}
           zoomLevel={zoomLevel}
           viewportStartMs={viewportStartMs}
+          enableTransition={enablePlayheadTransition}
         />
       </div>
     </div>
