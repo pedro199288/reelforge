@@ -224,12 +224,18 @@ export function SegmentEditorPanel({
       const msToEnd = currentSegment.endMs - currentTimeMs;
       const LOOKAHEAD_MS = 17; // ~1 frame at 60fps - jump just before hitting the gap
 
+      // DEBUG: Log when approaching segment end
+      if (msToEnd <= 100 && msToEnd > 0) {
+        console.log(`[Preview] msToEnd=${msToEnd.toFixed(1)} currentTimeMs=${currentTimeMs.toFixed(1)} segmentEndMs=${currentSegment.endMs} videoTime=${(video.currentTime * 1000).toFixed(1)}`);
+      }
+
       if (msToEnd <= LOOKAHEAD_MS && msToEnd > 0) {
         // About to exit this segment - find and jump to next
         const nextSegment = enabledSegments.find(
           (s) => s.startMs > currentSegment.endMs
         );
         if (nextSegment) {
+          console.log(`[Preview] JUMP! from ${currentTimeMs.toFixed(1)} to ${nextSegment.startMs}`);
           performJump(nextSegment.startMs / 1000);
         } else {
           // No more segments - pause at end
