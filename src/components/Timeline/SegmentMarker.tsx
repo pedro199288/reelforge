@@ -32,15 +32,12 @@ export function SegmentMarker({
   // Calculate pixels per millisecond based on zoom level
   const pxPerMs = (100 * zoomLevel) / 1000;
 
-  const baseX = (segment.startMs - viewportStartMs) * pxPerMs;
+  // Use actual calculated positions - no artificial expansion
+  const x = (segment.startMs - viewportStartMs) * pxPerMs;
   const actualWidth = (segment.endMs - segment.startMs) * pxPerMs;
-  const width = Math.max(actualWidth, 20); // Minimum 20px width for visibility
-  const isCompressedDisplay = actualWidth < 20; // Segment is visually compressed
-
-  // When segment is expanded to minimum width, expand LEFT so the RIGHT edge
-  // (endMs) stays aligned with the playhead. This is critical for preview mode.
-  const widthExpansion = width - actualWidth;
-  const x = baseX - widthExpansion; // Shift left by the expansion amount
+  // Keep minimum width for clickability, but this is the VISUAL width only
+  const width = Math.max(actualWidth, 4); // Minimum 4px for clickability
+  const isCompressedDisplay = actualWidth < 20; // Mark as compressed for visual hint
 
   // Handle drag start
   const handlePointerDown = useCallback(
@@ -165,6 +162,26 @@ export function SegmentMarker({
           onPointerUp={handlePointerUp}
         />
       )}
+
+      {/* DEBUG MARKERS - Comment out the block below to hide */}
+      {/* START DEBUG MARKERS */}
+      {segment.enabled && (
+        <>
+          {/* Pink marker at startMs (left edge) */}
+          <div
+            className="absolute top-0 bottom-0 w-0.5 bg-pink-500 z-50 pointer-events-none"
+            style={{ left: 0 }}
+            title={`startMs: ${segment.startMs}ms`}
+          />
+          {/* Yellow marker at endMs (right edge) */}
+          <div
+            className="absolute top-0 bottom-0 w-0.5 bg-yellow-400 z-50 pointer-events-none"
+            style={{ left: actualWidth }}
+            title={`endMs: ${segment.endMs}ms (width: ${actualWidth.toFixed(1)}px)`}
+          />
+        </>
+      )}
+      {/* END DEBUG MARKERS */}
 
     </div>
   );
