@@ -45,6 +45,9 @@ export function SegmentTimeline({
   const [compressedView, setCompressedView] = useState(false);
   const prevCompressedViewRef = useRef(compressedView);
   const hasInitializedFitRef = useRef(false);
+  // Track user scroll interaction to disable auto-scroll temporarily
+  const userScrolledRef = useRef(false);
+  const userScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Waveform data
   const { rawData: waveformRawData, loading: waveformLoading } = useWaveform(
@@ -158,6 +161,15 @@ export function SegmentTimeline({
     return () => observer.disconnect();
   }, []);
 
+  // Cleanup user scroll timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (userScrollTimeoutRef.current) {
+        clearTimeout(userScrollTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Auto-fit to view on initial mount when we have container width and duration
   useEffect(() => {
     if (!hasInitializedFitRef.current && containerWidth > 0 && durationMs > 0) {
@@ -225,24 +237,54 @@ export function SegmentTimeline({
     return result;
   }, [waveformRawData, zoomLevel, viewportStartMs, durationMs, containerWidth]);
 
-  // Handle horizontal scroll
+  // Handle horizontal scroll - mark user interaction to disable auto-scroll
+  const markUserScrolled = useCallback(() => {
+    userScrolledRef.current = true;
+    // Clear any existing timeout
+    if (userScrollTimeoutRef.current) {
+      clearTimeout(userScrollTimeoutRef.current);
+    }
+    // Reset after 2 seconds of no interaction
+    userScrollTimeoutRef.current = setTimeout(() => {
+      userScrolledRef.current = false;
+    }, 2000);
+  }, []);
+
+  // Native wheel handler for proper preventDefault with passive: false
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleNativeWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        // Prevent browser zoom/scroll when using ctrl+wheel for timeline zoom
+        e.preventDefault();
+      }
+    };
+
+    container.addEventListener("wheel", handleNativeWheel, { passive: false });
+    return () => container.removeEventListener("wheel", handleNativeWheel);
+  }, []);
+
+  // React wheel handler for state updates
   const handleWheel = useCallback(
     (e: React.WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         // Zoom with ctrl/cmd + scroll
-        e.preventDefault();
         const delta = e.deltaY > 0 ? 0.8 : 1.25;
         const newZoom = Math.max(0.1, Math.min(10, zoomLevel * delta));
         setZoomLevel(newZoom);
-      } else {
-        // Pan horizontally
+        markUserScrolled();
+      } else if (e.deltaX !== 0) {
+        // Pan horizontally (trackpad or shift+wheel)
         const pxPerMs = getPxPerMs(zoomLevel);
         const deltaMs = e.deltaX / pxPerMs;
         const newStart = Math.max(0, viewportStartMs + deltaMs);
         scrollTo(newStart);
+        markUserScrolled();
       }
     },
-    [zoomLevel, viewportStartMs, setZoomLevel, scrollTo]
+    [zoomLevel, viewportStartMs, setZoomLevel, scrollTo, markUserScrolled]
   );
 
   // Handle seek from ruler click
@@ -253,8 +295,11 @@ export function SegmentTimeline({
     [onSeek, durationMs]
   );
 
-  // Auto-scroll to keep playhead visible
+  // Auto-scroll to keep playhead visible (disabled during user interaction)
   useEffect(() => {
+    // Skip auto-scroll if user recently scrolled manually
+    if (userScrolledRef.current) return;
+
     const pxPerMs = getPxPerMs(zoomLevel);
     const visibleDurationMs = containerWidth / pxPerMs;
     // Use effective playhead position for proper scrolling in compressed view
@@ -269,8 +314,9 @@ export function SegmentTimeline({
 
   const handleFitToView = useCallback(() => {
     const viewportWidth = containerWidth - LABEL_COLUMN_WIDTH;
-    fitToView(durationMs, viewportWidth > 0 ? viewportWidth : undefined);
-  }, [fitToView, durationMs, containerWidth]);
+    // Use effective duration (compressed or full) for proper fit
+    fitToView(effectiveDurationMs, viewportWidth > 0 ? viewportWidth : undefined);
+  }, [fitToView, effectiveDurationMs, containerWidth]);
 
   const handleResizeSegment = useCallback(
     (id: string, field: "startMs" | "endMs", value: number) => {
