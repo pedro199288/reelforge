@@ -24,6 +24,52 @@ import {
   calculateScriptCoverage,
 } from "./script-matcher";
 import { scoreSegments, selectByScore } from "./scorer";
+import { groupSimilarPhrases, mergeCaptions, type PhraseGroup } from "../takes/similarity";
+
+/**
+ * Builds a map of segment ID → take number from phrase groups
+ *
+ * When no script is available, this function uses similarity-based phrase grouping
+ * to detect repetitions. Each group represents a distinct phrase, and takes within
+ * that group are numbered by time order (first occurrence = take 1, second = take 2, etc.)
+ */
+function buildTakeGroupsFromPhrases(
+  phraseGroups: PhraseGroup[],
+  segments: Array<{ id: string; startMs: number; endMs: number }>,
+  captions: Caption[]
+): Map<string, number> {
+  const takeGroups = new Map<string, number>();
+
+  for (const group of phraseGroups) {
+    // Skip groups with only one take (no repetition)
+    if (group.takes.length <= 1) continue;
+
+    // Sort takes by time (they should already be sorted, but ensure it)
+    const sortedTakes = [...group.takes].sort((a, b) => a.startMs - b.startMs);
+
+    // Assign takeNumber to each segment that contains this take
+    for (let i = 0; i < sortedTakes.length; i++) {
+      const take = sortedTakes[i];
+      const takeNumber = i + 1;
+
+      // Find the segment that contains this take
+      const segment = segments.find(
+        (s) => s.startMs <= take.startMs && s.endMs >= take.endMs
+      );
+
+      if (segment) {
+        // Only update if this takeNumber is higher (worse) than existing
+        // This handles cases where a segment might contain multiple takes
+        const existing = takeGroups.get(segment.id) ?? 1;
+        if (takeNumber > existing) {
+          takeGroups.set(segment.id, takeNumber);
+        }
+      }
+    }
+  }
+
+  return takeGroups;
+}
 
 /**
  * Options for the preselection process
@@ -41,11 +87,17 @@ export interface PreselectOptions {
 
 /**
  * Calculates preselection statistics
+ *
+ * @param segments - All preselected segments
+ * @param script - Optional script text
+ * @param scriptMatches - Script matching results (if script was provided)
+ * @param similarityRepetitions - Number of repetitions detected via similarity (when no script)
  */
 function calculateStats(
   segments: PreselectedSegment[],
   script: string | undefined,
-  scriptMatches: ReturnType<typeof matchSegmentsToScript> | undefined
+  scriptMatches: ReturnType<typeof matchSegmentsToScript> | undefined,
+  similarityRepetitions = 0
 ): PreselectionStats {
   const selected = segments.filter((s) => s.enabled);
   const selectedIds = new Set(selected.map((s) => s.id));
@@ -71,11 +123,12 @@ function calculateStats(
     );
   }
 
-  // Count repetitions removed
-  const repetitionsRemoved = scriptMatches
+  // Count repetitions removed (from script matches OR from similarity detection)
+  const scriptRepetitions = scriptMatches
     ? scriptMatches.filter((m) => m.isRepetition && !selectedIds.has(m.segmentId))
         .length
     : 0;
+  const repetitionsRemoved = scriptRepetitions + similarityRepetitions;
 
   // Calculate average score
   const averageScore =
@@ -177,8 +230,29 @@ export async function preselectSegments(
     ? matchSegmentsToScript(segmentsWithIds, captions, script!)
     : undefined;
 
-  // Score all segments
-  const scores = scoreSegments(segmentsWithIds, captions, script, config);
+  // Build take groups from similarity-based phrase detection when no script is available
+  let takeGroups: Map<string, number> | undefined;
+  let repetitionsFromSimilarity = 0;
+
+  if (!hasScript && captions.length > 0) {
+    // Merge captions to form longer phrases for better similarity matching
+    const mergedCaptions = mergeCaptions(captions, 500);
+
+    // Detect repeated phrases using similarity matching (lower threshold to catch more variations)
+    const phraseGroups = groupSimilarPhrases(mergedCaptions, {
+      threshold: 0.65, // Lowered from 0.8 to catch more natural variations
+      minPhraseLength: 10,
+    });
+
+    // Build map of segment ID → take number
+    takeGroups = buildTakeGroupsFromPhrases(phraseGroups, segmentsWithIds, captions);
+
+    // Count repetitions for stats
+    repetitionsFromSimilarity = Array.from(takeGroups.values()).filter((t) => t > 1).length;
+  }
+
+  // Score all segments (passing takeGroups for no-script repetition detection)
+  const scores = scoreSegments(segmentsWithIds, captions, script, config, takeGroups);
 
   // Select segments based on scores
   const selectedIds = selectByScore(scores, config);
@@ -196,8 +270,8 @@ export async function preselectSegments(
     };
   });
 
-  // Calculate stats
-  const stats = calculateStats(segments, script, scriptMatches);
+  // Calculate stats (passing similarity-based repetitions for no-script case)
+  const stats = calculateStats(segments, script, scriptMatches, repetitionsFromSimilarity);
 
   return {
     segments,
@@ -255,8 +329,22 @@ export async function reapplyPreselection(
     ? matchSegmentsToScript(existingSegments, captions, script!)
     : undefined;
 
-  // Score segments
-  const scores = scoreSegments(existingSegments, captions, script, config);
+  // Build take groups from similarity-based phrase detection when no script is available
+  let takeGroups: Map<string, number> | undefined;
+  let repetitionsFromSimilarity = 0;
+
+  if (!hasScript && captions.length > 0) {
+    const mergedCaptions = mergeCaptions(captions, 500);
+    const phraseGroups = groupSimilarPhrases(mergedCaptions, {
+      threshold: 0.65,
+      minPhraseLength: 10,
+    });
+    takeGroups = buildTakeGroupsFromPhrases(phraseGroups, existingSegments, captions);
+    repetitionsFromSimilarity = Array.from(takeGroups.values()).filter((t) => t > 1).length;
+  }
+
+  // Score segments (passing takeGroups for no-script repetition detection)
+  const scores = scoreSegments(existingSegments, captions, script, config, takeGroups);
 
   // Select based on scores
   const selectedIds = selectByScore(scores, config);
@@ -274,7 +362,7 @@ export async function reapplyPreselection(
     };
   });
 
-  const stats = calculateStats(segments, script, scriptMatches);
+  const stats = calculateStats(segments, script, scriptMatches, repetitionsFromSimilarity);
 
   return {
     segments,

@@ -59,7 +59,7 @@ export interface GroupingOptions {
 }
 
 const DEFAULT_OPTIONS: Required<GroupingOptions> = {
-  threshold: 0.8,
+  threshold: 0.65, // Lowered from 0.8 to catch more natural speech variations
   minPhraseLength: 10,
   maxGapMs: 30000,
 };

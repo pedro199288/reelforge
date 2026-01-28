@@ -140,9 +140,19 @@ function generateScoreReason(
     }
   }
 
-  // Take order
-  if (isRepetition) {
-    reasons.push(`toma ${takeNumber}${takeNumber > 1 ? " (repeticion)" : ""}`);
+  // Take order - handle both script-based and similarity-based repetition
+  if (takeNumber > 1) {
+    // Check if this is from similarity detection (no script) or script matching
+    if (config.weights.scriptMatch === 0) {
+      // No-script mode: repetition detected via similarity
+      reasons.push(`repeticion detectada (toma ${takeNumber})`);
+    } else if (isRepetition) {
+      // Script mode: repetition detected via script matching
+      reasons.push(`toma ${takeNumber} (repeticion)`);
+    }
+  } else if (isRepetition) {
+    // First take but marked as repetition (edge case)
+    reasons.push("toma 1");
   }
 
   // Duration
@@ -228,13 +238,15 @@ function scoreSegment(
  * @param captions - Transcription captions
  * @param script - Optional script text for matching
  * @param config - Preselection configuration
+ * @param takeGroups - Optional map of segment ID → take number (for no-script repetition detection)
  * @returns Array of segment scores
  */
 export function scoreSegments(
   segments: Array<InputSegment & { id: string }>,
   captions: Caption[],
   script: string | undefined,
-  config: PreselectionConfig
+  config: PreselectionConfig,
+  takeGroups?: Map<string, number>
 ): SegmentScore[] {
   // Match segments to script if available
   const scriptMatches = script
@@ -254,9 +266,14 @@ export function scoreSegments(
 
   for (const segment of segments) {
     const match = matchMap.get(segment.id);
-    const takeNumber = scriptMatches
-      ? getSegmentTakeNumber(segment.id, scriptMatches)
-      : 1;
+
+    // Determine take number: from script matches OR from similarity-based takeGroups
+    let takeNumber = 1;
+    if (scriptMatches) {
+      takeNumber = getSegmentTakeNumber(segment.id, scriptMatches);
+    } else if (takeGroups) {
+      takeNumber = takeGroups.get(segment.id) ?? 1;
+    }
 
     const score = scoreSegment(segment, captions, match, config, takeNumber);
     scores.push(score);
