@@ -372,9 +372,9 @@ export function SegmentTimeline({
           </Button>
           <Slider
             value={[zoomLevel]}
-            min={0.1}
+            min={0.01}
             max={5}
-            step={0.1}
+            step={0.01}
             className="w-24"
             onValueChange={([value]) => setZoomLevel(value)}
           />
