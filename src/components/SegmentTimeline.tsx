@@ -42,7 +42,7 @@ export function SegmentTimeline({
   enablePlayheadTransition = false,
 }: SegmentTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(800);
+  const [containerWidth, setContainerWidth] = useState(0);
   const [compressedView, setCompressedView] = useState(false);
   const prevCompressedViewRef = useRef(compressedView);
   const hasInitializedFitRef = useRef(false);
@@ -360,8 +360,8 @@ export function SegmentTimeline({
     [videoId, addSegment]
   );
 
-  // Viewport width for components
-  const viewportWidthPx = containerWidth - LABEL_COLUMN_WIDTH;
+  // Viewport width for components (ensure non-negative while measuring)
+  const viewportWidthPx = Math.max(0, containerWidth - LABEL_COLUMN_WIDTH);
 
   return (
     <div className={cn("flex flex-col border rounded-lg bg-background", className)}>

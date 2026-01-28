@@ -1,5 +1,5 @@
 import { spring, interpolate, Easing } from "remotion";
-import type { EntranceAnimation } from "@/store/subtitles";
+import type { EntranceAnimation } from "../../../store/subtitles";
 
 interface EntranceConfig {
   frame: number;
@@ -122,7 +122,7 @@ function getPopEntrance(frame: number, fps: number): EntranceStyles {
 
 function getTypewriterEntrance(
   frame: number,
-  durationFrames: number
+  _durationFrames: number
 ): EntranceStyles {
   // For typewriter, the main container is always visible
   // Individual character reveal is handled at the token level

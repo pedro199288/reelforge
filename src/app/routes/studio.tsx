@@ -2,14 +2,21 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Player, type PlayerRef } from "@remotion/player";
-import { CaptionedVideoForPlayer } from "@/CaptionedVideo/ForPlayer";
+import { CaptionedVideoForPlayer } from "@/remotion-compositions/CaptionedVideo/ForPlayer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Video } from "@/components/VideoList";
-import { useSubtitleStore, HIGHLIGHT_COLORS, AVAILABLE_FONTS } from "@/store/subtitles";
-import { useTimelineShortcuts, TIMELINE_SHORTCUTS } from "@/hooks/useTimelineShortcuts";
+import {
+  useSubtitleStore,
+  HIGHLIGHT_COLORS,
+  AVAILABLE_FONTS,
+} from "@/store/subtitles";
+import {
+  useTimelineShortcuts,
+  TIMELINE_SHORTCUTS,
+} from "@/hooks/useTimelineShortcuts";
 import { useHotkeys } from "react-hotkeys-hook";
 import { Timeline } from "@/components/Timeline";
 import {
@@ -18,7 +25,12 @@ import {
   usePlayhead,
   useIsPlaying,
 } from "@/store/timeline";
-import type { AlignedEvent, ZoomEvent, HighlightEvent, Caption } from "@/core/script/align";
+import type {
+  AlignedEvent,
+  ZoomEvent,
+  HighlightEvent,
+  Caption,
+} from "@/core/script/align";
 
 interface VideoManifest {
   videos: Video[];
@@ -47,10 +59,15 @@ function StudioPage() {
   const isSyncingFromPlayer = useRef(false);
   const isSyncingToPlayer = useRef(false);
 
-  const { highlightColor, setHighlightColor, fontFamily, setFontFamily } = useSubtitleStore();
+  const { highlightColor, setHighlightColor, fontFamily, setFontFamily } =
+    useSubtitleStore();
 
   // Timeline store integration - use store as single source of truth for playback
-  const { setPlayhead, play: timelinePlay, pause: timelinePause } = useTimelineStore();
+  const {
+    setPlayhead,
+    play: timelinePlay,
+    pause: timelinePause,
+  } = useTimelineStore();
   const timelinePlayhead = usePlayhead();
   const isPlaying = useIsPlaying(); // Single source of truth for play state
   const timeline = useVideoTimeline(selectedVideo?.id ?? "");
@@ -300,7 +317,14 @@ function StudioPage() {
       player.removeEventListener("pause", onPause);
       player.removeEventListener("seeked", onSeeked);
     };
-  }, [selectedVideo, videoDuration, fps, timelinePlay, timelinePause, setPlayhead]);
+  }, [
+    selectedVideo,
+    videoDuration,
+    fps,
+    timelinePlay,
+    timelinePause,
+    setPlayhead,
+  ]);
 
   const handleToggle = () => playerRef.current?.toggle();
   const handleSeekStart = () => playerRef.current?.seekTo(0);
@@ -390,7 +414,8 @@ function StudioPage() {
                   src: `/${selectedVideo.filename}`,
                   highlightColor,
                   fontFamily,
-                  timelineEvents: timelineEvents.length > 0 ? timelineEvents : undefined,
+                  timelineEvents:
+                    timelineEvents.length > 0 ? timelineEvents : undefined,
                 }}
                 durationInFrames={durationInFrames}
                 compositionWidth={1080}

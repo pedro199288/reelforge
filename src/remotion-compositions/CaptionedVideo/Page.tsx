@@ -1,18 +1,14 @@
 import React from "react";
-import {
-  AbsoluteFill,
-  useCurrentFrame,
-  useVideoConfig,
-} from "remotion";
-import { type FontId } from "../load-font";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
+import { type FontId } from "../../load-font";
 import { fitText } from "@remotion/layout-utils";
 import { TikTokPage } from "@remotion/captions";
-import {
-  useSubtitleStyle,
-  type SubtitleStyle,
-} from "../store/subtitles";
+import { useSubtitleStyle, type SubtitleStyle } from "../../store/subtitles";
 import { getEntranceStyles } from "./animations/entrance";
-import { getHighlightStyles, combineHighlightWithBase } from "./animations/highlight";
+import {
+  getHighlightStyles,
+  combineHighlightWithBase,
+} from "./animations/highlight";
 
 interface PageProps {
   readonly enterProgress: number;
@@ -51,7 +47,9 @@ export const Page: React.FC<PageProps> = ({
   };
 
   // Calculate entrance animation
-  const entranceFrame = Math.round(enterProgress * fps * (style.entranceDuration / 1000));
+  const entranceFrame = Math.round(
+    enterProgress * fps * (style.entranceDuration / 1000),
+  );
   const entranceStyles = getEntranceStyles(style.entranceAnimation, {
     frame: entranceFrame,
     fps,
@@ -132,7 +130,7 @@ export const Page: React.FC<PageProps> = ({
               intensity: style.highlightIntensity,
               color: style.highlightColor,
             },
-            isActive
+            isActive,
           );
 
           const tokenBaseStyle: React.CSSProperties = {
@@ -141,7 +139,10 @@ export const Page: React.FC<PageProps> = ({
             color: isActive ? style.highlightColor : style.textColor,
           };
 
-          const tokenStyle = combineHighlightWithBase(tokenBaseStyle, highlightStyles);
+          const tokenStyle = combineHighlightWithBase(
+            tokenBaseStyle,
+            highlightStyles,
+          );
 
           return (
             <span key={t.fromMs} style={tokenStyle}>

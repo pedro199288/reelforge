@@ -12,10 +12,10 @@ import {
   useVideoConfig,
 } from "remotion";
 import SubtitlePage from "./SubtitlePage";
-import { loadFont, type FontId, DEFAULT_FONT } from "../load-font";
+import { loadFont, type FontId, DEFAULT_FONT } from "../../load-font";
 import { Caption, createTikTokStyleCaptions } from "@remotion/captions";
 import { ZoomLayer } from "./ZoomLayer";
-import type { AlignedEvent } from "../core/script/align";
+import type { AlignedEvent } from "../../core/script/align";
 
 const SWITCH_CAPTIONS_EVERY_MS = 1200;
 
@@ -115,7 +115,12 @@ export const CaptionedVideoForPlayer: React.FC<{
             from={subtitleStartFrame}
             durationInFrames={durationInFrames}
           >
-            <SubtitlePage key={index} page={page} highlightColor={highlightColor} fontFamily={fontFamily} />;
+            <SubtitlePage
+              key={index}
+              page={page}
+              highlightColor={highlightColor}
+              fontFamily={fontFamily}
+            />
           </Sequence>
         );
       })}

@@ -13,11 +13,11 @@ import {
 import { z } from "zod";
 import SubtitlePage from "./SubtitlePage";
 import { getVideoMetadata } from "@remotion/media-utils";
-import { loadFont, type FontId, DEFAULT_FONT } from "../load-font";
+import { loadFont, type FontId, DEFAULT_FONT } from "../../load-font";
 import { NoCaptionFile } from "./NoCaptionFile";
 import { Caption, createTikTokStyleCaptions } from "@remotion/captions";
 import { ZoomLayer } from "./ZoomLayer";
-import type { AlignedEvent } from "../core/script/align";
+import type { AlignedEvent } from "../../core/script/align";
 
 export type SubtitleProp = {
   startInSeconds: number;
@@ -115,13 +115,23 @@ export const CaptionedVideo: React.FC<{
     loadAll();
 
     const c1 = watchStaticFile(subtitlesFile, fetchSubtitles);
-    const c2 = getFileExists(zoomFile) ? watchStaticFile(zoomFile, fetchZoomEvents) : null;
+    const c2 = getFileExists(zoomFile)
+      ? watchStaticFile(zoomFile, fetchZoomEvents)
+      : null;
 
     return () => {
       c1.cancel();
       c2?.cancel();
     };
-  }, [fetchSubtitles, fetchZoomEvents, src, subtitlesFile, zoomFile, continueRender, handle]);
+  }, [
+    fetchSubtitles,
+    fetchZoomEvents,
+    src,
+    subtitlesFile,
+    zoomFile,
+    continueRender,
+    handle,
+  ]);
 
   const { pages } = useMemo(() => {
     return createTikTokStyleCaptions({
@@ -158,7 +168,12 @@ export const CaptionedVideo: React.FC<{
             from={subtitleStartFrame}
             durationInFrames={durationInFrames}
           >
-            <SubtitlePage key={index} page={page} highlightColor={highlightColor} fontFamily={fontFamily} />;
+            <SubtitlePage
+              key={index}
+              page={page}
+              highlightColor={highlightColor}
+              fontFamily={fontFamily}
+            />
           </Sequence>
         );
       })}

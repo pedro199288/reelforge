@@ -7,7 +7,11 @@ import {
   useVideoConfig,
   Easing,
 } from "remotion";
-import type { ZoomEvent, HighlightEvent, AlignedEvent } from "../core/script/align";
+import type {
+  ZoomEvent,
+  HighlightEvent,
+  AlignedEvent,
+} from "../../core/script/align";
 
 export interface ZoomLayerProps {
   events: AlignedEvent[];
@@ -37,7 +41,12 @@ export const ZoomLayer: React.FC<ZoomLayerProps> = ({ events, children }) => {
         // Multiply scales for overlapping zooms
         totalScale *= zoomScale;
       } else if (event.type === "highlight") {
-        const highlightScale = calculateHighlightScale(event, currentTimeMs, fps, frame);
+        const highlightScale = calculateHighlightScale(
+          event,
+          currentTimeMs,
+          fps,
+          frame,
+        );
         totalScale *= highlightScale;
       }
     }
@@ -97,7 +106,8 @@ function calculateZoomScale(
       return 1 + (maxScale - 1) * zoomIn;
     } else {
       // Smooth zoom out
-      const outProgress = (localFrame - peakFrame) / (eventDurationFrames - peakFrame + fps);
+      const outProgress =
+        (localFrame - peakFrame) / (eventDurationFrames - peakFrame + fps);
       const zoomOut = interpolate(outProgress, [0, 1], [maxScale, 1], {
         easing: Easing.out(Easing.cubic),
         extrapolateRight: "clamp",
@@ -117,7 +127,8 @@ function calculateZoomScale(
       });
     } else {
       // Slow zoom out
-      const outProgress = (localFrame - holdFrames) / (eventDurationFrames - holdFrames + fps);
+      const outProgress =
+        (localFrame - holdFrames) / (eventDurationFrames - holdFrames + fps);
       return interpolate(outProgress, [0, 1], [maxScale, 1], {
         easing: Easing.out(Easing.quad),
         extrapolateRight: "clamp",
@@ -140,7 +151,10 @@ function calculateHighlightScale(
   const transitionFrames = Math.floor(fps * 0.15); // 150ms transition
 
   // Not active
-  if (frame < eventStartFrame - transitionFrames || frame > eventEndFrame + transitionFrames) {
+  if (
+    frame < eventStartFrame - transitionFrames ||
+    frame > eventEndFrame + transitionFrames
+  ) {
     return 1;
   }
 
@@ -148,7 +162,8 @@ function calculateHighlightScale(
 
   if (frame < eventStartFrame) {
     // Zoom in before word
-    const progress = (frame - (eventStartFrame - transitionFrames)) / transitionFrames;
+    const progress =
+      (frame - (eventStartFrame - transitionFrames)) / transitionFrames;
     return interpolate(progress, [0, 1], [1, maxScale], {
       easing: Easing.out(Easing.back(1.5)),
     });

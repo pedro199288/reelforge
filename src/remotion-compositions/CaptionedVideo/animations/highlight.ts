@@ -1,5 +1,5 @@
 import { spring, interpolate } from "remotion";
-import type { HighlightEffect } from "@/store/subtitles";
+import type { HighlightEffect } from "../../../store/subtitles";
 
 interface HighlightConfig {
   frame: number;

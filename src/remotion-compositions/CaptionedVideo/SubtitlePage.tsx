@@ -7,8 +7,8 @@ import {
 } from "remotion";
 import { Page } from "./Page";
 import { TikTokPage } from "@remotion/captions";
-import type { FontId } from "../load-font";
-import { useSubtitleStyle } from "../store/subtitles";
+import type { FontId } from "../../load-font";
+import { useSubtitleStyle } from "../../store/subtitles";
 
 const SubtitlePage: React.FC<{
   readonly page: TikTokPage;
@@ -20,7 +20,10 @@ const SubtitlePage: React.FC<{
   const style = useSubtitleStyle();
 
   // Calculate entrance duration in frames based on store config
-  const durationInFrames = Math.max(3, Math.round((style.entranceDuration / 1000) * fps));
+  const durationInFrames = Math.max(
+    3,
+    Math.round((style.entranceDuration / 1000) * fps),
+  );
 
   const enter = spring({
     frame,

@@ -23,7 +23,7 @@ import { AbsoluteFill } from "remotion";
 // Estos son los hooks más importantes de Remotion. Todo se basa en frames.
 // Si tu video es de 30fps, el frame 30 = segundo 1, frame 60 = segundo 2, etc.
 // ----------------------------------------------------------------------------
-// import { useCurrentFrame, useVideoConfig } from "remotion";
+import { useCurrentFrame, useVideoConfig } from "remotion";
 
 // ============================================================================
 // PASO 4: ANIMACIONES CON SPRING
@@ -33,7 +33,7 @@ import { AbsoluteFill } from "remotion";
 // spring() simula un resorte físico. Produce valores de 0 a ~1 con rebote
 // natural. Es perfecto para animaciones que deben sentirse "vivas".
 // ----------------------------------------------------------------------------
-// import { spring } from "remotion";
+import { spring } from "remotion";
 
 // ============================================================================
 // PASO 6: INTERPOLACIÓN AVANZADA
@@ -44,7 +44,7 @@ import { AbsoluteFill } from "remotion";
 // a otro. Por ejemplo: interpolate(0.5, [0, 1], [0, 100]) = 50
 // Es la función más versátil para crear animaciones en Remotion.
 // ----------------------------------------------------------------------------
-// import { interpolate, Easing } from "remotion";
+import { interpolate, Easing } from "remotion";
 
 // ============================================================================
 // PASO 9: SECUENCIAS
@@ -54,7 +54,7 @@ import { AbsoluteFill } from "remotion";
 // <Sequence from={30}> hace que su contenido aparezca desde el frame 30.
 // Es como una línea de tiempo de edición de video.
 // ----------------------------------------------------------------------------
-// import { Sequence } from "remotion";
+import { Sequence } from "remotion";
 
 // ============================================================================
 // PASO 12: ARCHIVOS ESTÁTICOS
@@ -64,7 +64,13 @@ import { AbsoluteFill } from "remotion";
 // staticFile("video.mp4") devuelve la URL correcta para assets.
 // Los archivos deben estar en la carpeta /public del proyecto.
 // ----------------------------------------------------------------------------
-// import { staticFile, Video, Img } from "remotion";
+import { staticFile, Video, Img } from "remotion";
+
+// Este tutorial usa muchos imports "más adelante" en bloques comentados.
+// Para que `tsc` (noUnusedLocals) no falle, los marcamos como usados.
+void staticFile;
+void Video;
+void Img;
 
 export const Tutorial: React.FC = () => {
   // ==========================================================================
@@ -78,8 +84,8 @@ export const Tutorial: React.FC = () => {
   //
   // Prueba: descomenta y observa el número que aparece en el video.
   // --------------------------------------------------------------------------
-  // const frame = useCurrentFrame();
-  // const { fps, durationInFrames, width, height } = useVideoConfig();
+  const frame = useCurrentFrame();
+  const { fps, durationInFrames, width, height } = useVideoConfig();
 
   // ==========================================================================
   // PASO 3: CALCULAR PROGRESO
@@ -89,7 +95,7 @@ export const Tutorial: React.FC = () => {
   // progress = 0 al inicio, 0.5 a la mitad, 1 al final
   // Esto es útil para crear animaciones que dependan del tiempo total.
   // --------------------------------------------------------------------------
-  // const progress = frame / durationInFrames;
+  const progress = frame / durationInFrames;
 
   // ==========================================================================
   // PASO 5: ANIMACIÓN CON SPRING
@@ -103,13 +109,13 @@ export const Tutorial: React.FC = () => {
   //
   // Experimenta cambiando damping: 5 (mucho rebote) vs 200 (sin rebote)
   // --------------------------------------------------------------------------
-  // const scale = spring({
-  //   frame,
-  //   fps,
-  //   config: {
-  //     damping: 15, // Prueba: 5, 15, 50, 200
-  //   },
-  // });
+  const scale = spring({
+    frame,
+    fps,
+    config: {
+      damping: 50, // Prueba: 5, 15, 50, 200
+    },
+  });
 
   // ==========================================================================
   // PASO 7: ANIMACIÓN DE OPACIDAD CON INTERPOLATE
@@ -123,14 +129,14 @@ export const Tutorial: React.FC = () => {
   //
   // extrapolateRight: "clamp" evita que pase de 1
   // --------------------------------------------------------------------------
-  // const opacity = interpolate(
-  //   frame,
-  //   [0, 30], // Rango de entrada: frames 0-30
-  //   [0, 1],  // Rango de salida: opacidad 0-1
-  //   {
-  //     extrapolateRight: "clamp", // No pasar de 1
-  //   }
-  // );
+  const opacity = interpolate(
+    frame,
+    [0, 30], // Rango de entrada: frames 0-30
+    [0, 1], // Rango de salida: opacidad 0-1
+    {
+      extrapolateRight: "clamp", // No pasar de 1
+    },
+  );
 
   // ==========================================================================
   // PASO 8: ANIMACIÓN DE ROTACIÓN CON EASING
@@ -145,15 +151,10 @@ export const Tutorial: React.FC = () => {
   //
   // Prueba diferentes easings y observa cómo cambia la sensación.
   // --------------------------------------------------------------------------
-  // const rotation = interpolate(
-  //   frame,
-  //   [0, 60],
-  //   [0, 360],
-  //   {
-  //     easing: Easing.out(Easing.cubic), // Prueba: Easing.linear, Easing.bounce
-  //     extrapolateRight: "clamp",
-  //   }
-  // );
+  const rotation = interpolate(frame, [0, 60], [0, 360], {
+    easing: Easing.out(Easing.bounce), // Prueba: Easing.linear, Easing.bounce
+    extrapolateRight: "clamp",
+  });
 
   return (
     <AbsoluteFill
@@ -172,7 +173,7 @@ export const Tutorial: React.FC = () => {
           Observa cómo el número incrementa mientras el video avanza.
           Esta es la base de TODAS las animaciones en Remotion.
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
+
       <div
         style={{
           position: "absolute",
@@ -186,9 +187,10 @@ export const Tutorial: React.FC = () => {
         <br />
         Tiempo: {(frame / fps).toFixed(2)}s
         <br />
+        Tamaño: {width}×{height}
+        <br />
         Progreso: {(progress * 100).toFixed(1)}%
       </div>
-      */}
 
       {/* ════════════════════════════════════════════════════════════════════
           PASO 3.1: BARRA DE PROGRESO
@@ -198,7 +200,7 @@ export const Tutorial: React.FC = () => {
           Usa la variable 'progress' (0-1) para el ancho de la barra.
           Esta es la forma más simple de animación: frame → estilo.
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
+
       <div
         style={{
           position: "absolute",
@@ -219,7 +221,6 @@ export const Tutorial: React.FC = () => {
           }}
         />
       </div>
-      */}
 
       {/* ════════════════════════════════════════════════════════════════════
           PASO 5.1: CAJA CON ANIMACIÓN SPRING
@@ -229,7 +230,7 @@ export const Tutorial: React.FC = () => {
           transform: `scale(${scale})` aplica el valor del spring (0→1)
           al tamaño de la caja. El rebote hace que se sienta "viva".
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
+
       <div
         style={{
           width: 150,
@@ -239,7 +240,6 @@ export const Tutorial: React.FC = () => {
           transform: `scale(${scale})`,
         }}
       />
-      */}
 
       {/* ════════════════════════════════════════════════════════════════════
           PASO 7.1: TEXTO CON FADE-IN
@@ -249,7 +249,7 @@ export const Tutorial: React.FC = () => {
           opacity va de 0 a 1 durante los primeros 30 frames.
           Combina esto con transform para efectos más complejos.
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
+
       <h1
         style={{
           color: "white",
@@ -261,7 +261,6 @@ export const Tutorial: React.FC = () => {
       >
         Hola Remotion
       </h1>
-      */}
 
       {/* ════════════════════════════════════════════════════════════════════
           PASO 8.1: ELEMENTO CON ROTACIÓN
@@ -271,7 +270,7 @@ export const Tutorial: React.FC = () => {
           La rotación usa Easing.out para que desacelere al final,
           dando una sensación más natural y menos mecánica.
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
+
       <div
         style={{
           position: "absolute",
@@ -283,7 +282,6 @@ export const Tutorial: React.FC = () => {
           transform: `rotate(${rotation}deg)`,
         }}
       />
-      */}
 
       {/* ════════════════════════════════════════════════════════════════════
           PASO 9.1: SECUENCIAS - TIMING
@@ -295,9 +293,11 @@ export const Tutorial: React.FC = () => {
 
           Esto es como una línea de tiempo de edición de video.
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
-      <Sequence from={0} durationInFrames={60}>
-        <AbsoluteFill style={{ justifyContent: "center", alignItems: "center" }}>
+
+      <Sequence durationInFrames={60}>
+        <AbsoluteFill
+          style={{ justifyContent: "center", alignItems: "center" }}
+        >
           <h2 style={{ color: "#ef4444", fontSize: 48 }}>
             Escena 1 (frames 0-60)
           </h2>
@@ -305,7 +305,9 @@ export const Tutorial: React.FC = () => {
       </Sequence>
 
       <Sequence from={60} durationInFrames={60}>
-        <AbsoluteFill style={{ justifyContent: "center", alignItems: "center" }}>
+        <AbsoluteFill
+          style={{ justifyContent: "center", alignItems: "center" }}
+        >
           <h2 style={{ color: "#10b981", fontSize: 48 }}>
             Escena 2 (frames 60-120)
           </h2>
@@ -313,13 +315,14 @@ export const Tutorial: React.FC = () => {
       </Sequence>
 
       <Sequence from={120}>
-        <AbsoluteFill style={{ justifyContent: "center", alignItems: "center" }}>
+        <AbsoluteFill
+          style={{ justifyContent: "center", alignItems: "center" }}
+        >
           <h2 style={{ color: "#8b5cf6", fontSize: 48 }}>
             Escena 3 (frame 120+)
           </h2>
         </AbsoluteFill>
       </Sequence>
-      */}
 
       {/* ════════════════════════════════════════════════════════════════════
           PASO 10: COMPOSICIÓN DE ANIMACIONES
@@ -333,7 +336,7 @@ export const Tutorial: React.FC = () => {
 
           La clave es combinar múltiples valores animados en un transform.
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
+
       <div
         style={{
           width: 200,
@@ -348,7 +351,6 @@ export const Tutorial: React.FC = () => {
           boxShadow: `0 ${interpolate(frame, [0, 30], [0, 20], { extrapolateRight: "clamp" })}px 40px rgba(0,0,0,0.3)`,
         }}
       />
-      */}
 
       {/* ════════════════════════════════════════════════════════════════════
           PASO 11: ANIMACIÓN DE TEXTO PALABRA POR PALABRA
@@ -358,22 +360,18 @@ export const Tutorial: React.FC = () => {
           Usamos el índice de cada palabra para escalonar la animación.
           Cada palabra tiene un delay basado en su posición (i * 5 frames).
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
+
       <div style={{ display: "flex", gap: 20, marginTop: 300 }}>
         {["Aprende", "Remotion", "Paso", "a", "Paso"].map((word, i) => {
           const delay = i * 5; // Cada palabra aparece 5 frames después
-          const wordOpacity = interpolate(
-            frame,
-            [delay, delay + 15],
-            [0, 1],
-            { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-          );
-          const wordY = interpolate(
-            frame,
-            [delay, delay + 15],
-            [30, 0],
-            { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-          );
+          const wordOpacity = interpolate(frame, [delay, delay + 15], [0, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          });
+          const wordY = interpolate(frame, [delay, delay + 15], [30, 0], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          });
           return (
             <span
               key={i}
@@ -390,7 +388,6 @@ export const Tutorial: React.FC = () => {
           );
         })}
       </div>
-      */}
 
       {/* ════════════════════════════════════════════════════════════════════
           PASO 12.1: INCLUIR IMAGEN ESTÁTICA
@@ -400,7 +397,7 @@ export const Tutorial: React.FC = () => {
           staticFile() genera la URL correcta para archivos en /public.
           Asegúrate de tener una imagen en public/images/logo.png
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
+      {/* 
       <Img
         src={staticFile("images/logo.png")}
         style={{
@@ -411,8 +408,7 @@ export const Tutorial: React.FC = () => {
           height: 100,
           opacity: opacity,
         }}
-      />
-      */}
+      /> */}
 
       {/* ════════════════════════════════════════════════════════════════════
           PASO 13: ANIMACIÓN LOOP (CONTINUA)
@@ -422,7 +418,7 @@ export const Tutorial: React.FC = () => {
           El operador módulo (%) crea un loop. frame % 60 va de 0 a 59
           y luego vuelve a empezar. Útil para animaciones infinitas.
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
+
       <div
         style={{
           position: "absolute",
@@ -436,7 +432,6 @@ export const Tutorial: React.FC = () => {
           `,
         }}
       />
-      */}
 
       {/* ════════════════════════════════════════════════════════════════════
           PASO 14: ANIMACIÓN CONDICIONAL
@@ -446,7 +441,7 @@ export const Tutorial: React.FC = () => {
           Aquí el color cambia cada 30 frames usando el frame actual.
           Puedes crear transiciones de escena basadas en el tiempo.
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
+
       <div
         style={{
           position: "absolute",
@@ -457,14 +452,16 @@ export const Tutorial: React.FC = () => {
           borderRadius: 16,
           transform: "translate(-50%, -50%)",
           backgroundColor:
-            frame < 30 ? "#ef4444" :
-            frame < 60 ? "#f59e0b" :
-            frame < 90 ? "#10b981" :
-            "#6366f1",
+            frame < 30
+              ? "#ef4444"
+              : frame < 60
+                ? "#f59e0b"
+                : frame < 90
+                  ? "#10b981"
+                  : "#6366f1",
           transition: "none", // CSS transitions no funcionan en Remotion
         }}
       />
-      */}
 
       {/* ════════════════════════════════════════════════════════════════════
           PASO 15: LAYOUT FLEX ANIMADO
@@ -474,7 +471,7 @@ export const Tutorial: React.FC = () => {
           Array.from crea N elementos. Cada uno tiene un delay diferente.
           Este patrón es muy común para listas y grids animados.
           ──────────────────────────────────────────────────────────────────── */}
-      {/*
+
       <div
         style={{
           position: "absolute",
@@ -504,7 +501,6 @@ export const Tutorial: React.FC = () => {
           );
         })}
       </div>
-      */}
 
       {/* ════════════════════════════════════════════════════════════════════
           ESTADO INICIAL: Mensaje de bienvenida
