@@ -33,6 +33,7 @@ import {
   getTotalDuration,
 } from "../src/core/silence";
 import { cutVideo } from "../src/core/cut";
+import { preselectSegments } from "../src/core/preselection";
 
 const PORT = 3012;
 const CORS_HEADERS = {
@@ -953,7 +954,7 @@ async function handleRequest(req: Request): Promise<Response> {
   // POST /api/pipeline/step - Execute a single pipeline step (SSE)
   if (path === "/api/pipeline/step" && req.method === "POST") {
     const body = await req.json();
-    const { videoId, filename, step, config, selectedSegments } = body as {
+    const { videoId, filename, step, config, selectedSegments, script } = body as {
       videoId: string;
       filename: string;
       step: PipelineStep;
@@ -965,6 +966,7 @@ async function handleRequest(req: Request): Promise<Response> {
         crf?: number;
       };
       selectedSegments?: number[];
+      script?: string;
     };
 
     if (!videoId || !filename || !step) {
@@ -1076,7 +1078,7 @@ async function handleRequest(req: Request): Promise<Response> {
             }
 
             // Generate segments from silences
-            sendEvent("progress", { step, progress: 50, message: "Calculando segmentos basados en silencios..." });
+            sendEvent("progress", { step, progress: 30, message: "Calculando segmentos basados en silencios..." });
             const segments = silencesToSegments(
               silencesResult.silences,
               silencesResult.videoDuration,
@@ -1086,10 +1088,53 @@ async function handleRequest(req: Request): Promise<Response> {
             const editedDuration = getTotalDuration(segments);
             const timeSaved = silencesResult.videoDuration - editedDuration;
 
-            // Note: Preselection is not available without captions (captions come after cut)
-            // The simplified pipeline generates captions after cutting, so preselection
-            // is limited to manual selection or AI-based scoring when script is provided
-            sendEvent("progress", { step, progress: 85, message: "Segmentos generados (selección manual disponible)" });
+            // Convert segments to InputSegment format for preselection
+            const inputSegments = segments.map((s) => ({
+              startMs: s.startTime * 1000,
+              endMs: s.endTime * 1000,
+            }));
+
+            // Try to run preselection with logging when script is available
+            let preselectionData: SegmentsResult["preselection"] | undefined;
+            let preselectionLog = null;
+
+            if (script && script.trim().length > 0) {
+              sendEvent("progress", { step, progress: 50, message: "Ejecutando preselección con guion..." });
+
+              try {
+                const preselectionResult = await preselectSegments(inputSegments, {
+                  captions: [], // No captions available yet in simplified pipeline
+                  script,
+                  videoDurationMs: silencesResult.videoDuration * 1000,
+                  videoId,
+                  collectLogs: true,
+                });
+
+                preselectionData = {
+                  segments: preselectionResult.segments,
+                  stats: preselectionResult.stats,
+                };
+
+                // Save preselection log if available
+                if (preselectionResult.log) {
+                  preselectionLog = preselectionResult.log;
+                  sendEvent("progress", { step, progress: 75, message: "Guardando logs de preselección..." });
+                  saveStepResult(videoId, "preselection-logs", {
+                    log: preselectionLog,
+                    savedAt: new Date().toISOString(),
+                  });
+                  updateStepStatus(videoId, "preselection-logs", {
+                    status: "completed",
+                    completedAt: new Date().toISOString(),
+                  });
+                }
+              } catch (err) {
+                console.error("Preselection failed:", err);
+                sendEvent("progress", { step, progress: 75, message: "Preselección falló, continuando sin ella..." });
+              }
+            } else {
+              sendEvent("progress", { step, progress: 75, message: "Segmentos generados (sin guion para preselección)" });
+            }
 
             sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
             const result: SegmentsResult = {
@@ -1101,6 +1146,7 @@ async function handleRequest(req: Request): Promise<Response> {
               config: {
                 paddingSec: config?.paddingSec ?? 0.05,
               },
+              preselection: preselectionData,
               createdAt: new Date().toISOString(),
             };
 

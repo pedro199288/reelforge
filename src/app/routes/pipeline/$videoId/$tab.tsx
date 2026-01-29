@@ -21,6 +21,7 @@ import { X } from "lucide-react";
 import { usePipelineHeader } from "../../pipeline";
 import { EffectsAnalysisPanel } from "@/components/EffectsAnalysisPanel";
 import { SegmentEditorPanel } from "@/components/SegmentEditorPanel";
+import type { PreselectionLog } from "@/core/preselection";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PipelineResetActions } from "@/components/PipelineResetActions";
 import {
@@ -309,6 +310,7 @@ function PipelinePage() {
   const [stepResults, setStepResults] = useState<Record<string, StepResult>>(
     {},
   );
+  const [preselectionLog, setPreselectionLog] = useState<PreselectionLog | null>(null);
 
   // Pipeline config from persistent store
   const config = useWorkspaceStore((state) => state.pipelineConfig);
@@ -342,6 +344,25 @@ function PipelinePage() {
     [],
   );
 
+  // Load preselection logs
+  const loadPreselectionLogs = useCallback(
+    async (videoId: string) => {
+      try {
+        const res = await fetch(
+          `${API_URL}/api/pipeline/${encodeURIComponent(videoId)}/preselection-logs`,
+        );
+        if (res.ok) {
+          const result = await res.json();
+          setPreselectionLog(result.log ?? null);
+        }
+      } catch (err) {
+        // Logs are optional, don't show error
+        console.debug("Preselection logs not available:", err);
+      }
+    },
+    [],
+  );
+
   // Load backend pipeline status
   const loadPipelineStatus = useCallback(
     async (videoId: string, filename: string) => {
@@ -365,6 +386,11 @@ function PipelinePage() {
         for (const step of completedSteps) {
           loadStepResult(videoId, step);
         }
+
+        // Load preselection logs if segments step is completed
+        if (completedSteps.includes("segments")) {
+          loadPreselectionLogs(videoId);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Error desconocido";
         console.error("Error loading pipeline status:", err);
@@ -374,7 +400,7 @@ function PipelinePage() {
         });
       }
     },
-    [loadStepResult],
+    [loadStepResult, loadPreselectionLogs],
   );
 
   // Check if a step can be executed
@@ -1388,6 +1414,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                             step={step.key}
                             result={stepResult}
                             selectedVideo={selectedVideo}
+                            preselectionLog={preselectionLog}
                           />
                         )}
 
@@ -1558,10 +1585,12 @@ function StepResultDisplay({
   step,
   result,
   selectedVideo,
+  preselectionLog,
 }: {
   step: PipelineStep;
   result: StepResult;
   selectedVideo?: Video | null;
+  preselectionLog?: PreselectionLog | null;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -1647,6 +1676,7 @@ function StepResultDisplay({
                 segments={r.segments}
                 totalDuration={r.totalDuration}
                 preselection={r.preselection}
+                preselectionLog={preselectionLog ?? undefined}
               />
             )}
           </div>
