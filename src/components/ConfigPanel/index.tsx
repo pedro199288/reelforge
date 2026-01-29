@@ -54,13 +54,13 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
           </SheetTitle>
         </SheetHeader>
 
-        <div className="mt-4">
+        <div className="px-4 mt-4">
           <ProfileSelector />
         </div>
 
         <Separator className="my-4" />
 
-        <Accordion type="multiple" defaultValue={["silence", "takes", "output"]}>
+        <Accordion type="multiple" defaultValue={["silence", "takes", "output"]} className="px-4">
           {/* Silence Detection Section */}
           <AccordionItem value="silence">
             <AccordionTrigger>Deteccion de Silencios</AccordionTrigger>
