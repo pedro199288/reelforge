@@ -16,6 +16,8 @@ interface WaveformProps {
   style?: "bars" | "line" | "mirror";
   /** CSS class */
   className?: string;
+  /** Horizontal offset in pixels for viewport alignment */
+  offsetPx?: number;
 }
 
 export function Waveform({
@@ -26,6 +28,7 @@ export function Waveform({
   bgColor = "transparent",
   style = "mirror",
   className,
+  offsetPx = 0,
 }: WaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -103,7 +106,11 @@ export function Waveform({
     <canvas
       ref={canvasRef}
       className={cn("block", className)}
-      style={{ width, height }}
+      style={{
+        width,
+        height,
+        marginLeft: offsetPx !== 0 ? offsetPx : undefined,
+      }}
     />
   );
 }

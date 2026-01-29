@@ -574,7 +574,7 @@ export function SegmentEditorPanel({
           </div>
           */}
 
-          {/* Segment list */}
+{/* Segment list - COMMENTED: Info moved to timeline markers
           <TooltipProvider>
           <div className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-subtle">
             {timelineSegments.map((segment, index) => {
@@ -620,7 +620,6 @@ export function SegmentEditorPanel({
                       <span className="text-sm font-mono text-muted-foreground">
                         {formatTime(startTime)} → {formatTime(endTime)}
                       </span>
-                      {/* Preselection score badge */}
                       {hasPreselection && (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -679,6 +678,7 @@ export function SegmentEditorPanel({
             )}
           </div>
           </TooltipProvider>
+          */}
         </CardContent>
       </Card>
     </div>

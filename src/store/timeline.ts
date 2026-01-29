@@ -169,8 +169,8 @@ const DEFAULT_ZOOM_DURATIONS = {
 
 // MIN_ZOOM_LEVEL = 0.01 allows viewing ~13 minutes in 800px viewport
 // Formula: maxDurationMs = viewportPx / (0.01 * 100 / 1000) = viewportPx * 1000
-const MIN_ZOOM_LEVEL = 0.01;
-const MAX_ZOOM_LEVEL = 10;
+export const MIN_ZOOM_LEVEL = 0.01;
+export const MAX_ZOOM_LEVEL = 10;
 
 function createEmptyTimeline(videoId: string): TimelineState {
   return {

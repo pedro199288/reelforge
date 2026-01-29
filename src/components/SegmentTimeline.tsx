@@ -19,6 +19,8 @@ import {
   useViewportStart,
   useTimelineSelection,
   useTimelineStore,
+  MIN_ZOOM_LEVEL,
+  MAX_ZOOM_LEVEL,
 } from "@/store/timeline";
 
 interface SegmentTimelineProps {
@@ -231,6 +233,20 @@ export function SegmentTimeline({
     return result;
   }, [waveformRawData, zoomLevel, viewportStartMs, durationMs, containerWidth]);
 
+  // Calculate waveform offset for sub-sample alignment
+  const waveformOffsetPx = useMemo(() => {
+    if (!waveformRawData) return 0;
+
+    const pxPerMs = getPxPerMs(zoomLevel);
+    const samplesPerMs = waveformRawData.sampleRate / 1000;
+    const startMs = Math.max(0, viewportStartMs);
+    const startSample = Math.floor(startMs * samplesPerMs);
+    const actualStartMs = startSample / samplesPerMs;
+    const offsetMs = startMs - actualStartMs;
+
+    return offsetMs * pxPerMs;
+  }, [waveformRawData, zoomLevel, viewportStartMs]);
+
   // Handle horizontal scroll - mark user interaction to disable auto-scroll
   // Mark that user has scrolled manually - disables auto-scroll until they click center button
   const markUserScrolled = useCallback(() => {
@@ -259,7 +275,7 @@ export function SegmentTimeline({
       if (e.ctrlKey || e.metaKey) {
         // Zoom with ctrl/cmd + scroll
         const delta = e.deltaY > 0 ? 0.8 : 1.25;
-        const newZoom = Math.max(0.1, Math.min(10, zoomLevel * delta));
+        const newZoom = Math.max(MIN_ZOOM_LEVEL, Math.min(MAX_ZOOM_LEVEL, zoomLevel * delta));
         setZoomLevel(newZoom);
         markUserScrolled();
       } else if (e.deltaX !== 0) {
@@ -447,6 +463,7 @@ export function SegmentTimeline({
                 height={64}
                 color="rgb(74, 222, 128)"
                 style="mirror"
+                offsetPx={waveformOffsetPx}
               />
             ) : (
               <div className="h-full flex items-center justify-center text-xs text-muted-foreground">

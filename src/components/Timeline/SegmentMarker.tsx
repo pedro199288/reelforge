@@ -14,6 +14,34 @@ interface SegmentMarkerProps {
 
 type DragMode = "resize-start" | "resize-end" | null;
 
+function getScoreColorClasses(score: number | undefined): {
+  bg: string;
+  border: string;
+  text: string;
+} | null {
+  if (score === undefined) return null;
+
+  if (score >= 85) {
+    return {
+      bg: "bg-green-500/30",
+      border: "border-green-500",
+      text: "text-green-700 dark:text-green-300",
+    };
+  } else if (score >= 60) {
+    return {
+      bg: "bg-yellow-500/30",
+      border: "border-yellow-500",
+      text: "text-yellow-700 dark:text-yellow-300",
+    };
+  } else {
+    return {
+      bg: "bg-red-500/30",
+      border: "border-red-500",
+      text: "text-red-700 dark:text-red-300",
+    };
+  }
+}
+
 export function SegmentMarker({
   segment,
   zoomLevel,
@@ -111,6 +139,11 @@ export function SegmentMarker({
     [onToggleEnabled]
   );
 
+  // Calculate score-based colors for enabled segments
+  const scoreColors = segment.enabled
+    ? getScoreColorClasses(segment.preselectionScore)
+    : null;
+
   // Don't render if outside viewport (after hooks to follow React rules)
   if (x + width < -50 || x > 2000) return null;
 
@@ -124,7 +157,9 @@ export function SegmentMarker({
         "absolute top-1 bottom-1 rounded transition-shadow select-none box-border",
         "border-2 flex items-center justify-center text-xs font-medium",
         segment.enabled
-          ? "bg-emerald-500/30 border-emerald-500 text-emerald-700 dark:text-emerald-300"
+          ? scoreColors
+            ? `${scoreColors.bg} ${scoreColors.border} ${scoreColors.text}`
+            : "bg-emerald-500/30 border-emerald-500 text-emerald-700 dark:text-emerald-300"
           : "bg-gray-500/20 border-gray-400 text-gray-500 dark:text-gray-400",
         isSelected && "ring-2 ring-primary ring-offset-1",
         dragMode && "cursor-ew-resize opacity-80",
@@ -150,7 +185,11 @@ export function SegmentMarker({
 
       {/* Content */}
       <span className="truncate px-1 pointer-events-none opacity-70">
-        {segment.enabled ? "" : "Cut"}
+        {segment.enabled
+          ? segment.preselectionScore !== undefined && actualWidth > 30
+            ? `${segment.preselectionScore}%`
+            : ""
+          : "Cut"}
       </span>
 
       {/* Right resize handle */}
