@@ -4,8 +4,6 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import type { Video } from "@/components/VideoList";
-import { useWorkspaceStore } from "@/store/workspace";
-import { useTimelineStore } from "@/store/timeline";
 import { VideoSidebarSkeleton } from "@/components/VideoSidebarSkeleton";
 import { PipelineProgressColumn } from "@/components/PipelineProgressColumn";
 import {
@@ -49,27 +47,19 @@ export function usePipelineHeader() {
 type PipelineStep =
   | "raw"
   | "silences"
-  | "captions-raw"
   | "segments"
-  | "semantic"
-  | "effects-analysis"
   | "cut"
   | "captions"
-  | "script"
-  | "take-selection"
+  | "effects-analysis"
   | "rendered";
 
 interface PipelineState {
   raw: boolean;
   silences: boolean;
-  "captions-raw": boolean;
   segments: boolean;
-  semantic: boolean;
-  "effects-analysis": boolean;
   cut: boolean;
   captions: boolean;
-  script: boolean;
-  "take-selection": boolean;
+  "effects-analysis": boolean;
   rendered: boolean;
 }
 
@@ -92,14 +82,10 @@ interface VideoManifest {
 const STEPS: { key: PipelineStep; label: string }[] = [
   { key: "raw", label: "Raw" },
   { key: "silences", label: "Silencios" },
-  { key: "captions-raw", label: "Transcripcion (Raw)" },
   { key: "segments", label: "Segmentos" },
-  { key: "semantic", label: "Semantico" },
-  { key: "effects-analysis", label: "Auto-Efectos" },
   { key: "cut", label: "Cortado" },
   { key: "captions", label: "Captions" },
-  { key: "script", label: "Script" },
-  { key: "take-selection", label: "Tomas" },
+  { key: "effects-analysis", label: "Auto-Efectos" },
   { key: "rendered", label: "Renderizado" },
 ];
 
@@ -109,37 +95,27 @@ export const Route = createFileRoute("/pipeline")({
 
 function getVideoPipelineState(
   video: Video,
-  hasTakeSelections?: boolean,
-  hasScriptEvents?: boolean,
   backendStatus?: BackendPipelineStatus | null
 ): PipelineState {
   if (backendStatus) {
     return {
       raw: true,
       silences: backendStatus.steps.silences?.status === "completed",
-      "captions-raw": backendStatus.steps["captions-raw"]?.status === "completed",
       segments: backendStatus.steps.segments?.status === "completed",
-      semantic: backendStatus.steps.semantic?.status === "completed",
-      "effects-analysis": backendStatus.steps["effects-analysis"]?.status === "completed",
       cut: backendStatus.steps.cut?.status === "completed",
       captions: backendStatus.steps.captions?.status === "completed" || video.hasCaptions,
-      script: hasScriptEvents ?? false,
-      "take-selection": hasTakeSelections ?? false,
-      rendered: false,
+      "effects-analysis": backendStatus.steps["effects-analysis"]?.status === "completed",
+      rendered: backendStatus.steps.rendered?.status === "completed",
     };
   }
 
   return {
     raw: true,
     silences: false,
-    "captions-raw": false,
     segments: false,
-    semantic: false,
-    "effects-analysis": false,
     cut: false,
     captions: false,
-    script: hasScriptEvents ?? false,
-    "take-selection": hasTakeSelections ?? false,
+    "effects-analysis": false,
     rendered: false,
   };
 }
@@ -165,9 +141,6 @@ function PipelineLayout() {
   const [allVideoStatuses, setAllVideoStatuses] = useState<Record<string, BackendPipelineStatus>>({});
   const [headerActions, setHeaderActions] = useState<ReactNode>(null);
   const [progressState, setProgressState] = useState<ProgressState | null>(null);
-
-  const takeSelections = useWorkspaceStore((state) => state.takeSelections);
-  const timelines = useTimelineStore((state) => state.timelines);
 
   const navigate = useNavigate();
   const params = useParams({ strict: false });
@@ -236,13 +209,8 @@ function PipelineLayout() {
     }
 
     return videos.map((video) => {
-      const hasTakes = video.id in takeSelections &&
-        Object.keys(takeSelections[video.id]?.selections || {}).length > 0;
-      const videoTimeline = timelines[video.id];
-      const hasScriptEvts = videoTimeline &&
-        (videoTimeline.zooms.length > 0 || videoTimeline.highlights.length > 0);
       const videoBackendStatus = allVideoStatuses[video.id] ?? null;
-      const state = getVideoPipelineState(video, hasTakes, hasScriptEvts, videoBackendStatus);
+      const state = getVideoPipelineState(video, videoBackendStatus);
       const completed = getCompletedSteps(state);
       const videoStepInfo = pipelineStateToStepInfo(state);
 
@@ -266,7 +234,7 @@ function PipelineLayout() {
         </button>
       );
     });
-  }, [videos, loading, takeSelections, timelines, allVideoStatuses, selectedVideoId, handleSelectVideo]);
+  }, [videos, loading, allVideoStatuses, selectedVideoId, handleSelectVideo]);
 
   // Get selected video
   const selectedVideo = useMemo(() => {

@@ -18,13 +18,9 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { parseScript } from "@/core/script/parser";
 import { X } from "lucide-react";
-import { useTimelineStore } from "@/store/timeline";
 import { usePipelineHeader } from "../../pipeline";
-import { ScriptAlignmentPanel } from "@/components/ScriptAlignmentPanel";
-import { TakeDetectionPanel } from "@/components/TakeDetectionPanel";
 import { EffectsAnalysisPanel } from "@/components/EffectsAnalysisPanel";
 import { SegmentEditorPanel } from "@/components/SegmentEditorPanel";
-import type { Caption } from "@/core/script/align";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PipelineResetActions } from "@/components/PipelineResetActions";
 import {
@@ -115,22 +111,6 @@ interface CaptionsResult {
   createdAt: string;
 }
 
-interface CaptionsRawResult {
-  captionsPath: string;
-  captionsCount: number;
-  sourceVideo: "raw";
-  createdAt: string;
-}
-
-interface SemanticResult {
-  sentenceCount: number;
-  semanticCutCount: number;
-  naturalPauseCount: number;
-  totalCuttableDurationMs: number;
-  totalPreservedPauseDurationMs: number;
-  overallConfidence: number;
-  createdAt: string;
-}
 
 interface EffectsAnalysisResultMeta {
   mainTopic: string;
@@ -150,23 +130,17 @@ type StepResult =
   | SegmentsResult
   | CutResult
   | CaptionsResult
-  | CaptionsRawResult
-  | SemanticResult
   | EffectsAnalysisResultMeta;
 
-// Step dependencies
+// Step dependencies - simplified 6-phase pipeline
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   raw: [],
   silences: [],
-  "captions-raw": [],
   segments: ["silences"],
-  semantic: ["captions-raw", "silences"],
-  "effects-analysis": ["captions-raw"],
   cut: ["segments"],
   captions: ["cut"],
-  script: ["captions"],
-  "take-selection": ["captions"],
-  rendered: ["take-selection"],
+  "effects-analysis": ["captions"],
+  rendered: ["effects-analysis"],
 };
 
 export const Route = createFileRoute("/pipeline/$videoId/$tab")({
@@ -180,27 +154,19 @@ interface VideoManifest {
 type PipelineStep =
   | "raw"
   | "silences"
-  | "captions-raw"
   | "segments"
-  | "semantic"
-  | "effects-analysis"
   | "cut"
   | "captions"
-  | "script"
-  | "take-selection"
+  | "effects-analysis"
   | "rendered";
 
 interface PipelineState {
   raw: boolean;
   silences: boolean;
-  "captions-raw": boolean;
   segments: boolean;
-  semantic: boolean;
-  "effects-analysis": boolean;
   cut: boolean;
   captions: boolean;
-  script: boolean;
-  "take-selection": boolean;
+  "effects-analysis": boolean;
   rendered: boolean;
 }
 
@@ -210,28 +176,22 @@ const STEPS: {
   description: string;
   optional?: boolean;
 }[] = [
-  { key: "raw", label: "Raw", description: "Video original importado" },
+  { key: "raw", label: "Raw", description: "Video original importado (incluye script opcional)" },
   {
     key: "silences",
     label: "Silencios",
     description: "Detectar silencios con FFmpeg",
   },
   {
-    key: "captions-raw",
-    label: "Transcripcion (Raw)",
-    description: "Transcripcion del video original (para analisis semantico)",
-    optional: true,
-  },
-  {
     key: "segments",
     label: "Segmentos",
-    description: "Generar segmentos de contenido",
+    description: "Generar segmentos de contenido con preseleccion",
   },
+  { key: "cut", label: "Cortado", description: "Cortar video sin silencios (genera cut-map)" },
   {
-    key: "semantic",
-    label: "Analisis Semantico",
-    description: "Clasificar silencios (inter vs intra-oracion)",
-    optional: true,
+    key: "captions",
+    label: "Captions",
+    description: "Transcripcion del video cortado con Whisper",
   },
   {
     key: "effects-analysis",
@@ -239,66 +199,39 @@ const STEPS: {
     description: "Analisis con IA para detectar zooms y highlights automaticos",
     optional: true,
   },
-  { key: "cut", label: "Cortado", description: "Cortar video sin silencios" },
-  {
-    key: "captions",
-    label: "Captions",
-    description: "Transcripcion con Whisper",
-  },
-  {
-    key: "script",
-    label: "Script",
-    description: "Importar guion y alinear con transcripcion",
-  },
-  {
-    key: "take-selection",
-    label: "Tomas",
-    description: "Seleccionar mejores tomas de frases repetidas",
-  },
   {
     key: "rendered",
     label: "Renderizado",
-    description: "Video final con subtitulos",
+    description: "Video final con subtitulos y efectos",
   },
 ];
 
 function getVideoPipelineState(
   video: Video,
-  hasTakeSelections?: boolean,
-  hasScriptEvents?: boolean,
   backendStatus?: BackendPipelineStatus | null,
 ): PipelineState {
   if (backendStatus) {
     return {
       raw: true,
       silences: backendStatus.steps.silences?.status === "completed",
-      "captions-raw":
-        backendStatus.steps["captions-raw"]?.status === "completed",
       segments: backendStatus.steps.segments?.status === "completed",
-      semantic: backendStatus.steps.semantic?.status === "completed",
-      "effects-analysis":
-        backendStatus.steps["effects-analysis"]?.status === "completed",
       cut: backendStatus.steps.cut?.status === "completed",
       captions:
         backendStatus.steps.captions?.status === "completed" ||
         video.hasCaptions,
-      script: hasScriptEvents ?? false,
-      "take-selection": hasTakeSelections ?? false,
-      rendered: false,
+      "effects-analysis":
+        backendStatus.steps["effects-analysis"]?.status === "completed",
+      rendered: backendStatus.steps.rendered?.status === "completed",
     };
   }
 
   return {
     raw: true,
     silences: false,
-    "captions-raw": false,
     segments: false,
-    semantic: false,
-    "effects-analysis": false,
     cut: false,
     captions: false,
-    script: hasScriptEvents ?? false,
-    "take-selection": hasTakeSelections ?? false,
+    "effects-analysis": false,
     rendered: false,
   };
 }
@@ -347,14 +280,10 @@ function PipelinePage() {
   const validTabs: PipelineStep[] = [
     "raw",
     "silences",
-    "captions-raw",
     "segments",
-    "semantic",
-    "effects-analysis",
     "cut",
     "captions",
-    "script",
-    "take-selection",
+    "effects-analysis",
     "rendered",
   ];
   const activeStep: PipelineStep = validTabs.includes(tab as PipelineStep)
@@ -386,8 +315,6 @@ function PipelinePage() {
   const setPipelineConfig = useWorkspaceStore(
     (state) => state.setPipelineConfig,
   );
-  const takeSelections = useWorkspaceStore((state) => state.takeSelections);
-  const timelines = useTimelineStore((state) => state.timelines);
 
   // Script state for raw phase
   const scriptState = useScript(selectedVideo?.id ?? "");
@@ -396,9 +323,6 @@ function PipelinePage() {
 
   // Segment selections for the current video
   const segmentSelection = useSelection(selectedVideo?.id ?? "");
-
-  // Captions state for script alignment
-  const [captions, setCaptions] = useState<Caption[]>([]);
 
   // Load result of a specific step
   const loadStepResult = useCallback(
@@ -579,10 +503,10 @@ function PipelinePage() {
 
       const executableSteps: PipelineStep[] = [
         "silences",
-        "captions-raw",
         "segments",
         "cut",
         "captions",
+        "effects-analysis",
       ];
       const targetIndex = executableSteps.indexOf(targetStep);
 
@@ -716,33 +640,6 @@ function PipelinePage() {
       loadPipelineStatus(selectedVideo.id, selectedVideo.filename);
     }
   }, [selectedVideo, loadPipelineStatus]);
-
-  // Load captions when video changes or captions step completes
-  const captionsStepStatus = backendStatus?.steps?.captions?.status;
-  useEffect(() => {
-    if (!selectedVideo) {
-      setCaptions([]);
-      return;
-    }
-
-    const loadCaptions = async () => {
-      try {
-        const nameWithoutExt = selectedVideo.filename.replace(/\.[^/.]+$/, "");
-        const captionsPath = `/subs/${encodeURIComponent(nameWithoutExt)}-cut.json`;
-        const res = await fetch(captionsPath);
-        if (res.ok) {
-          const data = await res.json();
-          setCaptions(data);
-        } else {
-          setCaptions([]);
-        }
-      } catch {
-        setCaptions([]);
-      }
-    };
-
-    loadCaptions();
-  }, [selectedVideo, captionsStepStatus]);
 
   // Start auto-processing
   const startAutoProcess = useCallback(async () => {
@@ -892,20 +789,8 @@ function PipelinePage() {
 
   const pipelineState = useMemo(() => {
     if (!selectedVideo) return null;
-    const hasTakeSelections =
-      selectedVideo.id in takeSelections &&
-      Object.keys(takeSelections[selectedVideo.id]?.selections || {}).length >
-        0;
-    const timeline = timelines[selectedVideo.id];
-    const hasScriptEvents =
-      timeline && (timeline.zooms.length > 0 || timeline.highlights.length > 0);
-    return getVideoPipelineState(
-      selectedVideo,
-      hasTakeSelections,
-      hasScriptEvents,
-      backendStatus,
-    );
-  }, [selectedVideo, takeSelections, timelines, backendStatus]);
+    return getVideoPipelineState(selectedVideo, backendStatus);
+  }, [selectedVideo, backendStatus]);
 
   const progressPercent = useMemo(() => {
     if (!pipelineState) return 0;
@@ -996,42 +881,31 @@ function PipelinePage() {
 
     switch (step) {
       case "raw":
-        return `# Video importado desde\n${videoPath}`;
+        return `# Video importado desde\n${videoPath}\n# El script se importa aquí si está disponible`;
       case "silences":
         return `# Detectar silencios en el video
 bun run src/core/silence/detect.ts "${videoPath}" \\
   --threshold ${config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb} \\
   --min-duration ${config.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec}`;
-      case "captions-raw":
-        return `# Transcribir video original con Whisper\nnode sub.mjs "${videoPath}"`;
       case "segments":
-        return `# Generar segmentos de contenido
+        return `# Generar segmentos de contenido con preselección
 bun run src/core/silence/segments.ts "${videoPath}" \\
   --padding ${config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec}`;
-      case "semantic":
-        return `# Analisis semantico de silencios
-# Clasifica silencios usando la transcripcion:
-# - Pausas importantes (entre oraciones)
-# - Silencios eliminables (muertos)
-# Requiere: silences + captions-raw completados`;
       case "cut":
-        return `# Cortar video (remover silencios)
+        return `# Cortar video (remover silencios) + genera cut-map.json
 bun run src/core/cut/index.ts "${videoPath}" \\
-  --output "public/videos/${selectedVideo.id}_cut.mp4"`;
+  --output "public/videos/${selectedVideo.id}-cut.mp4"`;
       case "captions":
-        return `# Generar captions con Whisper\nbun run create-subtitles "${videoPath}"`;
-      case "script":
-        return `# Guion del video
-# Ingresa el texto del guion en el campo de arriba
-# Se usa para mejorar la transcripcion y el analisis semantico`;
-      case "take-selection":
-        return `# Seleccion de tomas
-# Revisa y selecciona las mejores tomas del video
-# Interfaz interactiva en el panel de resultados`;
+        return `# Generar captions del video cortado con Whisper
+node sub.mjs "public/videos/${selectedVideo.id}-cut.mp4"`;
+      case "effects-analysis":
+        return `# Análisis con IA para detectar zooms y highlights
+# Usa captions del video cortado
+# Requiere: ANTHROPIC_API_KEY configurada`;
       case "rendered":
         return `# Renderizar video final con Remotion
 bunx remotion render src/index.ts CaptionedVideo \\
-  --props='{"videoSrc":"${selectedVideo.filename}"}' \\
+  --props='{"videoSrc":"${selectedVideo.id}-cut.mp4"}' \\
   out/${selectedVideo.id}_final.mp4`;
       default:
         return "";
@@ -1104,12 +978,10 @@ bunx remotion render src/index.ts CaptionedVideo \\
           {STEPS.map((step) => {
             const isExecutableStep = [
               "silences",
-              "captions-raw",
               "segments",
-              "semantic",
-              "effects-analysis",
               "cut",
               "captions",
+              "effects-analysis",
             ].includes(step.key);
             const { canExecute, missingDeps } = canExecuteStepCheck(
               step.key,
@@ -1504,34 +1376,6 @@ bunx remotion render src/index.ts CaptionedVideo \\
                           </div>
                         )}
 
-                        {/* Script alignment panel */}
-                        {step.key === "script" && (
-                          <ScriptAlignmentPanel
-                            videoId={selectedVideo.id}
-                            captions={captions}
-                            cutFilename={(() => {
-                              const cutResult = stepResults.cut as
-                                | CutResult
-                                | undefined;
-                              if (cutResult?.outputPath) {
-                                const match = cutResult.outputPath.match(
-                                  /([^/]+)\.(mp4|mkv|mov|webm)$/i,
-                                );
-                                return match ? match[1] : undefined;
-                              }
-                              return undefined;
-                            })()}
-                          />
-                        )}
-
-                        {/* Take detection panel */}
-                        {step.key === "take-selection" && (
-                          <TakeDetectionPanel
-                            videoId={selectedVideo.id}
-                            captions={captions}
-                          />
-                        )}
-
                         {/* Effects analysis panel */}
                         {step.key === "effects-analysis" &&
                           pipelineState["effects-analysis"] && (
@@ -1870,61 +1714,6 @@ function StepResultDisplay({
             <div>
               <span className="text-muted-foreground">Archivo:</span>
               <span className="ml-2 font-mono text-xs">{r.captionsPath}</span>
-            </div>
-          </div>
-        );
-      }
-      case "captions-raw": {
-        const r = result as CaptionsRawResult;
-        return (
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span className="text-muted-foreground">
-                Captions (video original):
-              </span>
-              <span className="ml-2 font-medium">{r.captionsCount}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Archivo:</span>
-              <span className="ml-2 font-mono text-xs">{r.captionsPath}</span>
-            </div>
-          </div>
-        );
-      }
-      case "semantic": {
-        const r = result as SemanticResult;
-        return (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <span className="text-muted-foreground">Oraciones:</span>
-                <span className="ml-2 font-medium">{r.sentenceCount}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">
-                  Cortes semanticos:
-                </span>
-                <span className="ml-2 font-medium text-green-600">
-                  {r.semanticCutCount}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Pausas naturales:</span>
-                <span className="ml-2 font-medium text-blue-600">
-                  {r.naturalPauseCount}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Confianza:</span>
-                <span className="ml-2 font-medium">
-                  {(r.overallConfidence * 100).toFixed(0)}%
-                </span>
-              </div>
-            </div>
-            <div className="text-sm text-muted-foreground">
-              Tiempo a cortar: {(r.totalCuttableDurationMs / 1000).toFixed(1)}s
-              | Pausas preservadas:{" "}
-              {(r.totalPreservedPauseDurationMs / 1000).toFixed(1)}s
             </div>
           </div>
         );

@@ -6,7 +6,7 @@
  */
 
 import { spawn, type Subprocess } from "bun";
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join, basename, extname, dirname } from "node:path";
 
 import {
@@ -23,15 +23,8 @@ import {
   type SegmentsResult,
   type CutResult,
   type CaptionsResult,
-  type CaptionsRawResult,
-  type SemanticResult,
+  type CutMapEntry,
 } from "./pipeline-utils";
-import {
-  analyzeSemanticCuts,
-  getSemanticStats,
-  semanticToSegments,
-} from "../src/core/semantic/segments";
-import type { SemanticAnalysisResult } from "../src/core/semantic/types";
 import type { Caption } from "../src/core/script/align";
 import {
   detectSilences,
@@ -40,12 +33,6 @@ import {
   getTotalDuration,
 } from "../src/core/silence";
 import { cutVideo } from "../src/core/cut";
-import {
-  preselectSegments,
-  type PreselectionStats,
-  type PreselectedSegment,
-  type AIPreselectionConfig,
-} from "../src/core/preselection";
 
 const PORT = 3012;
 const CORS_HEADERS = {
@@ -910,7 +897,7 @@ async function handleRequest(req: Request): Promise<Response> {
   // POST /api/pipeline/step - Execute a single pipeline step (SSE)
   if (path === "/api/pipeline/step" && req.method === "POST") {
     const body = await req.json();
-    const { videoId, filename, step, config, selectedSegments, script, preselection } = body as {
+    const { videoId, filename, step, config, selectedSegments } = body as {
       videoId: string;
       filename: string;
       step: PipelineStep;
@@ -922,10 +909,6 @@ async function handleRequest(req: Request): Promise<Response> {
         crf?: number;
       };
       selectedSegments?: number[];
-      script?: string; // Optional script to improve Whisper transcription
-      preselection?: {
-        ai?: AIPreselectionConfig;
-      };
     };
 
     if (!videoId || !filename || !step) {
@@ -936,7 +919,7 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     // Validate step name
-    const validSteps: PipelineStep[] = ["silences", "segments", "cut", "captions", "captions-raw", "semantic", "effects-analysis"];
+    const validSteps: PipelineStep[] = ["silences", "segments", "cut", "captions", "effects-analysis", "rendered"];
     if (!validSteps.includes(step)) {
       return new Response(JSON.stringify({ error: `Invalid step: ${step}` }), {
         status: 400,
@@ -1036,97 +1019,21 @@ async function handleRequest(req: Request): Promise<Response> {
               throw new Error("Silences result not found");
             }
 
-            // Check if semantic analysis is available
-            const semanticAnalysisPath = join(getPipelineDir(videoId), "semantic-analysis.json");
-            let usedSemanticAnalysis = false;
-            let segments;
-
-            if (existsSync(semanticAnalysisPath)) {
-              // Use semantic analysis for script-aware segment generation
-              sendEvent("progress", { step, progress: 30, message: "Usando análisis semántico del guión..." });
-              const semanticAnalysis: SemanticAnalysisResult = JSON.parse(
-                await Bun.file(semanticAnalysisPath).text()
-              );
-
-              // Convert duration to ms for semantic functions
-              const durationMs = silencesResult.videoDuration * 1000;
-              const paddingMs = (config?.paddingSec ?? 0.05) * 1000;
-
-              sendEvent("progress", { step, progress: 50, message: "Generando segmentos basados en límites de oraciones..." });
-              const semanticSegmentsMs = semanticToSegments(semanticAnalysis, durationMs, {
-                paddingMs,
-                minSegmentMs: 100,
-                minSilenceDurationMs: 300,
-              });
-
-              // Convert ms-based segments to seconds-based Segment format
-              segments = semanticSegmentsMs.map((seg, index) => ({
-                startTime: seg.startMs / 1000,
-                endTime: seg.endMs / 1000,
-                duration: (seg.endMs - seg.startMs) / 1000,
-                index,
-              }));
-              usedSemanticAnalysis = true;
-            } else {
-              // Fallback to simple silence-based segmentation
-              sendEvent("progress", { step, progress: 50, message: "Calculando segmentos basados en silencios..." });
-              segments = silencesToSegments(
-                silencesResult.silences,
-                silencesResult.videoDuration,
-                { paddingSec: config?.paddingSec ?? 0.05 }
-              );
-            }
+            // Generate segments from silences
+            sendEvent("progress", { step, progress: 50, message: "Calculando segmentos basados en silencios..." });
+            const segments = silencesToSegments(
+              silencesResult.silences,
+              silencesResult.videoDuration,
+              { paddingSec: config?.paddingSec ?? 0.05 }
+            );
 
             const editedDuration = getTotalDuration(segments);
             const timeSaved = silencesResult.videoDuration - editedDuration;
 
-            // Apply preselection if captions-raw is available
-            sendEvent("progress", { step, progress: 70, message: "Aplicando preselección automática..." });
-            let preselectionData: { segments: PreselectedSegment[]; stats: PreselectionStats } | undefined;
-
-            const captionsRawResult = loadStepResult<CaptionsRawResult>(videoId, "captions-raw");
-            if (captionsRawResult) {
-              try {
-                // Load raw captions
-                const captionsPath = captionsRawResult.captionsPath;
-                const captionsFullPath = join(process.cwd(), captionsPath);
-                if (existsSync(captionsFullPath)) {
-                  const captions: Caption[] = JSON.parse(
-                    await Bun.file(captionsFullPath).text()
-                  );
-
-                  // Convert segments to ms-based format for preselection
-                  const segmentsMs = segments.map((seg) => ({
-                    startMs: seg.startTime * 1000,
-                    endMs: seg.endTime * 1000,
-                  }));
-
-                  // Apply preselection (with optional AI config)
-                  const preselectionResult = await preselectSegments(segmentsMs, {
-                    captions,
-                    script: script || undefined,
-                    videoDurationMs: silencesResult.videoDuration * 1000,
-                    config: {
-                      ai: preselection?.ai,
-                    },
-                  });
-
-                  preselectionData = {
-                    segments: preselectionResult.segments,
-                    stats: preselectionResult.stats,
-                  };
-
-                  sendEvent("progress", {
-                    step,
-                    progress: 85,
-                    message: `Preselección: ${preselectionResult.stats.selectedSegments}/${preselectionResult.stats.totalSegments} segmentos seleccionados`,
-                  });
-                }
-              } catch (err) {
-                console.error("Error applying preselection:", err);
-                // Continue without preselection
-              }
-            }
+            // Note: Preselection is not available without captions (captions come after cut)
+            // The simplified pipeline generates captions after cutting, so preselection
+            // is limited to manual selection or AI-based scoring when script is provided
+            sendEvent("progress", { step, progress: 85, message: "Segmentos generados (selección manual disponible)" });
 
             sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
             const result: SegmentsResult = {
@@ -1137,9 +1044,7 @@ async function handleRequest(req: Request): Promise<Response> {
               percentSaved: (timeSaved / silencesResult.videoDuration) * 100,
               config: {
                 paddingSec: config?.paddingSec ?? 0.05,
-                usedSemanticAnalysis,
               },
-              preselection: preselectionData,
               createdAt: new Date().toISOString(),
             };
 
@@ -1206,12 +1111,27 @@ async function handleRequest(req: Request): Promise<Response> {
             // Calculate actual edited duration from selected segments
             const editedDuration = segmentsToUse.reduce((sum, s) => sum + s.duration, 0);
 
+            // Generate cut-map: maps original timestamps to final timestamps
+            let accumulatedMs = 0;
+            const cutMap: CutMapEntry[] = segmentsToUse.map((seg, i) => {
+              const entry: CutMapEntry = {
+                segmentIndex: i,
+                originalStartMs: seg.startTime * 1000,
+                originalEndMs: seg.endTime * 1000,
+                finalStartMs: accumulatedMs,
+                finalEndMs: accumulatedMs + (seg.duration * 1000),
+              };
+              accumulatedMs = entry.finalEndMs;
+              return entry;
+            });
+
             sendEvent("progress", { step, progress: 100, message: "Guardando resultados..." });
             const result: CutResult = {
               outputPath: outputPath.replace(process.cwd() + "/", ""),
               originalDuration: segmentsResult.totalDuration,
               editedDuration,
               segmentsCount: segmentsToUse.length,
+              cutMap,
               createdAt: new Date().toISOString(),
             };
 
@@ -1308,174 +1228,6 @@ async function handleRequest(req: Request): Promise<Response> {
             break;
           }
 
-          case "captions-raw": {
-            // Generate captions from RAW video (before cutting)
-            sendEvent("progress", { step, progress: 10, message: "Preparando video original..." });
-
-            if (!existsSync(videoPath)) {
-              throw new Error(`Video not found: ${videoPath}`);
-            }
-
-            // Build command args for sub.mjs
-            const subArgs = ["node", "sub.mjs"];
-            let tempScriptPath: string | null = null;
-
-            // If script is provided, save to temp file to use as Whisper prompt
-            if (script && script.trim()) {
-              const pipelineDir = getPipelineDir(videoId);
-              tempScriptPath = join(pipelineDir, "temp-script.txt");
-              writeFileSync(tempScriptPath, script, "utf-8");
-              subArgs.push("--script", tempScriptPath);
-              sendEvent("progress", { step, progress: 15, message: "Usando guión para mejorar transcripción..." });
-            }
-
-            subArgs.push(videoPath);
-
-            sendEvent("progress", { step, progress: 20, message: "Generando subtítulos con Whisper (video original)..." });
-
-            // Run sub.mjs on the raw video
-            const proc = spawn(subArgs, {
-              cwd: process.cwd(),
-              stdout: "pipe",
-              stderr: "pipe",
-            });
-
-            // Capture stderr for error reporting
-            const stderrChunks: string[] = [];
-            const stderrReader = proc.stderr.getReader();
-            const decoder = new TextDecoder();
-            (async () => {
-              try {
-                while (true) {
-                  const { done, value } = await stderrReader.read();
-                  if (done) break;
-                  stderrChunks.push(decoder.decode(value, { stream: true }));
-                }
-              } catch {
-                // Ignore read errors
-              }
-            })();
-
-            const exitCode = await proc.exited;
-
-            // Clean up temp script file
-            if (tempScriptPath && existsSync(tempScriptPath)) {
-              try {
-                unlinkSync(tempScriptPath);
-              } catch {
-                // Ignore cleanup errors
-              }
-            }
-
-            if (exitCode !== 0) {
-              const stderrOutput = stderrChunks.join("").trim();
-              throw new Error(`Subtitle generation failed with code ${exitCode}${stderrOutput ? `: ${stderrOutput}` : ""}`);
-            }
-
-            // Determine output subs path (raw video subs)
-            const ext = extname(filename);
-            const name = basename(filename, ext);
-            const subsPath = join("public", "subs", `${name}.json`);
-
-            sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
-
-            // Count captions
-            let captionsCount = 0;
-            const fullSubsPath = join(process.cwd(), subsPath);
-            if (existsSync(fullSubsPath)) {
-              try {
-                const captions = JSON.parse(await Bun.file(fullSubsPath).text());
-                captionsCount = Array.isArray(captions) ? captions.length : 0;
-              } catch {
-                // Ignore parse errors
-              }
-            }
-
-            const result: CaptionsRawResult = {
-              captionsPath: subsPath,
-              captionsCount,
-              sourceVideo: "raw",
-              createdAt: new Date().toISOString(),
-            };
-
-            const resultPath = saveStepResult(videoId, step, result);
-            updateStepStatus(videoId, step, {
-              status: "completed",
-              completedAt: new Date().toISOString(),
-              resultFile: resultPath,
-            });
-
-            sendEvent("complete", { step, result });
-            break;
-          }
-
-          case "semantic": {
-            // Analyze semantic cuts using script + captions
-            sendEvent("progress", { step, progress: 10, message: "Cargando captions..." });
-
-            // Load captions from raw video
-            const captionsRawResult = loadStepResult<CaptionsRawResult>(videoId, "captions-raw");
-            if (!captionsRawResult) {
-              throw new Error("Captions (raw) not found. Run captions-raw step first.");
-            }
-
-            const captionsPath = join(process.cwd(), captionsRawResult.captionsPath);
-            if (!existsSync(captionsPath)) {
-              throw new Error(`Captions file not found: ${captionsRawResult.captionsPath}`);
-            }
-
-            const captions: Caption[] = JSON.parse(await Bun.file(captionsPath).text());
-
-            sendEvent("progress", { step, progress: 30, message: "Cargando silencios..." });
-
-            // Load silences
-            const silencesResult = loadStepResult<SilencesResult>(videoId, "silences");
-            if (!silencesResult) {
-              throw new Error("Silences not found. Run silences step first.");
-            }
-
-            sendEvent("progress", { step, progress: 50, message: "Analizando estructura semántica..." });
-
-            // Get script from request body if provided, otherwise use full transcript
-            const requestBody = body as {
-              script?: string;
-              useScriptBoundaries?: boolean;
-              detectDeviations?: boolean;
-            };
-            const scriptText = requestBody.script ||
-              captions.map(c => c.text).join(" ");
-
-            // When script is provided, use it as authoritative source and detect deviations
-            const hasScript = Boolean(requestBody.script);
-            const analysis = analyzeSemanticCuts(scriptText, captions, silencesResult.silences, {
-              useScriptBoundaries: requestBody.useScriptBoundaries ?? hasScript,
-              detectDeviations: requestBody.detectDeviations ?? hasScript,
-            });
-            const stats = getSemanticStats(analysis);
-
-            sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
-
-            const result: SemanticResult = {
-              ...stats,
-              overallConfidence: analysis.overallConfidence,
-              createdAt: new Date().toISOString(),
-            };
-
-            // Also save the full analysis for use by the segments step
-            const analysisPath = join(getPipelineDir(videoId), "semantic-analysis.json");
-            await Bun.write(analysisPath, JSON.stringify(analysis, null, 2));
-
-            const resultPath = saveStepResult(videoId, step, result);
-            updateStepStatus(videoId, step, {
-              status: "completed",
-              completedAt: new Date().toISOString(),
-              resultFile: resultPath,
-            });
-
-            sendEvent("complete", { step, result });
-            break;
-          }
-
           case "effects-analysis": {
             // AI-powered effects analysis using Claude
             sendEvent("progress", { step, progress: 5, message: "Verificando API key..." });
@@ -1488,15 +1240,15 @@ async function handleRequest(req: Request): Promise<Response> {
 
             sendEvent("progress", { step, progress: 10, message: "Cargando captions..." });
 
-            // Load captions from raw video
-            const captionsRawResult = loadStepResult<CaptionsRawResult>(videoId, "captions-raw");
-            if (!captionsRawResult) {
-              throw new Error("Captions (raw) not found. Run captions-raw step first.");
+            // Load captions from cut video (post-cut)
+            const captionsResult = loadStepResult<CaptionsResult>(videoId, "captions");
+            if (!captionsResult) {
+              throw new Error("Captions not found. Run captions step first.");
             }
 
-            const captionsPath = join(process.cwd(), captionsRawResult.captionsPath);
+            const captionsPath = join(process.cwd(), captionsResult.captionsPath);
             if (!existsSync(captionsPath)) {
-              throw new Error(`Captions file not found: ${captionsRawResult.captionsPath}`);
+              throw new Error(`Captions file not found: ${captionsResult.captionsPath}`);
             }
 
             const captions: Caption[] = JSON.parse(await Bun.file(captionsPath).text());

@@ -9,7 +9,13 @@ import type { SilenceRange } from "../src/core/silence/detect";
 import type { Segment } from "../src/core/silence/segments";
 import type { PreselectionStats, PreselectedSegment } from "../src/core/preselection";
 
-export type PipelineStep = "silences" | "segments" | "cut" | "captions" | "captions-raw" | "semantic" | "effects-analysis";
+export type PipelineStep =
+  | "silences"
+  | "segments"
+  | "cut"
+  | "captions"
+  | "effects-analysis"
+  | "rendered";
 
 export type StepStatus = "pending" | "running" | "completed" | "error";
 
@@ -60,11 +66,20 @@ export interface SegmentsResult {
   createdAt: string;
 }
 
+export interface CutMapEntry {
+  segmentIndex: number;
+  originalStartMs: number;
+  originalEndMs: number;
+  finalStartMs: number;
+  finalEndMs: number;
+}
+
 export interface CutResult {
   outputPath: string;
   originalDuration: number;
   editedDuration: number;
   segmentsCount: number;
+  cutMap: CutMapEntry[];
   createdAt: string;
 }
 
@@ -74,22 +89,6 @@ export interface CaptionsResult {
   createdAt: string;
 }
 
-export interface CaptionsRawResult {
-  captionsPath: string;
-  captionsCount: number;
-  sourceVideo: "raw";
-  createdAt: string;
-}
-
-export interface SemanticResult {
-  sentenceCount: number;
-  semanticCutCount: number;
-  naturalPauseCount: number;
-  totalCuttableDurationMs: number;
-  totalPreservedPauseDurationMs: number;
-  overallConfidence: number;
-  createdAt: string;
-}
 
 export interface EffectsAnalysisResultMeta {
   mainTopic: string;
@@ -105,17 +104,15 @@ export interface EffectsAnalysisResultMeta {
 }
 
 // Step dependencies: step -> required preceding steps
-// Note: captions-raw has no dependencies (runs on raw video)
-// semantic requires captions-raw + silences to classify silences
-// effects-analysis requires captions-raw (transcription of raw video)
+// Simplified 6-phase pipeline:
+// silences -> segments -> cut -> captions -> effects-analysis -> rendered
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   silences: [],
-  "captions-raw": [],  // Can run in parallel with silences
   segments: ["silences"],
-  semantic: ["captions-raw", "silences"],  // Requires transcript + silences to classify
-  "effects-analysis": ["captions-raw"],  // Requires transcript for AI analysis
   cut: ["segments"],
-  captions: ["cut"],  // Post-cut captions (for backward compatibility)
+  captions: ["cut"],
+  "effects-analysis": ["captions"],  // Now depends on post-cut captions
+  rendered: ["effects-analysis"],
 };
 
 /**
@@ -162,12 +159,11 @@ function getInitialStatus(videoId: string, filename: string): PipelineStatus {
     filename,
     steps: {
       silences: { ...emptyStep },
-      "captions-raw": { ...emptyStep },
       segments: { ...emptyStep },
-      semantic: { ...emptyStep },
-      "effects-analysis": { ...emptyStep },
       cut: { ...emptyStep },
       captions: { ...emptyStep },
+      "effects-analysis": { ...emptyStep },
+      rendered: { ...emptyStep },
     },
     updatedAt: new Date().toISOString(),
   };
