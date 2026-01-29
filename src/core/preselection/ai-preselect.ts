@@ -2,7 +2,7 @@
  * AI-Powered Preselection using Vercel AI SDK
  */
 import { generateObject } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
+import { anthropic, createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import { nanoid } from "nanoid";
@@ -80,7 +80,6 @@ function getModel(config: AIPreselectionConfig) {
     // Anthropic provider uses environment variable ANTHROPIC_API_KEY by default
     // If custom apiKey provided, use createAnthropic to configure it
     if (config.apiKey) {
-      const { createAnthropic } = require("@ai-sdk/anthropic");
       const customAnthropic = createAnthropic({ apiKey: config.apiKey });
       return customAnthropic(config.modelId);
     }

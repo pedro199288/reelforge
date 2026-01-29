@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useState, useMemo, useCallback, createContext, useContext, type ReactNode } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import type { Video } from "@/components/VideoList";
 import { useWorkspaceStore } from "@/store/workspace";
@@ -191,7 +192,10 @@ function PipelineLayout() {
   }, []);
 
   // Load pipeline status for all videos
+  const [apiError, setApiError] = useState<string | null>(null);
+
   const loadAllVideoStatuses = useCallback(async (videoList: Video[]) => {
+    setApiError(null);
     for (const video of videoList) {
       try {
         const res = await fetch(
@@ -200,9 +204,14 @@ function PipelineLayout() {
         if (res.ok) {
           const status = await res.json() as BackendPipelineStatus;
           setAllVideoStatuses(prev => ({ ...prev, [video.id]: status }));
+        } else {
+          throw new Error(`HTTP ${res.status}`);
         }
       } catch (err) {
-        console.error("Error loading pipeline status:", err);
+        const message = err instanceof Error ? err.message : "Error desconocido";
+        console.error("Error loading pipeline status for", video.id, ":", err);
+        setApiError(`Servidor API no disponible: ${message}`);
+        break; // Stop trying other videos if server is down
       }
     }
   }, []);
@@ -290,6 +299,16 @@ function PipelineLayout() {
             </div>
           )}
         </div>
+
+        {/* API Server Error */}
+        {apiError && (
+          <Alert variant="destructive" className="mb-4 flex-none">
+            <AlertTitle>Error de conexión al servidor</AlertTitle>
+            <AlertDescription>
+              {apiError}. Ejecuta <code className="bg-destructive/20 px-1 rounded">bun run server</code> para iniciar el servidor API.
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0">
           {/* Video Sidebar */}

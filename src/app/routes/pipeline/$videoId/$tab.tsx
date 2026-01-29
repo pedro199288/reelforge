@@ -370,6 +370,7 @@ function PipelinePage() {
   // Individual step execution state
   const [backendStatus, setBackendStatus] =
     useState<BackendPipelineStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [stepProcessing, setStepProcessing] = useState<PipelineStep | null>(
     null,
   );
@@ -420,25 +421,33 @@ function PipelinePage() {
   // Load backend pipeline status
   const loadPipelineStatus = useCallback(
     async (videoId: string, filename: string) => {
+      setStatusError(null);
       try {
         const res = await fetch(
           `${API_URL}/api/pipeline/status?videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(filename)}`,
         );
-        if (res.ok) {
-          const status = (await res.json()) as BackendPipelineStatus;
-          setBackendStatus(status);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP ${res.status}`);
+        }
+        const status = (await res.json()) as BackendPipelineStatus;
+        setBackendStatus(status);
 
-          // Load results for completed steps
-          const completedSteps = Object.entries(status.steps)
-            .filter(([, state]) => state.status === "completed")
-            .map(([step]) => step as PipelineStep);
+        // Load results for completed steps
+        const completedSteps = Object.entries(status.steps)
+          .filter(([, state]) => state.status === "completed")
+          .map(([step]) => step as PipelineStep);
 
-          for (const step of completedSteps) {
-            loadStepResult(videoId, step);
-          }
+        for (const step of completedSteps) {
+          loadStepResult(videoId, step);
         }
       } catch (err) {
+        const message = err instanceof Error ? err.message : "Error desconocido";
         console.error("Error loading pipeline status:", err);
+        setStatusError(`No se pudo conectar al servidor API: ${message}`);
+        toast.error("Servidor API no disponible", {
+          description: "Asegúrate de que el servidor esté corriendo en el puerto 3012",
+        });
       }
     },
     [loadStepResult],
@@ -1071,6 +1080,20 @@ bunx remotion render src/index.ts CaptionedVideo \\
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
+      {/* API Server Error */}
+      {statusError && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertTitle>Error de conexión</AlertTitle>
+          <AlertDescription>
+            {statusError}
+            <br />
+            <span className="text-xs mt-1 block">
+              Ejecuta <code className="bg-destructive/20 px-1 rounded">bun run server</code> para iniciar el servidor API.
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Pipeline Tabs */}
       {pipelineState && (
         <Tabs
