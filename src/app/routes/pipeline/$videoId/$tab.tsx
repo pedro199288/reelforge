@@ -1474,6 +1474,7 @@ bunx remotion render src/index.ts CaptionedVideo \\
                             preselectionLog={preselectionLog}
                             captionsCompleted={pipelineState.captions}
                             hasScript={!!scriptState?.rawScript}
+                            script={scriptState?.rawScript}
                             onReapplyPreselection={handleReapplyPreselection}
                             isReapplying={isReapplyingPreselection}
                           />
@@ -1649,6 +1650,7 @@ function StepResultDisplay({
   preselectionLog,
   captionsCompleted,
   hasScript,
+  script,
   onReapplyPreselection,
   isReapplying,
 }: {
@@ -1658,6 +1660,7 @@ function StepResultDisplay({
   preselectionLog?: PreselectionLog | null;
   captionsCompleted?: boolean;
   hasScript?: boolean;
+  script?: string;
   onReapplyPreselection?: () => Promise<void>;
   isReapplying?: boolean;
 }) {
@@ -1798,6 +1801,8 @@ function StepResultDisplay({
                 totalDuration={r.totalDuration}
                 preselection={r.preselection}
                 preselectionLog={preselectionLog ?? undefined}
+                script={script}
+                hasCaptions={captionsCompleted}
               />
             )}
           </div>
