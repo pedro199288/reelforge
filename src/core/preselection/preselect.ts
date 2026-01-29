@@ -16,6 +16,7 @@ import type {
   InputSegment,
   AIPreselectionConfig,
   PreselectionLog,
+  CutMapEntry,
 } from "./types";
 import {
   DEFAULT_PRESELECTION_CONFIG,
@@ -503,4 +504,113 @@ export async function reapplyPreselection(
     segments,
     stats,
   };
+}
+
+/**
+ * Remaps captions from cut video timestamps to original video timestamps
+ * using the cut-map
+ *
+ * @param captions - Captions with timestamps from the CUT video
+ * @param cutMap - Mapping from original to cut timestamps
+ * @returns Captions with timestamps remapped to original video
+ */
+export function remapCaptionsToOriginal(
+  captions: Caption[],
+  cutMap: CutMapEntry[]
+): Caption[] {
+  const remapped: Caption[] = [];
+
+  for (const cap of captions) {
+    // Find which segment in the cut video this caption falls into
+    const segment = cutMap.find(
+      (s) => cap.startMs >= s.finalStartMs && cap.startMs < s.finalEndMs
+    );
+
+    if (!segment) {
+      // Caption doesn't fall into any mapped segment - skip it
+      continue;
+    }
+
+    // Calculate offset within the cut segment
+    const offsetInSegment = cap.startMs - segment.finalStartMs;
+    const capDuration = cap.endMs - cap.startMs;
+
+    // Map back to original video timestamps
+    const originalStart = segment.originalStartMs + offsetInSegment;
+    const originalEnd = originalStart + capDuration;
+
+    // Clamp to segment boundaries
+    remapped.push({
+      ...cap,
+      startMs: originalStart,
+      endMs: Math.min(originalEnd, segment.originalEndMs),
+    });
+  }
+
+  return remapped;
+}
+
+/**
+ * Options for re-applying preselection with captions from cut video
+ */
+export interface ReapplyWithCaptionsOptions {
+  /** Captions from the CUT video (post-cut timestamps) */
+  captions: Caption[];
+  /** Cut-map entries mapping original ↔ cut timestamps */
+  cutMap: CutMapEntry[];
+  /** Script text for matching */
+  script: string;
+  /** Video ID for logging */
+  videoId: string;
+  /** Whether to collect detailed logs */
+  collectLogs?: boolean;
+  /** Configuration overrides */
+  config?: Partial<PreselectionConfig>;
+}
+
+/**
+ * Re-applies preselection using captions from the cut video + cut-map
+ * to map timestamps back to the original video.
+ *
+ * This function is designed for the workflow where:
+ * 1. Initial preselection happens without captions (or basic only)
+ * 2. Cut is performed with all segments enabled
+ * 3. Captions are generated from the cut video (better quality)
+ * 4. Re-preselection uses those captions mapped back to original timestamps
+ *
+ * @param originalSegments - Segments from the ORIGINAL video (pre-cut)
+ * @param options - Options including cut video captions and cut-map
+ * @returns Preselection result with updated scores based on real transcription
+ */
+export async function reapplyPreselectionWithCaptions(
+  originalSegments: Array<{ id: string; startMs: number; endMs: number }>,
+  options: ReapplyWithCaptionsOptions
+): Promise<PreselectionResultWithLog> {
+  const {
+    captions,
+    cutMap,
+    script,
+    videoId,
+    collectLogs = true,
+    config: configOverrides,
+  } = options;
+
+  // Remap captions from cut video timestamps to original video timestamps
+  const remappedCaptions = remapCaptionsToOriginal(captions, cutMap);
+
+  // Calculate total video duration from segments
+  const videoDurationMs = Math.max(...originalSegments.map((s) => s.endMs));
+
+  // Use standard preselection with remapped captions and script
+  return preselectSegments(
+    originalSegments.map((s) => ({ startMs: s.startMs, endMs: s.endMs })),
+    {
+      captions: remappedCaptions,
+      script,
+      videoDurationMs,
+      videoId,
+      collectLogs,
+      config: configOverrides,
+    }
+  );
 }

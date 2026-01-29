@@ -170,6 +170,23 @@ export interface InputSegment {
   endMs: number;
 }
 
+/**
+ * Entry in the cut-map that maps original timestamps to final video timestamps
+ * Used for re-mapping captions from cut video back to original video
+ */
+export interface CutMapEntry {
+  /** Index of the segment in the cut video */
+  segmentIndex: number;
+  /** Start time in original video (ms) */
+  originalStartMs: number;
+  /** End time in original video (ms) */
+  originalEndMs: number;
+  /** Start time in cut/final video (ms) */
+  finalStartMs: number;
+  /** End time in cut/final video (ms) */
+  finalEndMs: number;
+}
+
 /** AI Provider for preselection */
 export type AIProvider = "anthropic" | "openai" | "openai-compatible";
 

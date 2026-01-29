@@ -311,6 +311,7 @@ function PipelinePage() {
     {},
   );
   const [preselectionLog, setPreselectionLog] = useState<PreselectionLog | null>(null);
+  const [isReapplyingPreselection, setIsReapplyingPreselection] = useState(false);
 
   // Pipeline config from persistent store
   const config = useWorkspaceStore((state) => state.pipelineConfig);
@@ -362,6 +363,62 @@ function PipelinePage() {
     },
     [],
   );
+
+  // Re-apply preselection with captions from cut video
+  const handleReapplyPreselection = useCallback(async () => {
+    if (!selectedVideo || !scriptState?.rawScript) return;
+
+    setIsReapplyingPreselection(true);
+
+    try {
+      const res = await fetch(
+        `${API_URL}/api/pipeline/${encodeURIComponent(selectedVideo.id)}/reapply-preselection`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ script: scriptState.rawScript }),
+        }
+      );
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
+
+      const result = await res.json();
+
+      // Update local state with new preselection data
+      if (result.preselection) {
+        setStepResults((prev) => {
+          const segmentsResult = prev.segments as SegmentsResult | undefined;
+          if (segmentsResult) {
+            return {
+              ...prev,
+              segments: {
+                ...segmentsResult,
+                preselection: result.preselection,
+              },
+            };
+          }
+          return prev;
+        });
+      }
+
+      // Reload preselection logs
+      await loadPreselectionLogs(selectedVideo.id);
+
+      toast.success("Re-evaluacion completada", {
+        description: "La preseleccion se ha actualizado con los scores de Script Match reales",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Error desconocido";
+      toast.error("Error en re-evaluacion", {
+        description: message,
+      });
+    } finally {
+      setIsReapplyingPreselection(false);
+    }
+  }, [selectedVideo, scriptState?.rawScript, loadPreselectionLogs]);
 
   // Load backend pipeline status
   const loadPipelineStatus = useCallback(
@@ -1415,6 +1472,10 @@ bunx remotion render src/index.ts CaptionedVideo \\
                             result={stepResult}
                             selectedVideo={selectedVideo}
                             preselectionLog={preselectionLog}
+                            captionsCompleted={pipelineState.captions}
+                            hasScript={!!scriptState?.rawScript}
+                            onReapplyPreselection={handleReapplyPreselection}
+                            isReapplying={isReapplyingPreselection}
                           />
                         )}
 
@@ -1586,11 +1647,19 @@ function StepResultDisplay({
   result,
   selectedVideo,
   preselectionLog,
+  captionsCompleted,
+  hasScript,
+  onReapplyPreselection,
+  isReapplying,
 }: {
   step: PipelineStep;
   result: StepResult;
   selectedVideo?: Video | null;
   preselectionLog?: PreselectionLog | null;
+  captionsCompleted?: boolean;
+  hasScript?: boolean;
+  onReapplyPreselection?: () => Promise<void>;
+  isReapplying?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -1625,6 +1694,10 @@ function StepResultDisplay({
       }
       case "segments": {
         const r = result as SegmentsResult;
+        // Check if we can offer re-evaluation with transcription
+        const canReapply = captionsCompleted && hasScript && onReapplyPreselection;
+        const showReapplyHint = hasScript && !captionsCompleted;
+
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -1669,6 +1742,54 @@ function StepResultDisplay({
                 </div>
               )}
             </div>
+
+            {/* Re-evaluation with transcription section */}
+            {canReapply && (
+              <div className="p-4 border rounded-lg bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800">
+                <div className="flex items-start gap-3">
+                  <RefreshIcon className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-none" />
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                      Re-evaluar con transcripcion
+                    </h4>
+                    <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+                      La fase Captions ya esta completa. Puedes re-evaluar la preseleccion usando la transcripcion real
+                      del video cortado para obtener scores de Script Match precisos.
+                    </p>
+                    <Button
+                      onClick={onReapplyPreselection}
+                      disabled={isReapplying}
+                      size="sm"
+                      className="mt-3 gap-2"
+                      variant="outline"
+                    >
+                      {isReapplying ? (
+                        <>
+                          <LoaderIcon className="w-4 h-4 animate-spin" />
+                          Re-evaluando...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshIcon className="w-4 h-4" />
+                          Re-evaluar con transcripcion
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Hint when script exists but captions not ready */}
+            {showReapplyHint && (
+              <div className="p-3 border rounded-lg bg-muted/50 border-border">
+                <p className="text-xs text-muted-foreground">
+                  <strong>Tip:</strong> Tienes un guion configurado. Despues de completar las fases Cut y Captions,
+                  podras re-evaluar la preseleccion usando la transcripcion real para obtener scores de Script Match precisos.
+                </p>
+              </div>
+            )}
+
             {selectedVideo && (
               <SegmentEditorPanel
                 videoId={selectedVideo.id}

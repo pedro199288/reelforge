@@ -33,7 +33,7 @@ import {
   getTotalDuration,
 } from "../src/core/silence";
 import { cutVideo } from "../src/core/cut";
-import { preselectSegments } from "../src/core/preselection";
+import { preselectSegments, reapplyPreselectionWithCaptions } from "../src/core/preselection";
 
 const PORT = 3012;
 const CORS_HEADERS = {
@@ -951,6 +951,132 @@ async function handleRequest(req: Request): Promise<Response> {
     }
   }
 
+  // POST /api/pipeline/:videoId/reapply-preselection - Re-apply preselection with captions from cut video
+  const reapplyPreselectionMatch = path.match(/^\/api\/pipeline\/([^/]+)\/reapply-preselection$/);
+  if (reapplyPreselectionMatch && req.method === "POST") {
+    try {
+      const videoId = reapplyPreselectionMatch[1];
+      const body = await req.json();
+      const { script } = body as { script?: string };
+
+      // Load required data
+      const segmentsResult = loadStepResult<SegmentsResult>(videoId, "segments");
+      if (!segmentsResult) {
+        return new Response(JSON.stringify({ error: "Segments result not found. Run segments step first." }), {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      const cutResult = loadStepResult<CutResult>(videoId, "cut");
+      if (!cutResult || !cutResult.cutMap) {
+        return new Response(JSON.stringify({ error: "Cut result not found or missing cut-map. Run cut step first." }), {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      const captionsResult = loadStepResult<CaptionsResult>(videoId, "captions");
+      if (!captionsResult) {
+        return new Response(JSON.stringify({ error: "Captions result not found. Run captions step first." }), {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      // Load captions from file
+      const captionsPath = join(process.cwd(), captionsResult.captionsPath);
+      if (!existsSync(captionsPath)) {
+        return new Response(JSON.stringify({ error: `Captions file not found: ${captionsResult.captionsPath}` }), {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      const captions: Caption[] = JSON.parse(await Bun.file(captionsPath).text());
+
+      // Validate script is provided
+      if (!script || script.trim().length === 0) {
+        return new Response(JSON.stringify({ error: "Script is required for re-preselection" }), {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      // Get original segments with IDs from preselection (if available) or generate them
+      let originalSegments: Array<{ id: string; startMs: number; endMs: number }>;
+
+      if (segmentsResult.preselection?.segments) {
+        // Use existing segment IDs from preselection
+        originalSegments = segmentsResult.preselection.segments.map((s) => ({
+          id: s.id,
+          startMs: s.startMs,
+          endMs: s.endMs,
+        }));
+      } else {
+        // Generate IDs for segments if no preselection data exists
+        const { nanoid } = await import("nanoid");
+        originalSegments = segmentsResult.segments.map((s) => ({
+          id: nanoid(8),
+          startMs: s.startTime * 1000,
+          endMs: s.endTime * 1000,
+        }));
+      }
+
+      // Run re-preselection with captions mapped to original timestamps
+      const reselectionResult = await reapplyPreselectionWithCaptions(
+        originalSegments,
+        {
+          captions,
+          cutMap: cutResult.cutMap,
+          script,
+          videoId,
+          collectLogs: true,
+        }
+      );
+
+      // Update segments.json with new preselection data
+      const updatedSegmentsResult: SegmentsResult = {
+        ...segmentsResult,
+        preselection: {
+          segments: reselectionResult.segments,
+          stats: reselectionResult.stats,
+        },
+      };
+
+      saveStepResult(videoId, "segments", updatedSegmentsResult);
+
+      // Save updated preselection logs if available
+      if (reselectionResult.log) {
+        saveStepResult(videoId, "preselection-logs", {
+          log: reselectionResult.log,
+          savedAt: new Date().toISOString(),
+          isReapply: true, // Mark this as a re-apply operation
+        });
+
+        updateStepStatus(videoId, "preselection-logs", {
+          status: "completed",
+          completedAt: new Date().toISOString(),
+        });
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        preselection: updatedSegmentsResult.preselection,
+        message: "Re-preselection completed with captions from cut video",
+      }), {
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error("Re-preselection error:", error);
+      return new Response(JSON.stringify({ error: message }), {
+        status: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   // POST /api/pipeline/step - Execute a single pipeline step (SSE)
   if (path === "/api/pipeline/step" && req.method === "POST") {
     const body = await req.json();
@@ -1535,6 +1661,7 @@ console.log("  POST /api/pipeline/step    - Execute single step (SSE stream)");
 console.log("  GET  /api/pipeline/result  - Get result of a step");
 console.log("  GET  /api/pipeline/:videoId/preselection-logs - Get preselection logs");
 console.log("  POST /api/pipeline/:videoId/preselection-logs - Save preselection logs");
+console.log("  POST /api/pipeline/:videoId/reapply-preselection - Re-apply preselection with captions");
 console.log("  POST /api/timeline/save    - Save zoom events to .zoom.json");
 console.log("");
 console.log("Audio:");

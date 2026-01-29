@@ -15,6 +15,7 @@ export type {
   PreselectionResult,
   SegmentScriptMatch,
   InputSegment,
+  CutMapEntry,
 } from "./types";
 
 export {
@@ -35,8 +36,17 @@ export type {
 } from "./types";
 
 // Main functions
-export { preselectSegments, reapplyPreselection } from "./preselect";
-export type { PreselectOptions, PreselectionResultWithLog } from "./preselect";
+export {
+  preselectSegments,
+  reapplyPreselection,
+  reapplyPreselectionWithCaptions,
+  remapCaptionsToOriginal,
+} from "./preselect";
+export type {
+  PreselectOptions,
+  PreselectionResultWithLog,
+  ReapplyWithCaptionsOptions,
+} from "./preselect";
 
 // Logger utilities
 export {
