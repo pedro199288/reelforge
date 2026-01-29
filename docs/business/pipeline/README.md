@@ -2,10 +2,14 @@
 
 ## Resumen
 
-El pipeline de ReelForge automatiza la edición de video raw eliminando silencios y seleccionando las mejores tomas. El flujo completo es:
+El pipeline de ReelForge automatiza la edición de video raw eliminando silencios, seleccionando las mejores tomas y generando el video final con subtítulos. El flujo completo tiene 11 fases:
 
 ```
-Import → Silences → Captions → Segments → Cut
+Raw → Silences ──────────────────┬→ Segments → Cut → Captions → Script → Take-Selection → Rendered
+         ↓                       │
+    Captions-Raw → Semantic ─────┘
+         ↓
+    Effects-Analysis
 ```
 
 Cada fase genera archivos intermedios que alimentan las siguientes fases, permitiendo reanudar el proceso desde cualquier punto.
@@ -14,9 +18,9 @@ Cada fase genera archivos intermedios que alimentan las siguientes fases, permit
 
 ## Fases del Pipeline
 
-### Fase 1: Import
+### Fase 1: Raw
 
-**Propósito:** Cargar un video al sistema para su procesamiento.
+**Propósito:** Video original importado al sistema.
 
 **Qué hace:**
 - Valida el formato del archivo (mp4, webm, mov, etc.)
@@ -77,29 +81,24 @@ public/pipeline/{videoId}/silences.json
 
 ---
 
-### Fase 3: Captions
+### Fase 3: Captions-Raw (Opcional)
 
-**Propósito:** Transcribir el audio a texto con timestamps precisos.
+**Propósito:** Transcribir el audio del video original (antes del corte).
 
 **Qué hace:**
 - Procesa el audio mediante Whisper CPP
 - Genera transcripción palabra por palabra con timestamps
-- Calcula nivel de confianza para cada segmento
-
-**Variantes:**
-- `captions-raw`: Procesa el video original (antes del corte)
-- `captions`: Procesa el video ya cortado (para subtítulos finales)
+- Necesaria para el análisis semántico posterior
 
 **Input:**
-- Video a procesar
-- Script opcional (mejora el reconocimiento de términos específicos)
+- Video original (raw)
 
 **Output:**
-- Array de Caption con texto y timestamps
+- Array de Caption con texto y timestamps del video sin cortar
 
 **Archivos generados:**
 ```
-public/subs/{videoId}.json
+public/subs/{videoId}-raw.json
 ```
 
 **Estructura del archivo:**
@@ -120,7 +119,7 @@ public/subs/{videoId}.json
 
 ### Fase 4: Segments
 
-**Propósito:** Generar segmentos editables y preseleccionar automáticamente los mejores.
+**Propósito:** Generar segmentos editables a partir de los silencios detectados.
 
 **Qué hace:**
 
@@ -133,13 +132,10 @@ public/subs/{videoId}.json
      - Take order (25%): Preferencia por tomas posteriores (mejor rendimiento)
      - Completeness (20%): Frases completas vs fragmentos
      - Duration (10%): Duración adecuada del segmento
-   - **Análisis con AI (opcional):** Claude, GPT-4, o Ollama analizan calidad de contenido
+   - **Análisis con AI (opcional):** Claude, GPT-4, LM Studio u Ollama analizan calidad de contenido
 
 **Input:**
 - Silencios detectados
-- Captions generados
-- Script opcional
-- Configuración de preselección (manual/auto/AI)
 
 **Output:**
 - Segmentos con estado enabled/disabled
@@ -175,14 +171,62 @@ public/pipeline/{videoId}/segments.json
 
 ---
 
-### Fase 5: Cut
+### Fase 5: Semantic (Opcional)
 
-**Propósito:** Ejecutar el corte final del video.
+**Propósito:** Clasificar silencios por contexto semántico.
+
+**Qué hace:**
+- Analiza los captions del video raw junto con los silencios
+- Clasifica cada silencio como:
+  - **Inter-oración:** Pausa entre oraciones completas (se puede cortar)
+  - **Intra-oración:** Pausa dentro de una oración (mejor preservar para naturalidad)
+- Mejora la calidad del corte final al preservar pausas naturales
+
+**Input:**
+- Captions del video raw
+- Silencios detectados
+
+**Output:**
+- Silencios clasificados con tipo semántico
+
+**Archivos generados:**
+```
+public/pipeline/{videoId}/semantic.json
+```
+
+---
+
+### Fase 6: Effects-Analysis (Opcional)
+
+**Propósito:** Detectar automáticamente dónde aplicar efectos visuales.
+
+**Qué hace:**
+- Analiza los captions con IA para identificar momentos clave
+- Sugiere zooms automáticos en puntos de énfasis
+- Detecta highlights para resaltar palabras importantes
+- Genera marcadores de efectos con timestamps
+
+**Input:**
+- Captions del video raw
+
+**Output:**
+- Lista de efectos sugeridos con timestamps y configuración
+
+**Archivos generados:**
+```
+public/pipeline/{videoId}/effects-analysis.json
+```
+
+---
+
+### Fase 7: Cut
+
+**Propósito:** Ejecutar el corte del video eliminando silencios.
 
 **Qué hace:**
 - Extrae los segmentos seleccionados del video original
 - Concatena los segmentos en orden
-- Genera el video final sin silencios ni repeticiones
+- Genera el video cortado sin silencios
 - Preserva la calidad original (re-encoding mínimo)
 
 **Input:**
@@ -190,11 +234,195 @@ public/pipeline/{videoId}/segments.json
 - Video original
 
 **Output:**
-- Video cortado listo para publicar
+- Video cortado sin silencios
 
 **Archivos generados:**
 ```
 public/videos/{videoId}-cut.mp4
+```
+
+---
+
+### Fase 8: Captions
+
+**Propósito:** Transcribir el audio del video cortado.
+
+**Qué hace:**
+- Procesa el audio del video cortado mediante Whisper CPP
+- Genera transcripción con timestamps ajustados al video final
+- Esta transcripción se usa para los subtítulos finales
+
+**Input:**
+- Video cortado
+
+**Output:**
+- Array de Caption con texto y timestamps del video cortado
+
+**Archivos generados:**
+```
+public/subs/{videoId}-cut.json
+```
+
+---
+
+### Fase 9: Script
+
+**Propósito:** Importar guion y alinear con la transcripción.
+
+**Qué hace:**
+- Permite importar el guion original del video
+- Alinea el guion con la transcripción generada
+- Identifica discrepancias entre guion y lo que se dijo
+- Facilita la detección de tomas repetidas
+
+**Input:**
+- Captions del video cortado
+- Archivo de guion (texto)
+
+**Output:**
+- Guion alineado con timestamps
+- Mapeo guion ↔ transcripción
+
+**Archivos generados:**
+```
+public/pipeline/{videoId}/script.json
+```
+
+---
+
+### Fase 10: Take-Selection
+
+**Propósito:** Seleccionar las mejores tomas de frases repetidas.
+
+**Qué hace:**
+- Detecta cuando el presentador repitió frases (múltiples tomas)
+- Agrupa tomas por frase/sección del guion
+- Permite seleccionar manualmente o automáticamente la mejor toma
+- Genera el orden final de clips para el render
+
+**Input:**
+- Captions alineados con el script
+
+**Output:**
+- Selección de tomas con orden de clips
+
+**Archivos generados:**
+```
+public/pipeline/{videoId}/take-selection.json
+```
+
+---
+
+### Fase 11: Rendered
+
+**Propósito:** Generar el video final con subtítulos y efectos.
+
+**Qué hace:**
+- Aplica la selección de tomas
+- Renderiza subtítulos sobre el video
+- Aplica efectos detectados (zooms, highlights)
+- Genera el video final listo para publicar
+
+**Input:**
+- Video cortado
+- Selección de tomas
+- Captions para subtítulos
+- Efectos (opcional)
+
+**Output:**
+- Video final renderizado con subtítulos
+
+**Archivos generados:**
+```
+public/videos/{videoId}-rendered.mp4
+```
+
+---
+
+## Dependencias entre Fases
+
+```
+STEP_DEPENDENCIES = {
+  raw: [],
+  silences: [],
+  captions-raw: [],
+  segments: [silences],
+  semantic: [captions-raw, silences],
+  effects-analysis: [captions-raw],
+  cut: [segments],
+  captions: [cut],
+  script: [captions],
+  take-selection: [captions],
+  rendered: [take-selection],
+}
+```
+
+| Fase | Depende de | Puede ejecutarse en paralelo con |
+|------|------------|----------------------------------|
+| Raw | - | - |
+| Silences | Raw | Captions-raw |
+| Captions-raw | Raw | Silences |
+| Segments | Silences | - |
+| Semantic | Captions-raw, Silences | Effects-analysis |
+| Effects-analysis | Captions-raw | Semantic |
+| Cut | Segments | - |
+| Captions | Cut | - |
+| Script | Captions | Take-selection |
+| Take-selection | Captions | Script |
+| Rendered | Take-selection | - |
+
+**Optimización:** `Silences` y `Captions-raw` pueden ejecutarse en paralelo después del import, reduciendo el tiempo total del pipeline.
+
+---
+
+## Flujo de Datos Visual
+
+```
+┌───────┐
+│  Raw  │
+└───┬───┘
+    │
+    ├─────────────────────────────┐
+    │                             │
+    ▼                             ▼
+┌──────────┐               ┌──────────────┐
+│ Silences │               │ Captions-Raw │ (opcional)
+└────┬─────┘               └──────┬───────┘
+     │                            │
+     │    ┌───────────────────────┼───────────────────┐
+     │    │                       │                   │
+     │    │                       ▼                   ▼
+     │    │              ┌──────────────┐    ┌─────────────────┐
+     │    │              │   Semantic   │    │ Effects-Analysis│
+     │    │              │  (opcional)  │    │    (opcional)   │
+     │    │              └──────────────┘    └─────────────────┘
+     │    │
+     ▼    ▼
+┌──────────┐
+│ Segments │
+└────┬─────┘
+     │
+     ▼
+┌─────────┐
+│   Cut   │
+└────┬────┘
+     │
+     ▼
+┌──────────┐
+│ Captions │
+└────┬─────┘
+     │
+     ├─────────────────┐
+     │                 │
+     ▼                 ▼
+┌─────────┐    ┌────────────────┐
+│ Script  │    │ Take-Selection │
+└─────────┘    └───────┬────────┘
+                       │
+                       ▼
+               ┌──────────┐
+               │ Rendered │
+               └──────────┘
 ```
 
 ---
@@ -212,66 +440,49 @@ Diferentes tipos de contenido requieren diferentes configuraciones de detección
 
 ---
 
-## Flujo de Datos
-
-```
-┌─────────┐
-│ Import  │
-└────┬────┘
-     │ video
-     ▼
-┌─────────┐     ┌──────────────┐
-│Silences │     │ Captions-raw │
-└────┬────┘     └──────┬───────┘
-     │                 │
-     │ silences.json   │ captions.json
-     │                 │
-     └────────┬────────┘
-              ▼
-        ┌──────────┐
-        │ Segments │ ← script (opcional)
-        └────┬─────┘
-             │ segments.json
-             ▼
-        ┌─────────┐
-        │   Cut   │
-        └────┬────┘
-             │
-             ▼
-      video-cut.mp4
-```
-
----
-
-## Dependencias entre Fases
-
-| Fase | Depende de | Puede ejecutarse en paralelo con |
-|------|------------|----------------------------------|
-| Import | - | - |
-| Silences | Import | Captions-raw |
-| Captions-raw | Import | Silences |
-| Segments | Silences, Captions-raw | - |
-| Cut | Segments | - |
-
-**Optimización:** `Silences` y `Captions-raw` pueden ejecutarse en paralelo después del import, reduciendo el tiempo total del pipeline.
-
----
-
 ## Ubicación de Archivos
 
 ```
 public/
 ├── videos/
-│   ├── {videoId}.mp4           # Video original
-│   └── {videoId}-cut.mp4       # Video cortado
+│   ├── {videoId}.mp4              # Video original (raw)
+│   ├── {videoId}-cut.mp4          # Video cortado
+│   └── {videoId}-rendered.mp4     # Video final con subtítulos
 ├── pipeline/
 │   └── {videoId}/
-│       ├── silences.json       # Detección de silencios
-│       └── segments.json       # Segmentos generados
+│       ├── silences.json          # Detección de silencios
+│       ├── segments.json          # Segmentos generados
+│       ├── semantic.json          # Análisis semántico
+│       ├── effects-analysis.json  # Efectos detectados
+│       ├── script.json            # Guion alineado
+│       └── take-selection.json    # Selección de tomas
 ├── subs/
-│   └── {videoId}.json          # Captions/transcripción
-└── videos.manifest.json        # Registro de videos
+│   ├── {videoId}-raw.json         # Captions del video original
+│   └── {videoId}-cut.json         # Captions del video cortado
+└── videos.manifest.json           # Registro de videos
 ```
+
+---
+
+## Fases Opcionales vs Requeridas
+
+| Fase | Requerida | Propósito |
+|------|-----------|-----------|
+| Raw | Sí | Punto de entrada |
+| Silences | Sí | Detectar pausas |
+| Captions-Raw | No | Para análisis semántico |
+| Segments | Sí | Definir segmentos de contenido |
+| Semantic | No | Clasificar silencios |
+| Effects-Analysis | No | Auto-detectar efectos |
+| Cut | Sí | Generar video cortado |
+| Captions | Sí | Subtítulos finales |
+| Script | No | Alinear con guion |
+| Take-Selection | No | Seleccionar mejores tomas |
+| Rendered | No | Video final con efectos |
+
+**Flujo mínimo:** Raw → Silences → Segments → Cut → Captions
+
+**Flujo completo:** Todas las fases para máxima automatización y calidad.
 
 ---
 
@@ -282,3 +493,4 @@ El pipeline está diseñado para ser resiliente:
 - **Archivos intermedios:** Cada fase genera archivos que permiten reanudar desde ese punto
 - **Idempotencia:** Re-ejecutar una fase con los mismos inputs genera los mismos outputs
 - **Edición manual:** Los archivos JSON pueden editarse manualmente para ajustes finos
+- **Dependencias:** El sistema verifica automáticamente que las dependencias estén completas antes de ejecutar una fase
