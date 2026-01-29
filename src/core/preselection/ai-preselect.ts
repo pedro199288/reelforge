@@ -85,7 +85,15 @@ function getModel(config: AIPreselectionConfig) {
       return customAnthropic(config.modelId);
     }
     return anthropic(config.modelId);
+  } else if (config.provider === "openai-compatible") {
+    // LM Studio, Ollama, or other OpenAI-compatible servers
+    const openai = createOpenAI({
+      baseURL: config.baseUrl || "http://localhost:1234/v1",
+      apiKey: config.apiKey || "not-needed", // LM Studio doesn't require API key
+    });
+    return openai(config.modelId);
   } else {
+    // Standard OpenAI
     const openai = createOpenAI({ apiKey: config.apiKey });
     return openai(config.modelId);
   }

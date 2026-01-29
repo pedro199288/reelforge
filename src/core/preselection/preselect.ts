@@ -188,13 +188,20 @@ export async function preselectSegments(
   const { captions, script, videoDurationMs, config: configOverrides } = options;
 
   // AI preselection mode
-  if (configOverrides?.ai?.enabled && configOverrides.ai.apiKey) {
+  // For cloud providers (anthropic, openai) require apiKey
+  // For local providers (openai-compatible) apiKey is optional
+  const aiConfig = configOverrides?.ai;
+  const canUseAI = aiConfig?.enabled && (
+    aiConfig.provider === "openai-compatible" || aiConfig.apiKey
+  );
+
+  if (canUseAI && aiConfig) {
     try {
       return await aiPreselectSegments(inputSegments, {
         captions,
         script,
         videoDurationMs,
-        aiConfig: configOverrides.ai,
+        aiConfig,
       });
     } catch (error) {
       console.error("AI preselection failed, falling back to traditional:", error);

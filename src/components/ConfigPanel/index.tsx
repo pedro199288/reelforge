@@ -165,7 +165,7 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                 <>
                   {/* Selector de modelo */}
                   <div className="space-y-2">
-                    <Label>Modelo de IA</Label>
+                    <Label>Proveedor / Modelo</Label>
                     <Select
                       value={`${pipelineConfig.preselection.ai.provider}:${pipelineConfig.preselection.ai.modelId}`}
                       onValueChange={(v) => {
@@ -193,28 +193,79 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                     </Select>
                   </div>
 
-                  {/* Input para API key */}
-                  <div className="space-y-2">
-                    <Label>API Key</Label>
-                    <Input
-                      type="password"
-                      placeholder="Requerida para usar IA"
-                      value={pipelineConfig.preselection?.ai?.apiKey ?? ""}
-                      onChange={(e) =>
-                        setPipelineConfig({
-                          preselection: {
-                            ai: {
-                              ...pipelineConfig.preselection?.ai,
-                              apiKey: e.target.value || undefined,
+                  {/* Campos para servidor local (LM Studio, Ollama) */}
+                  {pipelineConfig.preselection.ai.provider === "openai-compatible" && (
+                    <>
+                      <div className="space-y-2">
+                        <Label>URL del servidor</Label>
+                        <Input
+                          type="text"
+                          placeholder="http://localhost:1234/v1"
+                          value={pipelineConfig.preselection?.ai?.baseUrl ?? ""}
+                          onChange={(e) =>
+                            setPipelineConfig({
+                              preselection: {
+                                ai: {
+                                  ...pipelineConfig.preselection?.ai,
+                                  baseUrl: e.target.value || undefined,
+                                },
+                              },
+                            })
+                          }
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          LM Studio: http://localhost:1234/v1 | Ollama: http://localhost:11434/v1
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Nombre del modelo</Label>
+                        <Input
+                          type="text"
+                          placeholder="Ej: llama-3.2-3b-instruct"
+                          value={pipelineConfig.preselection?.ai?.modelId ?? ""}
+                          onChange={(e) =>
+                            setPipelineConfig({
+                              preselection: {
+                                ai: {
+                                  ...pipelineConfig.preselection?.ai,
+                                  modelId: e.target.value || "local-model",
+                                },
+                              },
+                            })
+                          }
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Nombre del modelo cargado en LM Studio u Ollama
+                        </p>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Input para API key (solo para proveedores cloud) */}
+                  {pipelineConfig.preselection.ai.provider !== "openai-compatible" && (
+                    <div className="space-y-2">
+                      <Label>API Key</Label>
+                      <Input
+                        type="password"
+                        placeholder="Requerida para usar IA"
+                        value={pipelineConfig.preselection?.ai?.apiKey ?? ""}
+                        onChange={(e) =>
+                          setPipelineConfig({
+                            preselection: {
+                              ai: {
+                                ...pipelineConfig.preselection?.ai,
+                                apiKey: e.target.value || undefined,
+                              },
                             },
-                          },
-                        })
-                      }
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Introduce tu API key de Anthropic u OpenAI segun el modelo
-                    </p>
-                  </div>
+                          })
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Introduce tu API key de Anthropic u OpenAI segun el modelo
+                      </p>
+                    </div>
+                  )}
                 </>
               )}
             </AccordionContent>

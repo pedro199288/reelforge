@@ -171,21 +171,23 @@ export interface InputSegment {
 }
 
 /** AI Provider for preselection */
-export type AIProvider = "anthropic" | "openai";
+export type AIProvider = "anthropic" | "openai" | "openai-compatible";
 
 /** AI Model options per provider */
 export interface AIModelOption {
   provider: AIProvider;
   modelId: string;
   displayName: string;
+  requiresApiKey?: boolean;
 }
 
 /** Available AI models for preselection */
 export const AI_PRESELECTION_MODELS: AIModelOption[] = [
-  { provider: "anthropic", modelId: "claude-sonnet-4-20250514", displayName: "Claude Sonnet 4" },
-  { provider: "anthropic", modelId: "claude-3-haiku-20240307", displayName: "Claude 3 Haiku (Rapido)" },
-  { provider: "openai", modelId: "gpt-4o", displayName: "GPT-4o" },
-  { provider: "openai", modelId: "gpt-4o-mini", displayName: "GPT-4o Mini (Rapido)" },
+  { provider: "anthropic", modelId: "claude-sonnet-4-20250514", displayName: "Claude Sonnet 4", requiresApiKey: true },
+  { provider: "anthropic", modelId: "claude-3-haiku-20240307", displayName: "Claude 3 Haiku (Rapido)", requiresApiKey: true },
+  { provider: "openai", modelId: "gpt-4o", displayName: "GPT-4o", requiresApiKey: true },
+  { provider: "openai", modelId: "gpt-4o-mini", displayName: "GPT-4o Mini (Rapido)", requiresApiKey: true },
+  { provider: "openai-compatible", modelId: "local-model", displayName: "LM Studio / Ollama (Local)", requiresApiKey: false },
 ];
 
 /** Configuration for AI-powered preselection */
@@ -194,6 +196,7 @@ export interface AIPreselectionConfig {
   provider: AIProvider;
   modelId: string;
   apiKey?: string; // Opcional - usa env vars si no se provee
+  baseUrl?: string; // Para servidores compatibles con OpenAI (LM Studio, Ollama, etc.)
 }
 
 /** Default AI preselection config */
