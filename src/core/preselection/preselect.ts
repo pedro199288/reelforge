@@ -15,6 +15,7 @@ import type {
   PreselectionStats,
   InputSegment,
   AIPreselectionConfig,
+  PreselectionLog,
 } from "./types";
 import {
   DEFAULT_PRESELECTION_CONFIG,
@@ -27,6 +28,12 @@ import {
 } from "./script-matcher";
 import { scoreSegments, selectByScore } from "./scorer";
 import { groupSimilarPhrases, mergeCaptions, type PhraseGroup } from "../takes/similarity";
+import {
+  createLogCollector,
+  logSegmentDecision,
+  finalizeLog,
+  type LogCollector,
+} from "./logger";
 
 /**
  * Builds a map of segment ID → take number from phrase groups
@@ -87,6 +94,18 @@ export interface PreselectOptions {
   config?: Partial<PreselectionConfig> & {
     ai?: AIPreselectionConfig;
   };
+  /** Video ID for logging (optional - only needed if you want logs) */
+  videoId?: string;
+  /** Whether to collect detailed logs */
+  collectLogs?: boolean;
+}
+
+/**
+ * Extended result type that includes logs
+ */
+export interface PreselectionResultWithLog extends PreselectionResult {
+  /** Detailed preselection log (if collectLogs was true) */
+  log?: PreselectionLog;
 }
 
 /**
@@ -165,7 +184,7 @@ function calculateStats(
  *
  * @param inputSegments - Raw segments to analyze (from silence detection)
  * @param options - Preselection options including captions and optional script
- * @returns Preselection result with segments and statistics
+ * @returns Preselection result with segments and statistics (optionally includes logs)
  *
  * @example
  * ```ts
@@ -173,44 +192,36 @@ function calculateStats(
  *   captions: captionsRaw,
  *   script: workspaceScript,
  *   videoDurationMs: 120000,
+ *   videoId: "my-video",
+ *   collectLogs: true,
  * });
  *
  * // Import preselected segments to timeline
  * for (const segment of result.segments) {
  *   timelineStore.importSegment(videoId, segment);
  * }
+ *
+ * // Access detailed logs if collected
+ * if (result.log) {
+ *   console.log("Processing time:", result.log.processingTimeMs);
+ * }
  * ```
  */
 export async function preselectSegments(
   inputSegments: InputSegment[],
   options: PreselectOptions
-): Promise<PreselectionResult> {
-  const { captions, script, videoDurationMs, config: configOverrides } = options;
+): Promise<PreselectionResultWithLog> {
+  const {
+    captions,
+    script,
+    videoDurationMs,
+    config: configOverrides,
+    videoId = "unknown",
+    collectLogs = false,
+  } = options;
 
-  // AI preselection mode
-  // For cloud providers (anthropic, openai) require apiKey
-  // For local providers (openai-compatible) apiKey is optional
-  const aiConfig = configOverrides?.ai;
-  const canUseAI = aiConfig?.enabled && (
-    aiConfig.provider === "openai-compatible" || aiConfig.apiKey
-  );
-
-  if (canUseAI && aiConfig) {
-    try {
-      return await aiPreselectSegments(inputSegments, {
-        captions,
-        script,
-        videoDurationMs,
-        aiConfig,
-      });
-    } catch (error) {
-      console.error("AI preselection failed, falling back to traditional:", error);
-      // Fall through to traditional algorithm
-    }
-  }
-
-  // Determine config based on whether script is provided
-  const hasScript = script && script.trim().length > 0;
+  // Determine config early for logging
+  const hasScript = !!(script && script.trim().length > 0);
   const baseConfig = hasScript
     ? DEFAULT_PRESELECTION_CONFIG
     : DEFAULT_PRESELECTION_CONFIG_NO_SCRIPT;
@@ -227,6 +238,47 @@ export async function preselectSegments(
       ...configOverrides?.idealDuration,
     },
   };
+
+  // Create log collector if logging is enabled
+  const collector: LogCollector | undefined = collectLogs
+    ? createLogCollector(
+        inputSegments.length,
+        hasScript,
+        hasScript ? splitIntoSentences(script!).length : undefined,
+        captions?.length ?? 0
+      )
+    : undefined;
+
+  // AI preselection mode
+  // For cloud providers (anthropic, openai) require apiKey
+  // For local providers (openai-compatible) apiKey is optional
+  const aiConfig = configOverrides?.ai;
+  const canUseAI = aiConfig?.enabled && (
+    aiConfig.provider === "openai-compatible" || aiConfig.apiKey
+  );
+
+  if (canUseAI && aiConfig) {
+    try {
+      const aiResult = await aiPreselectSegments(inputSegments, {
+        captions,
+        script,
+        videoDurationMs,
+        aiConfig,
+        collector,
+      });
+
+      // Finalize log for AI mode
+      if (collector) {
+        const log = finalizeLog(collector, videoId, config, aiResult.stats, "ai");
+        return { ...aiResult, log };
+      }
+
+      return aiResult;
+    } catch (error) {
+      console.error("AI preselection failed, falling back to traditional:", error);
+      // Fall through to traditional algorithm
+    }
+  }
 
   // Add IDs to segments
   const segmentsWithIds = inputSegments.map((seg) => ({
@@ -245,10 +297,18 @@ export async function preselectSegments(
       reason: "Sin transcripcion disponible - todos los segmentos habilitados",
     }));
 
-    return {
-      segments,
-      stats: calculateStats(segments, undefined, undefined),
-    };
+    const stats = calculateStats(segments, undefined, undefined);
+
+    // Finalize log for no-captions case
+    if (collector) {
+      for (const seg of segments) {
+        logSegmentDecision(collector, seg.id, true, seg.reason, false, 100);
+      }
+      const log = finalizeLog(collector, videoId, config, stats, "traditional");
+      return { segments, stats, log };
+    }
+
+    return { segments, stats };
   }
 
   // Get script matches if script is provided
@@ -278,7 +338,10 @@ export async function preselectSegments(
   }
 
   // Score all segments (passing takeGroups for no-script repetition detection)
-  const scores = scoreSegments(segmentsWithIds, captions, script, config, takeGroups);
+  const scores = scoreSegments(segmentsWithIds, captions, script, config, {
+    takeGroups,
+    collector,
+  });
 
   // Select segments based on scores
   const selectedIds = selectByScore(scores, config);
@@ -286,11 +349,25 @@ export async function preselectSegments(
   // Build result segments
   const segments: PreselectedSegment[] = segmentsWithIds.map((seg, index) => {
     const score = scores[index];
+    const enabled = selectedIds.has(seg.id);
+
+    // Log the decision
+    if (collector) {
+      logSegmentDecision(
+        collector,
+        seg.id,
+        enabled,
+        score.reason,
+        score.isAmbiguous,
+        score.totalScore
+      );
+    }
+
     return {
       id: seg.id,
       startMs: seg.startMs,
       endMs: seg.endMs,
-      enabled: selectedIds.has(seg.id),
+      enabled,
       score: Math.round(score.totalScore),
       reason: score.reason,
     };
@@ -299,10 +376,13 @@ export async function preselectSegments(
   // Calculate stats (passing similarity-based repetitions for no-script case)
   const stats = calculateStats(segments, script, scriptMatches, repetitionsFromSimilarity);
 
-  return {
-    segments,
-    stats,
-  };
+  // Finalize log
+  if (collector) {
+    const log = finalizeLog(collector, videoId, config, stats, "traditional");
+    return { segments, stats, log };
+  }
+
+  return { segments, stats };
 }
 
 /**

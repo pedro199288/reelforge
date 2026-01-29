@@ -13,7 +13,9 @@ import type {
   PreselectionResult,
   PreselectionStats,
   InputSegment,
+  AIPreselectionTrace,
 } from "./types";
+import { logAITrace, type LogCollector } from "./logger";
 
 // Schema para respuesta estructurada
 const AIResponseSchema = z.object({
@@ -105,9 +107,10 @@ export async function aiPreselectSegments(
     script?: string;
     videoDurationMs: number;
     aiConfig: AIPreselectionConfig;
+    collector?: LogCollector;
   }
 ): Promise<PreselectionResult> {
-  const { captions, script, aiConfig } = options;
+  const { captions, script, aiConfig, collector } = options;
 
   const segmentsWithIds = inputSegments.map((seg) => ({
     ...seg,
@@ -117,12 +120,39 @@ export async function aiPreselectSegments(
   const model = getModel(aiConfig);
   const userPrompt = buildUserPrompt(segmentsWithIds, captions, script);
 
-  const { object: result } = await generateObject({
+  const startTime = Date.now();
+
+  const { object: result, usage } = await generateObject({
     model,
     schema: AIResponseSchema,
     system: SYSTEM_PROMPT,
     prompt: userPrompt,
   });
+
+  const latencyMs = Date.now() - startTime;
+
+  // Log AI trace if collector is provided
+  if (collector) {
+    const trace: AIPreselectionTrace = {
+      provider: aiConfig.provider,
+      modelId: aiConfig.modelId,
+      systemPrompt: SYSTEM_PROMPT,
+      userPrompt,
+      rawResponse: result,
+      parsedSelections: result.selections.map((s) => ({
+        segmentIndex: s.segmentIndex,
+        enabled: s.enabled,
+        score: s.score,
+        reason: s.reason,
+      })),
+      meta: {
+        promptTokens: usage?.inputTokens,
+        completionTokens: usage?.outputTokens,
+        latencyMs,
+      },
+    };
+    logAITrace(collector, trace);
+  }
 
   const segments: PreselectedSegment[] = segmentsWithIds.map((seg, index) => {
     const selection = result.selections.find((s: { segmentIndex: number }) => s.segmentIndex === index);

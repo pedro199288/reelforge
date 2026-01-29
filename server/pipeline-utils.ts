@@ -15,7 +15,8 @@ export type PipelineStep =
   | "cut"
   | "captions"
   | "effects-analysis"
-  | "rendered";
+  | "rendered"
+  | "preselection-logs";
 
 export type StepStatus = "pending" | "running" | "completed" | "error";
 
@@ -106,6 +107,7 @@ export interface EffectsAnalysisResultMeta {
 // Step dependencies: step -> required preceding steps
 // Simplified 6-phase pipeline:
 // silences -> segments -> cut -> captions -> effects-analysis -> rendered
+// preselection-logs is a side-effect of segments, generated alongside it
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   silences: [],
   segments: ["silences"],
@@ -113,6 +115,7 @@ const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   captions: ["cut"],
   "effects-analysis": ["captions"],  // Now depends on post-cut captions
   rendered: ["effects-analysis"],
+  "preselection-logs": ["segments"],  // Generated alongside segments
 };
 
 /**
@@ -164,6 +167,7 @@ function getInitialStatus(videoId: string, filename: string): PipelineStatus {
       captions: { ...emptyStep },
       "effects-analysis": { ...emptyStep },
       rendered: { ...emptyStep },
+      "preselection-logs": { ...emptyStep },
     },
     updatedAt: new Date().toISOString(),
   };

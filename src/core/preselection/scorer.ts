@@ -21,6 +21,8 @@ import {
   getSegmentTakeNumber,
   getSegmentTranscription,
 } from "./script-matcher";
+import type { ScoringLogData, LogCollector } from "./logger";
+import { logSegmentScoring, generateCriterionReasons } from "./logger";
 
 /**
  * Checks if text appears to be a complete sentence
@@ -40,13 +42,23 @@ function isCompleteSentence(text: string): boolean {
 }
 
 /**
+ * Extended boundary analysis result for logging
+ */
+interface BoundaryAnalysis {
+  startScore: number;
+  endScore: number;
+  startAlignedWithCaption: boolean;
+  endHasPunctuation: boolean;
+}
+
+/**
  * Checks if segment boundaries align with natural speech pauses
  * (looks for punctuation near the boundaries in the transcription)
  */
 function hasNaturalBoundaries(
   segment: InputSegment,
   captions: Caption[]
-): { startScore: number; endScore: number } {
+): BoundaryAnalysis {
   // Find captions at boundaries
   const startCap = captions.find(
     (cap) => cap.startMs <= segment.startMs && cap.endMs >= segment.startMs
@@ -57,54 +69,69 @@ function hasNaturalBoundaries(
 
   let startScore = 50; // Default neutral score
   let endScore = 50;
+  let startAlignedWithCaption = false;
+  let endHasPunctuation = false;
 
   // Check if start is at beginning of a caption (natural pause)
   if (startCap) {
     const diff = Math.abs(segment.startMs - startCap.startMs);
-    if (diff < 100) startScore = 100; // Very close to caption start
-    else if (diff < 300) startScore = 75;
+    if (diff < 100) {
+      startScore = 100; // Very close to caption start
+      startAlignedWithCaption = true;
+    } else if (diff < 300) {
+      startScore = 75;
+      startAlignedWithCaption = true;
+    }
   }
 
   // Check if end aligns with sentence-ending punctuation
   if (endCap) {
-    const hasEndPunctuation = /[.!?,;]$/.test(endCap.text.trim());
+    endHasPunctuation = /[.!?,;]$/.test(endCap.text.trim());
     const diff = Math.abs(segment.endMs - endCap.endMs);
-    if (hasEndPunctuation && diff < 100) endScore = 100;
-    else if (hasEndPunctuation) endScore = 80;
+    if (endHasPunctuation && diff < 100) endScore = 100;
+    else if (endHasPunctuation) endScore = 80;
     else if (diff < 100) endScore = 70;
   }
 
-  return { startScore, endScore };
+  return { startScore, endScore, startAlignedWithCaption, endHasPunctuation };
 }
 
 /**
- * Calculates duration score based on ideal range
+ * Duration analysis result
  */
-function calculateDurationScore(
+interface DurationAnalysisResult {
+  score: number;
+  status: "too_short" | "ideal" | "too_long";
+}
+
+/**
+ * Analyzes duration with detailed status for logging
+ */
+function analyzeDuration(
   durationMs: number,
   config: PreselectionConfig
-): number {
+): DurationAnalysisResult {
   const { minMs, maxMs } = config.idealDuration;
 
   // Perfect score if within ideal range
   if (durationMs >= minMs && durationMs <= maxMs) {
-    return 100;
+    return { score: 100, status: "ideal" };
   }
 
   // Too short
   if (durationMs < minMs) {
     // Score drops as duration gets further from minimum
     // Very short segments (<1s) get low score
-    if (durationMs < 1000) return 30;
+    if (durationMs < 1000) return { score: 30, status: "too_short" };
     const ratio = durationMs / minMs;
-    return Math.round(30 + ratio * 70);
+    return { score: Math.round(30 + ratio * 70), status: "too_short" };
   }
 
   // Too long
   // Score drops gradually for longer segments
-  if (durationMs > maxMs * 2) return 50; // Very long but not terrible
+  if (durationMs > maxMs * 2) return { score: 50, status: "too_long" };
   const ratio = maxMs / durationMs;
-  return Math.round(50 + ratio * 50);
+  return { score: Math.round(50 + ratio * 50), status: "too_long" };
 }
 
 /**
@@ -175,6 +202,16 @@ function generateScoreReason(
 }
 
 /**
+ * Options for scoreSegment with logging support
+ */
+interface ScoreSegmentOptions {
+  collector?: LogCollector;
+  takeDetectionMethod?: "script" | "similarity" | "none";
+  takeGroupId?: string;
+  relatedSegmentIds?: string[];
+}
+
+/**
  * Scores a single segment
  */
 function scoreSegment(
@@ -182,34 +219,52 @@ function scoreSegment(
   captions: Caption[],
   scriptMatch: SegmentScriptMatch | undefined,
   config: PreselectionConfig,
-  takeNumber: number
+  takeNumber: number,
+  options?: ScoreSegmentOptions
 ): SegmentScore {
   const durationMs = segment.endMs - segment.startMs;
   const transcribedText = getSegmentTranscription(segment, captions);
 
   // Calculate individual scores
+  const durationAnalysis = analyzeDuration(durationMs, config);
   const breakdown: SegmentScoreBreakdown = {
     scriptMatch: scriptMatch?.coverageScore ?? 0,
     takeOrder: calculateTakeOrderScore(takeNumber),
     completeness: 50, // Default
-    duration: calculateDurationScore(durationMs, config),
+    duration: durationAnalysis.score,
   };
 
   // Calculate completeness
+  let isComplete = false;
+  let boundaries: BoundaryAnalysis = {
+    startScore: 50,
+    endScore: 50,
+    startAlignedWithCaption: false,
+    endHasPunctuation: false,
+  };
+
   if (transcribedText) {
-    const isComplete = isCompleteSentence(transcribedText);
-    const boundaries = hasNaturalBoundaries(segment, captions);
+    isComplete = isCompleteSentence(transcribedText);
+    boundaries = hasNaturalBoundaries(segment, captions);
     breakdown.completeness = isComplete
       ? 100
       : Math.round((boundaries.startScore + boundaries.endScore) / 2);
   }
 
+  // Calculate weighted scores for logging
+  const weightedScores = {
+    scriptMatch: breakdown.scriptMatch * config.weights.scriptMatch,
+    takeOrder: breakdown.takeOrder * config.weights.takeOrder,
+    completeness: breakdown.completeness * config.weights.completeness,
+    duration: breakdown.duration * config.weights.duration,
+  };
+
   // Calculate weighted total
   const totalScore =
-    breakdown.scriptMatch * config.weights.scriptMatch +
-    breakdown.takeOrder * config.weights.takeOrder +
-    breakdown.completeness * config.weights.completeness +
-    breakdown.duration * config.weights.duration;
+    weightedScores.scriptMatch +
+    weightedScores.takeOrder +
+    weightedScores.completeness +
+    weightedScores.duration;
 
   // Check if ambiguous (score between 40-60)
   const isAmbiguous = totalScore >= 40 && totalScore <= 60;
@@ -222,6 +277,59 @@ function scoreSegment(
     takeNumber
   );
 
+  // Log detailed scoring data if collector is provided
+  if (options?.collector) {
+    const criterionReasons = generateCriterionReasons(
+      breakdown,
+      config,
+      scriptMatch,
+      takeNumber,
+      isComplete,
+      durationAnalysis.status
+    );
+
+    const loggingData: ScoringLogData = {
+      segmentId: segment.id,
+      timing: {
+        startMs: segment.startMs,
+        endMs: segment.endMs,
+        durationMs,
+      },
+      scores: {
+        total: totalScore,
+        breakdown,
+        weighted: weightedScores,
+      },
+      scriptMatch: scriptMatch
+        ? {
+            matchedSentenceIndices: scriptMatch.matchedSentenceIndices,
+            coverageScore: scriptMatch.coverageScore,
+            isRepetition: scriptMatch.isRepetition,
+            transcribedText: scriptMatch.transcribedText,
+          }
+        : undefined,
+      takeInfo: {
+        takeNumber,
+        detectionMethod: options.takeDetectionMethod ?? "none",
+        groupId: options.takeGroupId,
+        relatedSegmentIds: options.relatedSegmentIds,
+      },
+      completeness: {
+        score: breakdown.completeness,
+        isCompleteSentence: isComplete,
+        boundaries,
+      },
+      durationAnalysis: {
+        score: durationAnalysis.score,
+        status: durationAnalysis.status,
+        idealRange: config.idealDuration,
+      },
+      criterionReasons,
+    };
+
+    logSegmentScoring(options.collector, loggingData);
+  }
+
   return {
     segmentId: segment.id,
     totalScore,
@@ -232,13 +340,23 @@ function scoreSegment(
 }
 
 /**
+ * Options for scoreSegments
+ */
+export interface ScoreSegmentsOptions {
+  /** Optional map of segment ID → take number (for no-script repetition detection) */
+  takeGroups?: Map<string, number>;
+  /** Optional log collector for detailed logging */
+  collector?: LogCollector;
+}
+
+/**
  * Scores all segments
  *
  * @param segments - Array of segments to score
  * @param captions - Transcription captions
  * @param script - Optional script text for matching
  * @param config - Preselection configuration
- * @param takeGroups - Optional map of segment ID → take number (for no-script repetition detection)
+ * @param options - Optional scoring options including takeGroups and collector
  * @returns Array of segment scores
  */
 export function scoreSegments(
@@ -246,8 +364,12 @@ export function scoreSegments(
   captions: Caption[],
   script: string | undefined,
   config: PreselectionConfig,
-  takeGroups?: Map<string, number>
+  options?: ScoreSegmentsOptions | Map<string, number>
 ): SegmentScore[] {
+  // Handle backward compatibility: options can be a Map (old API) or object (new API)
+  const takeGroups = options instanceof Map ? options : options?.takeGroups;
+  const collector = options instanceof Map ? undefined : options?.collector;
+
   // Match segments to script if available
   const scriptMatches = script
     ? matchSegmentsToScript(segments, captions, script)
@@ -269,13 +391,22 @@ export function scoreSegments(
 
     // Determine take number: from script matches OR from similarity-based takeGroups
     let takeNumber = 1;
+    let takeDetectionMethod: "script" | "similarity" | "none" = "none";
+
     if (scriptMatches) {
       takeNumber = getSegmentTakeNumber(segment.id, scriptMatches);
+      takeDetectionMethod = "script";
     } else if (takeGroups) {
       takeNumber = takeGroups.get(segment.id) ?? 1;
+      if (takeNumber > 1) {
+        takeDetectionMethod = "similarity";
+      }
     }
 
-    const score = scoreSegment(segment, captions, match, config, takeNumber);
+    const score = scoreSegment(segment, captions, match, config, takeNumber, {
+      collector,
+      takeDetectionMethod,
+    });
     scores.push(score);
   }
 

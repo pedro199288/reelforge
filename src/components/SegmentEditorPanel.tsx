@@ -17,8 +17,10 @@ import {
   ToggleLeft,
   ToggleRight,
   Maximize2,
+  FileText,
 } from "lucide-react";
-import type { PreselectedSegment, PreselectionStats } from "@/core/preselection";
+import type { PreselectedSegment, PreselectionStats, PreselectionLog } from "@/core/preselection";
+import { PreselectionLogs } from "./PreselectionLogs";
 import {
   useVideoSegments,
   useTimelineActions,
@@ -47,6 +49,8 @@ interface SegmentEditorPanelProps {
     segments: PreselectedSegment[];
     stats: PreselectionStats;
   };
+  /** Detailed preselection logs for debugging */
+  preselectionLog?: PreselectionLog;
 }
 
 function formatTime(seconds: number): string {
@@ -69,12 +73,14 @@ export function SegmentEditorPanel({
   totalDuration,
   onSegmentsChange,
   preselection,
+  preselectionLog,
 }: SegmentEditorPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [isPlaying, setIsPlaying] = useState(false);
   const [mode, setMode] = useState<"full" | "preview">("full");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
 
   // Smooth playhead sync using RAF during playback
   const { currentTimeMs, isTransitioning } = usePlayheadSync({
@@ -443,6 +449,18 @@ export function SegmentEditorPanel({
                 )}
                 {isPlaying ? "Pausa" : "Play"}
               </Button>
+              {preselectionLog && (
+                <Button
+                  variant={showLogs ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setShowLogs(!showLogs)}
+                  title="Ver logs de preseleccion"
+                  className="gap-1"
+                >
+                  <FileText className="w-4 h-4" />
+                  Logs
+                </Button>
+              )}
               {!isFullscreen && (
                 <Button
                   variant="ghost"
@@ -815,6 +833,16 @@ export function SegmentEditorPanel({
           */}
         </CardContent>
       </Card>
+      )}
+
+      {/* Preselection Logs Panel */}
+      {!isFullscreen && showLogs && preselectionLog && (
+        <div className="flex-1 min-h-0">
+          <PreselectionLogs
+            log={preselectionLog}
+            onSeekTo={handleSeekTo}
+          />
+        </div>
       )}
     </div>
     </FullscreenWrapper>

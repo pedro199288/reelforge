@@ -28,11 +28,25 @@ export type {
   AIPreselectionConfig,
   AIProvider,
   AIModelOption,
+  // Logging types
+  SegmentPreselectionLog,
+  AIPreselectionTrace,
+  PreselectionLog,
 } from "./types";
 
 // Main functions
 export { preselectSegments, reapplyPreselection } from "./preselect";
-export type { PreselectOptions } from "./preselect";
+export type { PreselectOptions, PreselectionResultWithLog } from "./preselect";
+
+// Logger utilities
+export {
+  createLogCollector,
+  logSegmentScoring,
+  logSegmentDecision,
+  logAITrace,
+  finalizeLog,
+} from "./logger";
+export type { LogCollector, ScoringLogData } from "./logger";
 
 // Script matching utilities
 export {
@@ -45,3 +59,4 @@ export {
 
 // Scoring utilities
 export { scoreSegments, selectByScore } from "./scorer";
+export type { ScoreSegmentsOptions } from "./scorer";

@@ -894,6 +894,62 @@ async function handleRequest(req: Request): Promise<Response> {
     });
   }
 
+  // GET /api/pipeline/:videoId/preselection-logs - Get preselection logs
+  const preselectionLogsGetMatch = path.match(/^\/api\/pipeline\/([^/]+)\/preselection-logs$/);
+  if (preselectionLogsGetMatch && req.method === "GET") {
+    const videoId = preselectionLogsGetMatch[1];
+
+    const result = loadStepResult(videoId, "preselection-logs");
+    if (!result) {
+      return new Response(JSON.stringify({ error: "Preselection logs not found" }), {
+        status: 404,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify(result), {
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    });
+  }
+
+  // POST /api/pipeline/:videoId/preselection-logs - Save preselection logs
+  const preselectionLogsPostMatch = path.match(/^\/api\/pipeline\/([^/]+)\/preselection-logs$/);
+  if (preselectionLogsPostMatch && req.method === "POST") {
+    try {
+      const videoId = preselectionLogsPostMatch[1];
+      const body = await req.json();
+      const { log } = body as { log: unknown };
+
+      if (!log) {
+        return new Response(JSON.stringify({ error: "Missing log data" }), {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      const resultPath = saveStepResult(videoId, "preselection-logs", {
+        log,
+        savedAt: new Date().toISOString(),
+      });
+
+      updateStepStatus(videoId, "preselection-logs", {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        resultFile: resultPath,
+      });
+
+      return new Response(JSON.stringify({ success: true, path: resultPath }), {
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return new Response(JSON.stringify({ error: message }), {
+        status: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   // POST /api/pipeline/step - Execute a single pipeline step (SSE)
   if (path === "/api/pipeline/step" && req.method === "POST") {
     const body = await req.json();
@@ -1431,6 +1487,8 @@ console.log("Pipeline steps:");
 console.log("  GET  /api/pipeline/status  - Get pipeline status for a video");
 console.log("  POST /api/pipeline/step    - Execute single step (SSE stream)");
 console.log("  GET  /api/pipeline/result  - Get result of a step");
+console.log("  GET  /api/pipeline/:videoId/preselection-logs - Get preselection logs");
+console.log("  POST /api/pipeline/:videoId/preselection-logs - Save preselection logs");
 console.log("  POST /api/timeline/save    - Save zoom events to .zoom.json");
 console.log("");
 console.log("Audio:");

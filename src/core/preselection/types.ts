@@ -205,3 +205,132 @@ export const DEFAULT_AI_PRESELECTION_CONFIG: AIPreselectionConfig = {
   provider: "anthropic",
   modelId: "claude-sonnet-4-20250514",
 };
+
+// =============================================================================
+// LOGGING TYPES
+// =============================================================================
+
+/**
+ * Detailed log for a single segment during preselection
+ */
+export interface SegmentPreselectionLog {
+  segmentId: string;
+  timing: {
+    startMs: number;
+    endMs: number;
+    durationMs: number;
+  };
+
+  scores: {
+    total: number;
+    breakdown: SegmentScoreBreakdown;
+    weighted: {
+      scriptMatch: number;
+      takeOrder: number;
+      completeness: number;
+      duration: number;
+    };
+  };
+
+  scriptMatch?: {
+    matchedSentenceIndices: number[];
+    coverageScore: number;
+    isRepetition: boolean;
+    transcribedText: string;
+    sentenceDetails?: Array<{
+      sentenceIndex: number;
+      sentenceText: string;
+      coverage: number;
+    }>;
+  };
+
+  takeInfo: {
+    takeNumber: number;
+    detectionMethod: "script" | "similarity" | "none";
+    groupId?: string;
+    relatedSegmentIds?: string[];
+  };
+
+  completeness: {
+    score: number;
+    isCompleteSentence: boolean;
+    boundaries: {
+      startScore: number;
+      endScore: number;
+      startAlignedWithCaption: boolean;
+      endHasPunctuation: boolean;
+    };
+  };
+
+  durationAnalysis: {
+    score: number;
+    status: "too_short" | "ideal" | "too_long";
+    idealRange: {
+      minMs: number;
+      maxMs: number;
+    };
+  };
+
+  decision: {
+    enabled: boolean;
+    reason: string;
+    isAmbiguous: boolean;
+    criterionReasons: {
+      scriptMatch?: string;
+      takeOrder?: string;
+      completeness?: string;
+      duration?: string;
+    };
+  };
+}
+
+/**
+ * AI trace when using AI-powered preselection
+ */
+export interface AIPreselectionTrace {
+  provider: AIProvider;
+  modelId: string;
+  systemPrompt: string;
+  userPrompt: string;
+  rawResponse: unknown;
+  parsedSelections: Array<{
+    segmentIndex: number;
+    enabled: boolean;
+    score: number;
+    reason: string;
+  }>;
+  meta: {
+    promptTokens?: number;
+    completionTokens?: number;
+    latencyMs: number;
+  };
+}
+
+/**
+ * Complete preselection log for a video
+ */
+export interface PreselectionLog {
+  videoId: string;
+  createdAt: string;
+  processingTimeMs: number;
+  config: {
+    mode: "traditional" | "ai";
+    weights: PreselectionConfig["weights"];
+    minScore: number;
+  };
+  context: {
+    totalSegments: number;
+    hasScript: boolean;
+    scriptSentenceCount?: number;
+    captionsCount: number;
+  };
+  segmentLogs: SegmentPreselectionLog[];
+  aiTrace?: AIPreselectionTrace;
+  stats: PreselectionStats;
+  timeline: Array<{
+    timestampMs: number;
+    segmentId: string;
+    event: "selected" | "rejected" | "ambiguous";
+    score: number;
+  }>;
+}
