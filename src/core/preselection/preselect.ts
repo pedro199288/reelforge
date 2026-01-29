@@ -30,6 +30,7 @@ import { scoreSegments, selectByScore } from "./scorer";
 import { groupSimilarPhrases, mergeCaptions, type PhraseGroup } from "../takes/similarity";
 import {
   createLogCollector,
+  logSegmentScoring,
   logSegmentDecision,
   finalizeLog,
   type LogCollector,
@@ -301,7 +302,35 @@ export async function preselectSegments(
 
     // Finalize log for no-captions case
     if (collector) {
+      // Create basic log entries for each segment (no detailed scoring without captions)
       for (const seg of segments) {
+        const durationMs = seg.endMs - seg.startMs;
+        logSegmentScoring(collector, {
+          segmentId: seg.id,
+          timing: { startMs: seg.startMs, endMs: seg.endMs, durationMs },
+          scores: {
+            total: 100,
+            breakdown: { scriptMatch: 0, takeOrder: 100, completeness: 100, duration: 100 },
+            weighted: { scriptMatch: 0, takeOrder: 100, completeness: 100, duration: 100 },
+          },
+          takeInfo: { takeNumber: 1, detectionMethod: "none" },
+          completeness: {
+            score: 100,
+            isCompleteSentence: false,
+            boundaries: { startScore: 100, endScore: 100, startAlignedWithCaption: false, endHasPunctuation: false },
+          },
+          durationAnalysis: {
+            score: 100,
+            status: "ideal",
+            idealRange: config.idealDuration,
+          },
+          criterionReasons: {
+            scriptMatch: "Sin captions para evaluar",
+            takeOrder: "Sin captions para detectar tomas",
+            completeness: "Sin captions para evaluar",
+            duration: "Duracion asumida como ideal",
+          },
+        });
         logSegmentDecision(collector, seg.id, true, seg.reason, false, 100);
       }
       const log = finalizeLog(collector, videoId, config, stats, "traditional");
