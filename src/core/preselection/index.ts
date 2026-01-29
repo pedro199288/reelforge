@@ -16,6 +16,13 @@ export type {
   SegmentScriptMatch,
   InputSegment,
   CutMapEntry,
+  // New AI-First types
+  ContentType,
+  ProposedSplit,
+  AIPreselectionWarningType,
+  AIPreselectionWarning,
+  AIPreselectionSummary,
+  AIPreselectionResult,
 } from "./types";
 
 export {
@@ -47,6 +54,49 @@ export type {
   PreselectionResultWithLog,
   ReapplyWithCaptionsOptions,
 } from "./preselect";
+
+// AI-First preselection
+export {
+  aiPreselectSegments,
+  aiPreselectSegmentsFull,
+  rerunAIPreselection,
+  AIPreselectionResponseSchema,
+} from "./ai-preselect";
+
+// AI preselection schemas
+export {
+  ContentTypeSchema,
+  ProposedSplitSchema,
+  SegmentDecisionSchema,
+  WarningTypeSchema,
+  AIPreselectionWarningSchema,
+  AIPreselectionSummarySchema,
+} from "./ai-preselection-schema";
+export type {
+  SegmentDecision,
+  AIPreselectionResponse,
+  AISegmentInput,
+  ScriptLineInput,
+} from "./ai-preselection-schema";
+
+// AI preselection prompt builders
+export {
+  parseScriptLines,
+  getSegmentTranscription as getSegmentTranscriptionForAI,
+  formatSegmentsForAI,
+  buildSystemPrompt,
+  buildUserPrompt,
+  buildUserPromptNoScript,
+} from "./ai-preselection-prompt";
+
+// Segment splitter
+export {
+  splitSegment,
+  applyProposedSplits,
+  validateProposedSplit,
+  createManualSplit,
+} from "./segment-splitter";
+export type { SplitResult } from "./segment-splitter";
 
 // Logger utilities
 export {

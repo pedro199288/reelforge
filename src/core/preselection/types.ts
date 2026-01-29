@@ -95,6 +95,30 @@ export interface SegmentScore {
 }
 
 /**
+ * Content type classification for AI preselection
+ */
+export type ContentType =
+  | "best_take" // Best take of a script line
+  | "alternative_take" // Alternative/backup take
+  | "false_start" // Aborted attempt / false start
+  | "off_script" // Content not in script (improvisation)
+  | "transition"; // Natural transition between content
+
+/**
+ * Proposed split within a segment (from AI analysis)
+ */
+export interface ProposedSplit {
+  /** Timestamp in ms where to split (relative to segment start) */
+  splitAtMs: number;
+  /** Reason for the split */
+  reason: string;
+  /** Whether to enable the first part (before split) */
+  enableFirst: boolean;
+  /** Whether to enable the second part (after split) */
+  enableSecond: boolean;
+}
+
+/**
  * A segment with preselection metadata
  */
 export interface PreselectedSegment {
@@ -110,6 +134,14 @@ export interface PreselectedSegment {
   score: number;
   /** Human-readable reason for selection/rejection */
   reason: string;
+  /** Content type classification (AI preselection) */
+  contentType?: ContentType;
+  /** Script lines covered by this segment (1-indexed, AI preselection) */
+  coversScriptLines?: number[];
+  /** If alternative_take, reference to the best take segment ID */
+  bestTakeSegmentId?: string;
+  /** Proposed splits if segment contains mixed content */
+  proposedSplits?: ProposedSplit[];
 }
 
 /**
@@ -132,6 +164,12 @@ export interface PreselectionStats {
   averageScore: number;
   /** Number of ambiguous segments */
   ambiguousSegments: number;
+  /** Number of false starts detected (AI preselection) */
+  falseStartsDetected?: number;
+  /** Script lines covered (1-indexed, AI preselection) */
+  coveredScriptLines?: number[];
+  /** Script lines NOT covered (1-indexed, AI preselection) */
+  missingScriptLines?: number[];
 }
 
 /**
@@ -350,4 +388,51 @@ export interface PreselectionLog {
     event: "selected" | "rejected" | "ambiguous";
     score: number;
   }>;
+}
+
+// =============================================================================
+// AI PRESELECTION TYPES
+// =============================================================================
+
+/**
+ * Warning types for AI preselection issues
+ */
+export type AIPreselectionWarningType =
+  | "missing_script_line" // A script line has no coverage
+  | "multiple_takes" // Multiple takes detected
+  | "audio_quality" // Potential audio quality issues
+  | "long_gap" // Long gap in coverage
+  | "out_of_order"; // Content appears out of script order
+
+/**
+ * Warning from AI preselection analysis
+ */
+export interface AIPreselectionWarning {
+  type: AIPreselectionWarningType;
+  message: string;
+  affectedScriptLines?: number[];
+  affectedSegmentIds?: string[];
+}
+
+/**
+ * Summary from AI preselection analysis
+ */
+export interface AIPreselectionSummary {
+  totalSegments: number;
+  selectedSegments: number;
+  falseStartsDetected: number;
+  repetitionsDetected: number;
+  coveredScriptLines: number[];
+  missingScriptLines: number[];
+  estimatedFinalDurationMs: number;
+}
+
+/**
+ * Complete result from AI-first preselection
+ */
+export interface AIPreselectionResult {
+  segments: PreselectedSegment[];
+  summary: AIPreselectionSummary;
+  warnings: AIPreselectionWarning[];
+  stats: PreselectionStats;
 }

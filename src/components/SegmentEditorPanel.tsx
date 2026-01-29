@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { PreselectedSegment, PreselectionStats, PreselectionLog } from "@/core/preselection";
 import { PreselectionLogs } from "./PreselectionLogs";
+import { AIPreselectionPanel } from "./AIPreselectionPanel";
 import {
   useVideoSegments,
   useTimelineActions,
@@ -51,6 +52,10 @@ interface SegmentEditorPanelProps {
   };
   /** Detailed preselection logs for debugging */
   preselectionLog?: PreselectionLog;
+  /** Script text for AI preselection */
+  script?: string;
+  /** Whether captions are available (for AI preselection) */
+  hasCaptions?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -74,6 +79,8 @@ export function SegmentEditorPanel({
   onSegmentsChange,
   preselection,
   preselectionLog,
+  script,
+  hasCaptions = false,
 }: SegmentEditorPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -81,6 +88,7 @@ export function SegmentEditorPanel({
   const [mode, setMode] = useState<"full" | "preview">("full");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
+  const [showAIPanel, setShowAIPanel] = useState(false);
 
   // Smooth playhead sync using RAF during playback
   const { currentTimeMs, isTransitioning } = usePlayheadSync({
@@ -449,11 +457,29 @@ export function SegmentEditorPanel({
                 )}
                 {isPlaying ? "Pausa" : "Play"}
               </Button>
+              {hasCaptions && (
+                <Button
+                  variant={showAIPanel ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setShowAIPanel(!showAIPanel);
+                    if (!showAIPanel) setShowLogs(false);
+                  }}
+                  title="Abrir panel de preseleccion AI"
+                  className="gap-1"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  IA
+                </Button>
+              )}
               {preselectionLog && (
                 <Button
                   variant={showLogs ? "default" : "ghost"}
                   size="sm"
-                  onClick={() => setShowLogs(!showLogs)}
+                  onClick={() => {
+                    setShowLogs(!showLogs);
+                    if (!showLogs) setShowAIPanel(false);
+                  }}
                   title="Ver logs de preseleccion"
                   className="gap-1"
                 >
@@ -833,6 +859,29 @@ export function SegmentEditorPanel({
           */}
         </CardContent>
       </Card>
+      )}
+
+      {/* AI Preselection Panel */}
+      {!isFullscreen && showAIPanel && (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <AIPreselectionPanel
+            videoId={videoId}
+            script={script}
+            hasCaptions={hasCaptions}
+            currentSegments={preselection?.segments || []}
+            onSegmentsUpdate={(newSegments) => {
+              // Import the AI-updated segments into the timeline store
+              importPreselectedSegments(videoId, newSegments, []);
+            }}
+            onSegmentClick={(segmentId) => {
+              // Find and seek to the segment
+              const segment = timelineSegments.find(s => s.id === segmentId);
+              if (segment) {
+                handleSeekTo(segment.startMs / 1000);
+              }
+            }}
+          />
+        </div>
       )}
 
       {/* Preselection Logs Panel */}
