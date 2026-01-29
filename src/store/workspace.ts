@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { persist } from "zustand/middleware";
 import { temporal, type TemporalState } from "zundo";
+import type { AIPreselectionConfig } from "@/core/preselection/types";
+import { DEFAULT_AI_PRESELECTION_CONFIG } from "@/core/preselection/types";
 
 export interface SilenceDetectionConfig {
   thresholdDb?: number;
@@ -39,6 +41,9 @@ export interface PipelineConfig {
   silence: SilenceDetectionConfig;
   takes: TakeDetectionConfig;
   output: OutputConfig;
+  preselection: {
+    ai: AIPreselectionConfig;
+  };
   /** @deprecated Use silence.thresholdDb */
   thresholdDb?: number;
   /** @deprecated Use silence.minDurationSec */
@@ -150,6 +155,9 @@ const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
     fps: 30,
     quality: "high",
   },
+  preselection: {
+    ai: DEFAULT_AI_PRESELECTION_CONFIG,
+  },
 };
 
 const DEFAULT_PROFILES: ConfigProfile[] = [
@@ -162,6 +170,7 @@ const DEFAULT_PROFILES: ConfigProfile[] = [
       silence: { thresholdDb: -35, minDurationSec: 0.3, paddingSec: 0.03 },
       takes: { minSimilarity: 80, autoSelectBest: true, selectionCriteria: "energy" },
       output: { maxDurationSec: 180, resolution: "1080x1920", fps: 30, quality: "high" },
+      preselection: { ai: DEFAULT_AI_PRESELECTION_CONFIG },
     },
   },
   {
@@ -173,6 +182,7 @@ const DEFAULT_PROFILES: ConfigProfile[] = [
       silence: { thresholdDb: -40, minDurationSec: 0.4, paddingSec: 0.05 },
       takes: { minSimilarity: 85, autoSelectBest: true, selectionCriteria: "clarity" },
       output: { maxDurationSec: 60, resolution: "1080x1920", fps: 60, quality: "high" },
+      preselection: { ai: DEFAULT_AI_PRESELECTION_CONFIG },
     },
   },
   {
@@ -184,6 +194,7 @@ const DEFAULT_PROFILES: ConfigProfile[] = [
       silence: { thresholdDb: -38, minDurationSec: 0.4, paddingSec: 0.04 },
       takes: { minSimilarity: 80, autoSelectBest: true, selectionCriteria: "fluency" },
       output: { maxDurationSec: 90, resolution: "1080x1920", fps: 30, quality: "high" },
+      preselection: { ai: DEFAULT_AI_PRESELECTION_CONFIG },
     },
   },
 ];
@@ -374,6 +385,12 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             silence: { ...state.pipelineConfig.silence, ...videoConfig.silence },
             takes: { ...state.pipelineConfig.takes, ...videoConfig.takes },
             output: { ...state.pipelineConfig.output, ...videoConfig.output },
+            preselection: {
+              ai: {
+                ...state.pipelineConfig.preselection?.ai,
+                ...videoConfig.preselection?.ai,
+              },
+            },
           };
         },
 

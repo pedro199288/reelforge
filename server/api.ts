@@ -44,6 +44,7 @@ import {
   preselectSegments,
   type PreselectionStats,
   type PreselectedSegment,
+  type AIPreselectionConfig,
 } from "../src/core/preselection";
 
 const PORT = 3012;
@@ -909,7 +910,7 @@ async function handleRequest(req: Request): Promise<Response> {
   // POST /api/pipeline/step - Execute a single pipeline step (SSE)
   if (path === "/api/pipeline/step" && req.method === "POST") {
     const body = await req.json();
-    const { videoId, filename, step, config, selectedSegments, script } = body as {
+    const { videoId, filename, step, config, selectedSegments, script, preselection } = body as {
       videoId: string;
       filename: string;
       step: PipelineStep;
@@ -922,6 +923,9 @@ async function handleRequest(req: Request): Promise<Response> {
       };
       selectedSegments?: number[];
       script?: string; // Optional script to improve Whisper transcription
+      preselection?: {
+        ai?: AIPreselectionConfig;
+      };
     };
 
     if (!videoId || !filename || !step) {
@@ -1097,11 +1101,14 @@ async function handleRequest(req: Request): Promise<Response> {
                     endMs: seg.endTime * 1000,
                   }));
 
-                  // Apply preselection
+                  // Apply preselection (with optional AI config)
                   const preselectionResult = await preselectSegments(segmentsMs, {
                     captions,
                     script: script || undefined,
                     videoDurationMs: silencesResult.videoDuration * 1000,
+                    config: {
+                      ai: preselection?.ai,
+                    },
                   });
 
                   preselectionData = {

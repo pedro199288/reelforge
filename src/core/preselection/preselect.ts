@@ -14,11 +14,13 @@ import type {
   PreselectedSegment,
   PreselectionStats,
   InputSegment,
+  AIPreselectionConfig,
 } from "./types";
 import {
   DEFAULT_PRESELECTION_CONFIG,
   DEFAULT_PRESELECTION_CONFIG_NO_SCRIPT,
 } from "./types";
+import { aiPreselectSegments } from "./ai-preselect";
 import {
   matchSegmentsToScript,
   calculateScriptCoverage,
@@ -82,7 +84,9 @@ export interface PreselectOptions {
   /** Total video duration in milliseconds */
   videoDurationMs: number;
   /** Configuration overrides */
-  config?: Partial<PreselectionConfig>;
+  config?: Partial<PreselectionConfig> & {
+    ai?: AIPreselectionConfig;
+  };
 }
 
 /**
@@ -181,7 +185,22 @@ export async function preselectSegments(
   inputSegments: InputSegment[],
   options: PreselectOptions
 ): Promise<PreselectionResult> {
-  const { captions, script, config: configOverrides } = options;
+  const { captions, script, videoDurationMs, config: configOverrides } = options;
+
+  // AI preselection mode
+  if (configOverrides?.ai?.enabled && configOverrides.ai.apiKey) {
+    try {
+      return await aiPreselectSegments(inputSegments, {
+        captions,
+        script,
+        videoDurationMs,
+        aiConfig: configOverrides.ai,
+      });
+    } catch (error) {
+      console.error("AI preselection failed, falling back to traditional:", error);
+      // Fall through to traditional algorithm
+    }
+  }
 
   // Determine config based on whether script is provided
   const hasScript = script && script.trim().length > 0;

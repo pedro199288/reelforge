@@ -6,6 +6,8 @@
   "license": "UNLICENSED",
   "private": true,
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.29",
+    "@ai-sdk/openai": "^3.0.21",
     "@anthropic-ai/sdk": "^0.71.2",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
@@ -34,6 +36,7 @@
     "@remotion/zod-types": "4.0.409",
     "@tanstack/react-router": "^1.157.3",
     "@tanstack/router-plugin": "^1.157.3",
+    "ai": "^6.0.59",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

@@ -32,6 +32,8 @@ import type {
   RenderQuality,
 } from "@/store/workspace";
 import { ProfileSelector } from "./ProfileSelector";
+import { AI_PRESELECTION_MODELS } from "@/core/preselection/types";
+import type { AIProvider } from "@/core/preselection/types";
 
 interface ConfigPanelProps {
   open: boolean;
@@ -131,6 +133,90 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                   Tiempo extra a mantener al inicio/fin de cada segmento
                 </p>
               </div>
+            </AccordionContent>
+          </AccordionItem>
+
+          {/* Preselection AI Section */}
+          <AccordionItem value="preselection">
+            <AccordionTrigger>Preseleccion con IA</AccordionTrigger>
+            <AccordionContent className="space-y-6 pt-4">
+              {/* Switch para habilitar */}
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Usar IA para preseleccion</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Reemplaza el algoritmo tradicional con analisis de IA
+                  </p>
+                </div>
+                <Switch
+                  checked={pipelineConfig.preselection?.ai?.enabled ?? false}
+                  onCheckedChange={(v) =>
+                    setPipelineConfig({
+                      preselection: {
+                        ai: { ...pipelineConfig.preselection?.ai, enabled: v },
+                      },
+                    })
+                  }
+                />
+              </div>
+
+              {/* Opciones cuando esta habilitado */}
+              {pipelineConfig.preselection?.ai?.enabled && (
+                <>
+                  {/* Selector de modelo */}
+                  <div className="space-y-2">
+                    <Label>Modelo de IA</Label>
+                    <Select
+                      value={`${pipelineConfig.preselection.ai.provider}:${pipelineConfig.preselection.ai.modelId}`}
+                      onValueChange={(v) => {
+                        const [provider, modelId] = v.split(":") as [AIProvider, string];
+                        setPipelineConfig({
+                          preselection: {
+                            ai: { ...pipelineConfig.preselection?.ai, provider, modelId },
+                          },
+                        });
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {AI_PRESELECTION_MODELS.map((m) => (
+                          <SelectItem
+                            key={`${m.provider}:${m.modelId}`}
+                            value={`${m.provider}:${m.modelId}`}
+                          >
+                            {m.displayName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Input para API key */}
+                  <div className="space-y-2">
+                    <Label>API Key</Label>
+                    <Input
+                      type="password"
+                      placeholder="Requerida para usar IA"
+                      value={pipelineConfig.preselection?.ai?.apiKey ?? ""}
+                      onChange={(e) =>
+                        setPipelineConfig({
+                          preselection: {
+                            ai: {
+                              ...pipelineConfig.preselection?.ai,
+                              apiKey: e.target.value || undefined,
+                            },
+                          },
+                        })
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Introduce tu API key de Anthropic u OpenAI segun el modelo
+                    </p>
+                  </div>
+                </>
+              )}
             </AccordionContent>
           </AccordionItem>
 

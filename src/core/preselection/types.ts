@@ -169,3 +169,36 @@ export interface InputSegment {
   /** End time in milliseconds */
   endMs: number;
 }
+
+/** AI Provider for preselection */
+export type AIProvider = "anthropic" | "openai";
+
+/** AI Model options per provider */
+export interface AIModelOption {
+  provider: AIProvider;
+  modelId: string;
+  displayName: string;
+}
+
+/** Available AI models for preselection */
+export const AI_PRESELECTION_MODELS: AIModelOption[] = [
+  { provider: "anthropic", modelId: "claude-sonnet-4-20250514", displayName: "Claude Sonnet 4" },
+  { provider: "anthropic", modelId: "claude-3-haiku-20240307", displayName: "Claude 3 Haiku (Rapido)" },
+  { provider: "openai", modelId: "gpt-4o", displayName: "GPT-4o" },
+  { provider: "openai", modelId: "gpt-4o-mini", displayName: "GPT-4o Mini (Rapido)" },
+];
+
+/** Configuration for AI-powered preselection */
+export interface AIPreselectionConfig {
+  enabled: boolean;
+  provider: AIProvider;
+  modelId: string;
+  apiKey?: string; // Opcional - usa env vars si no se provee
+}
+
+/** Default AI preselection config */
+export const DEFAULT_AI_PRESELECTION_CONFIG: AIPreselectionConfig = {
+  enabled: false,
+  provider: "anthropic",
+  modelId: "claude-sonnet-4-20250514",
+};

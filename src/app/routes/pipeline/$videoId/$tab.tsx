@@ -490,6 +490,7 @@ function PipelinePage() {
                 ? segmentSelection
                 : undefined,
             script: scriptState?.rawScript || undefined,
+            preselection: config.preselection,
           }),
         });
 
@@ -614,6 +615,7 @@ function PipelinePage() {
                   config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
               },
               script: scriptState?.rawScript || undefined,
+              preselection: config.preselection,
             }),
           });
 

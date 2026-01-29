@@ -70,6 +70,13 @@ const DEFAULT_GLOBAL_CONFIG: PipelineConfig = {
     fps: 30,
     quality: "high",
   },
+  preselection: {
+    ai: {
+      enabled: false,
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+    },
+  },
 };
 
 let idCounter = 0;

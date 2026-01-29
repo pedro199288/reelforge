@@ -20,6 +20,14 @@ export type {
 export {
   DEFAULT_PRESELECTION_CONFIG,
   DEFAULT_PRESELECTION_CONFIG_NO_SCRIPT,
+  AI_PRESELECTION_MODELS,
+  DEFAULT_AI_PRESELECTION_CONFIG,
+} from "./types";
+
+export type {
+  AIPreselectionConfig,
+  AIProvider,
+  AIModelOption,
 } from "./types";
 
 // Main functions
