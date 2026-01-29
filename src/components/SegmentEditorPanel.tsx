@@ -537,6 +537,27 @@ export function SegmentEditorPanel({
             />
           </div>
 
+          {/* AI Preselection Panel - directly below timeline */}
+          {showAIPanel && (
+            <div className="border-t max-h-[400px] overflow-y-auto">
+              <AIPreselectionPanel
+                videoId={videoId}
+                script={script}
+                hasCaptions={hasCaptions}
+                currentSegments={preselection?.segments || []}
+                onSegmentsUpdate={(newSegments) => {
+                  importPreselectedSegments(videoId, newSegments, []);
+                }}
+                onSegmentClick={(segmentId) => {
+                  const segment = timelineSegments.find(s => s.id === segmentId);
+                  if (segment) {
+                    handleSeekTo(segment.startMs / 1000);
+                  }
+                }}
+              />
+            </div>
+          )}
+
           {/* Selected segment info panel */}
           {selectedSegment && selectedSegmentIndex && (
             <div className="border-t bg-muted/30 p-4">
@@ -859,29 +880,6 @@ export function SegmentEditorPanel({
           */}
         </CardContent>
       </Card>
-      )}
-
-      {/* AI Preselection Panel */}
-      {!isFullscreen && showAIPanel && (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <AIPreselectionPanel
-            videoId={videoId}
-            script={script}
-            hasCaptions={hasCaptions}
-            currentSegments={preselection?.segments || []}
-            onSegmentsUpdate={(newSegments) => {
-              // Import the AI-updated segments into the timeline store
-              importPreselectedSegments(videoId, newSegments, []);
-            }}
-            onSegmentClick={(segmentId) => {
-              // Find and seek to the segment
-              const segment = timelineSegments.find(s => s.id === segmentId);
-              if (segment) {
-                handleSeekTo(segment.startMs / 1000);
-              }
-            }}
-          />
-        </div>
       )}
 
       {/* Preselection Logs Panel */}
