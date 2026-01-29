@@ -13,7 +13,7 @@ interface FullscreenWrapperProps {
 
 /**
  * Wrapper component that expands content to fullscreen using a CSS overlay.
- * When not in fullscreen mode, renders children directly without any wrapper.
+ * Uses consistent DOM structure to prevent re-mounting of children.
  */
 export function FullscreenWrapper({
   isFullscreen,
@@ -45,36 +45,42 @@ export function FullscreenWrapper({
     };
   }, [isFullscreen, handleKeyDown]);
 
-  // When not fullscreen, just render children
-  if (!isFullscreen) {
-    return <>{children}</>;
-  }
-
+  // Always render the same structure to prevent re-mounting children
+  // Use "contents" display when not fullscreen to make wrapper invisible to layout
   return (
     <div
       className={cn(
-        "fixed inset-0 z-50 bg-background",
-        "flex flex-col",
-        "animate-in fade-in-0 zoom-in-95 duration-200",
+        // When not fullscreen, use "contents" to be invisible to layout
+        !isFullscreen && "contents",
+        // Fullscreen styles
+        isFullscreen && [
+          "fixed inset-0 z-50 bg-background",
+          "flex flex-col",
+          "animate-in fade-in-0 duration-200",
+        ],
         className
       )}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30 flex-shrink-0">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onClose}
-          className="h-8 w-8 p-0"
-          title="Cerrar pantalla completa (ESC)"
-        >
-          <X className="w-5 h-5" />
-        </Button>
-      </div>
+      {/* Header - only visible in fullscreen */}
+      {isFullscreen && (
+        <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30 flex-shrink-0">
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClose}
+            className="h-8 w-8 p-0"
+            title="Cerrar pantalla completa (ESC)"
+          >
+            <X className="w-5 h-5" />
+          </Button>
+        </div>
+      )}
 
-      {/* Content */}
-      <div className="flex-1 overflow-auto p-4">{children}</div>
+      {/* Content wrapper - use "contents" when not fullscreen */}
+      <div className={cn(!isFullscreen && "contents", isFullscreen && "flex-1 overflow-auto p-4")}>
+        {children}
+      </div>
     </div>
   );
 }
