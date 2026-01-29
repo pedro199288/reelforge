@@ -2,7 +2,6 @@ import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 // import { Progress } from "@/components/ui/progress"; // Commented - keep for potential future use
 import { cn } from "@/lib/utils";
 import {
@@ -10,27 +9,25 @@ import {
   Pause,
   Clock,
   Scissors,
-  CheckCircle2,
-  XCircle,
   Eye,
   Film,
   Crosshair,
   Sparkles,
+  X,
+  ToggleLeft,
+  ToggleRight,
+  Maximize2,
 } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import type { PreselectedSegment, PreselectionStats } from "@/core/preselection";
 import {
   useVideoSegments,
   useTimelineActions,
+  useTimelineSelection,
   type TimelineSegment,
 } from "@/store/timeline";
 import { SegmentTimeline } from "./SegmentTimeline";
 import { usePlayheadSync } from "@/hooks/usePlayheadSync";
+import { FullscreenWrapper } from "./FullscreenWrapper";
 
 interface Segment {
   startTime: number;
@@ -77,6 +74,7 @@ export function SegmentEditorPanel({
   const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [isPlaying, setIsPlaying] = useState(false);
   const [mode, setMode] = useState<"full" | "preview">("full");
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Smooth playhead sync using RAF during playback
   const { currentTimeMs, isTransitioning } = usePlayheadSync({
@@ -91,7 +89,21 @@ export function SegmentEditorPanel({
 
   // Get segments from timeline store (these are the editable ones with enabled state)
   const timelineSegments = useVideoSegments(videoId);
-  const { importSemanticSegments, importPreselectedSegments, toggleSegment } = useTimelineActions();
+  const { importSemanticSegments, importPreselectedSegments, toggleSegment, clearSelection } = useTimelineActions();
+  const selection = useTimelineSelection();
+
+  // Find the selected segment
+  const selectedSegment = useMemo(() => {
+    if (selection?.type !== "segment") return null;
+    return timelineSegments.find(s => s.id === selection.id) ?? null;
+  }, [selection, timelineSegments]);
+
+  // Get the index of the selected segment (1-based for display)
+  const selectedSegmentIndex = useMemo(() => {
+    if (!selectedSegment) return null;
+    const index = timelineSegments.findIndex(s => s.id === selectedSegment.id);
+    return index >= 0 ? index + 1 : null;
+  }, [selectedSegment, timelineSegments]);
 
   // Track if we've already imported for this video/preselection combination
   const lastImportRef = useRef<{ videoId: string; hasPreselection: boolean } | null>(null);
@@ -344,13 +356,6 @@ export function SegmentEditorPanel({
     }
   }, [videoId, timelineSegments, toggleSegment]);
 
-  const handleToggle = useCallback(
-    (segmentId: string) => {
-      toggleSegment(videoId, segmentId);
-    },
-    [videoId, toggleSegment]
-  );
-
   // Find which segment (if any) the current time is in
   const currentSegmentIndex = useMemo(() => {
     const currentMs = currentTime * 1000;
@@ -369,11 +374,22 @@ export function SegmentEditorPanel({
   }, [currentSegmentIndex, timelineSegments]);
 
   return (
-    <div className="flex flex-col gap-4 h-full">
+    <FullscreenWrapper
+      isFullscreen={isFullscreen}
+      onClose={() => setIsFullscreen(false)}
+      title="Editor de Segmentos"
+    >
+      <div className={cn(
+        "flex flex-col gap-4",
+        isFullscreen ? "h-full" : "h-full"
+      )}>
       {/* Video Player Section */}
-      <Card className="flex-shrink-0">
-        <CardContent className="p-0">
-          <div className="relative aspect-video bg-black">
+      <Card className={cn("flex-shrink-0", isFullscreen && "flex-1 min-h-0 flex flex-col")}>
+        <CardContent className={cn("p-0", isFullscreen && "flex-1 flex flex-col min-h-0")}>
+          <div className={cn(
+            "relative bg-black",
+            isFullscreen ? "flex-1 min-h-0" : "aspect-video"
+          )}>
             {/* eslint-disable-next-line @remotion/warn-native-media-tag -- Not a Remotion composition */}
             <video
               ref={videoRef}
@@ -427,6 +443,16 @@ export function SegmentEditorPanel({
                 )}
                 {isPlaying ? "Pausa" : "Play"}
               </Button>
+              {!isFullscreen && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsFullscreen(true)}
+                  title="Pantalla completa"
+                >
+                  <Maximize2 className="w-4 h-4" />
+                </Button>
+              )}
             </div>
 
             <div className="flex items-center gap-1">
@@ -466,10 +492,118 @@ export function SegmentEditorPanel({
               enablePlayheadTransition={isTransitioning}
             />
           </div>
+
+          {/* Selected segment info panel */}
+          {selectedSegment && selectedSegmentIndex && (
+            <div className="border-t bg-muted/30 p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Badge variant="default" className="text-sm">
+                      Segmento #{selectedSegmentIndex}
+                    </Badge>
+                    <Badge
+                      variant={selectedSegment.enabled ? "default" : "secondary"}
+                      className={cn(
+                        "text-xs",
+                        selectedSegment.enabled
+                          ? "bg-green-100 text-green-700 border-green-300 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700"
+                          : "bg-red-100 text-red-700 border-red-300 dark:bg-red-900/30 dark:text-red-400 dark:border-red-700"
+                      )}
+                    >
+                      {selectedSegment.enabled ? "Habilitado" : "Deshabilitado"}
+                    </Badge>
+                    {selectedSegment.preselectionScore !== undefined && (
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-xs",
+                          selectedSegment.preselectionScore >= 85
+                            ? "bg-green-100 text-green-700 border-green-300 dark:bg-green-900/30 dark:text-green-400"
+                            : selectedSegment.preselectionScore >= 60
+                              ? "bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-900/30 dark:text-yellow-400"
+                              : "bg-red-100 text-red-700 border-red-300 dark:bg-red-900/30 dark:text-red-400"
+                        )}
+                      >
+                        {selectedSegment.preselectionScore}%
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <span className="text-muted-foreground block text-xs">Inicio</span>
+                      <span className="font-mono font-medium">
+                        {formatTime(selectedSegment.startMs / 1000)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground block text-xs">Fin</span>
+                      <span className="font-mono font-medium">
+                        {formatTime(selectedSegment.endMs / 1000)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground block text-xs">Duracion</span>
+                      <span className="font-medium flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-muted-foreground" />
+                        {formatDuration((selectedSegment.endMs - selectedSegment.startMs) / 1000)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground block text-xs">ID</span>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {selectedSegment.id}
+                      </span>
+                    </div>
+                  </div>
+
+                  {selectedSegment.preselectionReason && (
+                    <div className="mt-3 p-2 bg-background/50 rounded border text-xs">
+                      <span className="text-muted-foreground">Razon: </span>
+                      <span>{selectedSegment.preselectionReason}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleSeekTo(selectedSegment.startMs / 1000)}
+                    title="Ir al inicio del segmento"
+                  >
+                    <Play className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant={selectedSegment.enabled ? "outline" : "default"}
+                    size="sm"
+                    onClick={() => toggleSegment(videoId, selectedSegment.id)}
+                    title={selectedSegment.enabled ? "Deshabilitar segmento" : "Habilitar segmento"}
+                  >
+                    {selectedSegment.enabled ? (
+                      <ToggleRight className="w-4 h-4" />
+                    ) : (
+                      <ToggleLeft className="w-4 h-4" />
+                    )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearSelection}
+                    title="Cerrar panel"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Segments Review Section */}
+      {/* Segments Review Section - Hidden in fullscreen mode */}
+      {!isFullscreen && (
       <Card className="flex-1 min-h-0 flex flex-col">
         <CardHeader className="pb-3 flex-shrink-0">
           <div className="flex items-center justify-between">
@@ -681,6 +815,8 @@ export function SegmentEditorPanel({
           */}
         </CardContent>
       </Card>
+      )}
     </div>
+    </FullscreenWrapper>
   );
 }
