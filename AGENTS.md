@@ -14,6 +14,24 @@ bun run <script>      # Run scripts
 
 **NEVER start the dev server.** The user runs it manually. Don't run `bun run dev`, `bun run studio`, or any server-starting commands.
 
+## Business Documentation
+
+La documentación de funcionalidades a nivel de negocio se encuentra en `/docs/business/`.
+
+**Estructura:**
+```
+/docs/business/
+├── pipeline/README.md    # Flujo de edición de video
+├── {feature}/README.md   # Otras funcionalidades
+```
+
+**Propósito:** Explicar qué hace cada funcionalidad y cómo funciona a alto nivel, sin entrar en detalles de código. Útil para:
+- Onboarding de nuevos desarrolladores
+- Entender el contexto antes de modificar código
+- Documentar decisiones de diseño
+
+**Cuándo consultar:** Antes de trabajar en una funcionalidad, revisar su documentación de negocio para entender el contexto completo.
+
 ## Issue Tracking
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
