@@ -26,13 +26,12 @@ export function VideoGrid({ videos }: VideoGridProps) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {videos.map((video) => (
-        <Link
-          key={video.id}
-          to="/media/$videoId"
-          params={{ videoId: video.id }}
-          className="block"
-        >
-          <Card className="overflow-hidden hover:border-primary transition-colors cursor-pointer h-full">
+        <Card key={video.id} className="overflow-hidden hover:border-primary transition-colors h-full">
+          <Link
+            to="/media/$videoId"
+            params={{ videoId: video.id }}
+            className="block"
+          >
             <div className="aspect-video bg-muted flex items-center justify-center">
               <div className="text-4xl text-muted-foreground/50">
                 <svg
@@ -50,20 +49,29 @@ export function VideoGrid({ videos }: VideoGridProps) {
                 </svg>
               </div>
             </div>
-            <CardContent className="p-4">
-              <div className="font-medium truncate mb-1">{video.title}</div>
-              <div className="text-sm text-muted-foreground truncate mb-2">
-                {video.filename}
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">
-                  {formatFileSize(video.size)}
-                </span>
+          </Link>
+          <CardContent className="p-4">
+            <div className="font-medium truncate mb-1">{video.title}</div>
+            <div className="text-sm text-muted-foreground truncate mb-2">
+              {video.filename}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">
+                {formatFileSize(video.size)}
+              </span>
+              <div className="flex items-center gap-2">
+                <Link
+                  to="/edit/$videoId"
+                  params={{ videoId: video.id }}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Editar
+                </Link>
                 <VideoStatusBadge hasCaptions={video.hasCaptions} />
               </div>
-            </CardContent>
-          </Card>
-        </Link>
+            </div>
+          </CardContent>
+        </Card>
       ))}
     </div>
   );

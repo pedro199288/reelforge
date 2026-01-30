@@ -7,6 +7,8 @@ import {
   useRef,
 } from "react";
 import { toast } from "sonner";
+import { Player, type PlayerRef } from "@remotion/player";
+import { CaptionedVideoForPlayer } from "@/remotion-compositions/CaptionedVideo/ForPlayer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { Video } from "@/components/VideoList";
@@ -21,6 +23,7 @@ import {
   useTimelineSelection,
   useTimelineStore,
 } from "@/store/timeline";
+import { useSubtitleStore } from "@/store/subtitles";
 import { SegmentTimeline } from "@/components/SegmentTimeline";
 import { AIPreselectionPanel } from "@/components/AIPreselectionPanel";
 import { PreselectionLogs } from "@/components/PreselectionLogs";
@@ -42,6 +45,8 @@ import {
   Scissors,
   Undo2,
   Redo2,
+  Eye,
+  Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -151,9 +156,12 @@ function EditorPage() {
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>("details");
   const [isPlaying, setIsPlaying] = useState(false);
+  const [previewMode, setPreviewMode] = useState<"edit" | "preview">("edit");
+  const [cutVideoDuration, setCutVideoDuration] = useState<number | null>(null);
 
   // --- Video ref ---
   const videoRef = useRef<HTMLVideoElement>(null);
+  const playerRef = useRef<PlayerRef>(null);
 
   // --- Store data ---
   const scriptState = useScript(videoId);
@@ -162,6 +170,7 @@ function EditorPage() {
   const { importSemanticSegments, importPreselectedSegments, toggleSegment, clearSelection } =
     useTimelineActions();
   const selection = useTimelineSelection();
+  const { highlightColor, fontFamily } = useSubtitleStore();
 
   // --- Playhead sync ---
   const { currentTimeMs, isTransitioning } = usePlayheadSync({
@@ -187,6 +196,18 @@ function EditorPage() {
     if (video?.hasCaptions) return true;
     return (pipelineStatus?.steps.captions?.status === "completed") || false;
   }, [video, pipelineStatus]);
+
+  const canPreview = useMemo(() => {
+    if (!pipelineStatus) return false;
+    return (
+      pipelineStatus.steps.cut?.status === "completed" &&
+      pipelineStatus.steps.captions?.status === "completed"
+    );
+  }, [pipelineStatus]);
+
+  const FPS = 30;
+  const cutVideoSrc = `/videos/${videoId}-cut.mp4`;
+  const durationInFrames = cutVideoDuration ? Math.floor(cutVideoDuration * FPS) : 0;
 
   const completedSteps = useMemo(() => {
     if (!pipelineStatus) return 0;
@@ -296,6 +317,29 @@ function EditorPage() {
       loadPipelineStatus(video);
     }
   }, [video, loadPipelineStatus]);
+
+  // --- Probe cut video duration for Remotion preview ---
+  useEffect(() => {
+    if (!canPreview) {
+      setCutVideoDuration(null);
+      return;
+    }
+    const probe = document.createElement("video");
+    probe.src = cutVideoSrc;
+    probe.onloadedmetadata = () => {
+      setCutVideoDuration(probe.duration);
+    };
+    probe.onerror = () => {
+      setCutVideoDuration(null);
+    };
+  }, [canPreview, cutVideoSrc]);
+
+  // Reset preview mode if preview becomes unavailable
+  useEffect(() => {
+    if (!canPreview && previewMode === "preview") {
+      setPreviewMode("edit");
+    }
+  }, [canPreview, previewMode]);
 
   // --- Import segments to timeline store ---
   const lastImportRef = useRef<{
@@ -538,6 +582,27 @@ function EditorPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {canPreview && (
+            <Button
+              variant={previewMode === "preview" ? "default" : "ghost"}
+              size="sm"
+              className="h-7 px-2 gap-1.5"
+              onClick={() => setPreviewMode(previewMode === "edit" ? "preview" : "edit")}
+              title={previewMode === "edit" ? "Vista previa con efectos" : "Volver a edición"}
+            >
+              {previewMode === "edit" ? (
+                <>
+                  <Eye className="w-4 h-4" />
+                  <span className="text-xs">Preview</span>
+                </>
+              ) : (
+                <>
+                  <Pencil className="w-4 h-4" />
+                  <span className="text-xs">Editar</span>
+                </>
+              )}
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -856,7 +921,38 @@ function EditorPage() {
 
         {/* Video player area */}
         <div className="flex-1 flex items-center justify-center bg-black min-h-0 overflow-hidden relative">
-          {videoPath ? (
+          {previewMode === "preview" && canPreview && durationInFrames > 0 ? (
+            <div
+              style={{
+                width: "100%",
+                maxWidth: 400,
+                aspectRatio: "9/16",
+              }}
+            >
+              <Player
+                ref={playerRef}
+                component={CaptionedVideoForPlayer}
+                inputProps={{
+                  src: cutVideoSrc,
+                  highlightColor,
+                  fontFamily,
+                }}
+                durationInFrames={durationInFrames}
+                compositionWidth={1080}
+                compositionHeight={1920}
+                fps={FPS}
+                controls
+                loop
+                style={{
+                  width: "100%",
+                  height: "100%",
+                }}
+                clickToPlay
+                doubleClickToFullscreen
+                spaceKeyToPlayOrPause
+              />
+            </div>
+          ) : videoPath ? (
             <>
               {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
               <video
@@ -911,7 +1007,12 @@ function EditorPage() {
       {/* Status bar */}
       <footer className="flex items-center justify-between px-4 h-8 border-t bg-muted/30 text-xs flex-shrink-0">
         <div className="flex items-center gap-4">
-          {selectedSegment && selectedSegmentIndex ? (
+          {previewMode === "preview" ? (
+            <span className="text-muted-foreground flex items-center gap-1.5">
+              <Eye className="w-3 h-3" />
+              Vista previa — {formatDuration(cutVideoDuration ?? 0)}
+            </span>
+          ) : selectedSegment && selectedSegmentIndex ? (
             <span className="text-muted-foreground">
               Seg #{selectedSegmentIndex}: {selectedSegment.preselectionScore ?? "—"}% |{" "}
               {formatDuration(
