@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
@@ -1643,6 +1643,26 @@ function FastForwardIcon({ className }: { className?: string }) {
   );
 }
 
+function Maximize2Icon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" y1="3" x2="14" y2="10" />
+      <line x1="3" y1="21" x2="10" y2="14" />
+    </svg>
+  );
+}
+
 function StepResultDisplay({
   step,
   result,
@@ -1794,16 +1814,29 @@ function StepResultDisplay({
             )}
 
             {selectedVideo && (
-              <SegmentEditorPanel
-                videoId={selectedVideo.id}
-                videoPath={`${API_URL}/api/stream/videos/${selectedVideo.filename}`}
-                segments={r.segments}
-                totalDuration={r.totalDuration}
-                preselection={r.preselection}
-                preselectionLog={preselectionLog ?? undefined}
-                script={script}
-                hasCaptions={captionsCompleted}
-              />
+              <>
+                <div className="flex justify-end">
+                  <Link
+                    to="/edit/$videoId"
+                    params={{ videoId: selectedVideo.id }}
+                  >
+                    <Button variant="outline" size="sm" className="gap-2">
+                      <Maximize2Icon className="w-4 h-4" />
+                      Abrir en Editor
+                    </Button>
+                  </Link>
+                </div>
+                <SegmentEditorPanel
+                  videoId={selectedVideo.id}
+                  videoPath={`${API_URL}/api/stream/videos/${selectedVideo.filename}`}
+                  segments={r.segments}
+                  totalDuration={r.totalDuration}
+                  preselection={r.preselection}
+                  preselectionLog={preselectionLog ?? undefined}
+                  script={script}
+                  hasCaptions={captionsCompleted}
+                />
+              </>
             )}
           </div>
         );
