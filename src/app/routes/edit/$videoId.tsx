@@ -47,6 +47,7 @@ import {
   Redo2,
   Eye,
   Pencil,
+  SkipForward,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -153,14 +154,18 @@ function EditorPage() {
     useState<PreselectionLog | null>(null);
 
   // --- UI state ---
-  const [sidePanelOpen, setSidePanelOpen] = useState(true);
+  const [sidePanelOpen, setSidePanelOpen] = useState(
+    () => typeof window !== "undefined" && window.innerWidth >= 768
+  );
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>("details");
   const [isPlaying, setIsPlaying] = useState(false);
   const [previewMode, setPreviewMode] = useState<"edit" | "preview">("edit");
+  const [continuousPlay, setContinuousPlay] = useState(false);
   const [cutVideoDuration, setCutVideoDuration] = useState<number | null>(null);
 
   // --- Video ref ---
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const playerRef = useRef<PlayerRef>(null);
 
   // --- Store data ---
@@ -174,7 +179,7 @@ function EditorPage() {
 
   // --- Playhead sync ---
   const { currentTimeMs, isTransitioning } = usePlayheadSync({
-    videoRef,
+    videoElement: videoEl,
     isPlaying,
   });
   const currentTime = currentTimeMs / 1000;
@@ -395,26 +400,6 @@ function EditorPage() {
     importPreselectedSegments,
   ]);
 
-  // --- Video playback ---
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
-    const handleEnded = () => setIsPlaying(false);
-
-    v.addEventListener("play", handlePlay);
-    v.addEventListener("pause", handlePause);
-    v.addEventListener("ended", handleEnded);
-
-    return () => {
-      v.removeEventListener("play", handlePlay);
-      v.removeEventListener("pause", handlePause);
-      v.removeEventListener("ended", handleEnded);
-    };
-  }, []);
-
   // --- Preview playback: skip disabled segments ---
   const mapTimeToEdited = useCallback(
     (originalMs: number): number | null => {
@@ -460,7 +445,7 @@ function EditorPage() {
   }, []);
 
   useEffect(() => {
-    if (!isPlaying || isJumpingRef.current) return;
+    if (!isPlaying || isJumpingRef.current || continuousPlay) return;
     const v = videoRef.current;
     if (!v) return;
 
@@ -491,7 +476,7 @@ function EditorPage() {
     } else {
       v.pause();
     }
-  }, [currentTimeMs, isPlaying, enabledSegments, performJump]);
+  }, [currentTimeMs, isPlaying, enabledSegments, performJump, continuousPlay]);
 
   const togglePlayback = useCallback(() => {
     const v = videoRef.current;
@@ -500,21 +485,23 @@ function EditorPage() {
     if (isPlaying) {
       v.pause();
     } else {
-      const currentMs = v.currentTime * 1000;
-      const editedMs = mapTimeToEdited(currentMs);
-      if (editedMs === null) {
-        const nextSegment = enabledSegments.find(
-          (s) => s.startMs > currentMs
-        );
-        if (nextSegment) {
-          v.currentTime = nextSegment.startMs / 1000;
-        } else if (enabledSegments.length > 0) {
-          v.currentTime = enabledSegments[0].startMs / 1000;
+      if (!continuousPlay) {
+        const currentMs = v.currentTime * 1000;
+        const editedMs = mapTimeToEdited(currentMs);
+        if (editedMs === null) {
+          const nextSegment = enabledSegments.find(
+            (s) => s.startMs > currentMs
+          );
+          if (nextSegment) {
+            v.currentTime = nextSegment.startMs / 1000;
+          } else if (enabledSegments.length > 0) {
+            v.currentTime = enabledSegments[0].startMs / 1000;
+          }
         }
       }
       v.play();
     }
-  }, [isPlaying, enabledSegments, mapTimeToEdited]);
+  }, [isPlaying, enabledSegments, mapTimeToEdited, continuousPlay]);
 
   const handleSeekTo = useCallback((ms: number) => {
     if (videoRef.current) {
@@ -606,7 +593,7 @@ function EditorPage() {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 px-2"
+            className="h-7 px-2 hidden md:inline-flex"
             onClick={() => setSidePanelOpen(!sidePanelOpen)}
             title={sidePanelOpen ? "Cerrar panel lateral" : "Abrir panel lateral"}
           >
@@ -620,10 +607,28 @@ function EditorPage() {
       </header>
 
       {/* Main area: Side panel + Video */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Side panel */}
+      <div className="flex flex-1 min-h-0 overflow-hidden relative">
+        {/* Side panel - mobile: fullscreen overlay, desktop: inline */}
         {sidePanelOpen && (
-          <aside className="w-[380px] flex-shrink-0 border-r flex flex-col min-h-0 overflow-hidden">
+          <aside className={cn(
+            "flex flex-col min-h-0 overflow-hidden bg-background z-30",
+            // Mobile: fullscreen overlay
+            "fixed inset-0 md:static md:inset-auto",
+            // Desktop: 480px inline panel
+            "md:w-[480px] md:flex-shrink-0 md:border-r"
+          )}>
+            {/* Mobile close button */}
+            <div className="flex items-center justify-between px-3 py-2 border-b md:hidden">
+              <span className="text-sm font-medium">Panel</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={() => setSidePanelOpen(false)}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
             {/* Side panel tabs */}
             <div className="flex border-b bg-muted/20 flex-shrink-0">
               <SidePanelTabButton
@@ -919,6 +924,18 @@ function EditorPage() {
           </aside>
         )}
 
+        {/* Mobile floating button to open side panel */}
+        {!sidePanelOpen && (
+          <button
+            type="button"
+            className="absolute top-2 left-2 z-20 md:hidden bg-background/80 backdrop-blur-sm border rounded-full p-2 shadow-md"
+            onClick={() => setSidePanelOpen(true)}
+            title="Abrir panel"
+          >
+            <PanelLeftOpen className="w-4 h-4" />
+          </button>
+        )}
+
         {/* Video player area */}
         <div className="flex-1 flex items-center justify-center bg-black min-h-0 overflow-hidden relative">
           {previewMode === "preview" && canPreview && durationInFrames > 0 ? (
@@ -956,17 +973,20 @@ function EditorPage() {
             <>
               {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
               <video
-                ref={videoRef}
+                ref={(el) => { videoRef.current = el; setVideoEl(el); }}
                 src={videoPath}
                 className="max-h-full max-w-full object-contain"
                 onClick={togglePlayback}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onEnded={() => setIsPlaying(false)}
               />
 
               {/* Play overlay */}
               {!isPlaying && (
                 <button
                   type="button"
-                  className="absolute inset-0 flex items-center justify-center bg-black/20 cursor-pointer"
+                  className="absolute inset-0 flex items-center justify-center cursor-pointer"
                   onClick={togglePlayback}
                 >
                   <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center">
@@ -1000,6 +1020,7 @@ function EditorPage() {
               }
             }}
             enablePlayheadTransition={isTransitioning}
+            continuousPlay={continuousPlay}
           />
         </div>
       )}
@@ -1027,6 +1048,18 @@ function EditorPage() {
           )}
         </div>
         <div className="flex items-center gap-1">
+          {previewMode === "edit" && (
+            <Button
+              variant={continuousPlay ? "default" : "ghost"}
+              size="sm"
+              className={cn("h-6 px-2 text-xs gap-1", continuousPlay && "bg-amber-600 hover:bg-amber-700 text-white")}
+              onClick={() => setContinuousPlay(!continuousPlay)}
+              title={continuousPlay ? "Reproducción continua activa" : "Saltar segmentos deshabilitados"}
+            >
+              <SkipForward className="w-3.5 h-3.5" />
+              {continuousPlay ? "Continuo" : "Skip"}
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"

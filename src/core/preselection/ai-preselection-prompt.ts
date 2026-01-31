@@ -75,7 +75,7 @@ Tu tarea es comparar la TRANSCRIPCIÓN REAL (captions) de un video con el GUIÓN
 Clasifica cada segmento como:
 - **best_take**: La mejor versión de una línea del guión (clara, fluida, completa)
 - **alternative_take**: Una versión aceptable pero inferior a otra toma
-- **false_start**: Toma falsa - "Hoy vamos a-- Hoy vamos a hablar de..."
+- **false_start**: Toma falsa CLARA: frase interrumpida a mitad de palabra o tartamudeo evidente (NO usar si la frase se completa)
 - **off_script**: Contenido fuera del guión (evalúa si aporta valor)
 - **transition**: Transición natural entre contenido
 
@@ -88,27 +88,55 @@ Clasifica cada segmento como:
 4. **Naturalidad**: Tono conversacional, no robótico
 
 ### Para detectar tomas falsas:
-- Repetición de palabras iniciales: "Hoy... hoy vamos..."
-- Frases incompletas seguidas de reinicio
-- Muletillas de frustración: "eh", "ah", "espera"
-- Duración muy corta (<2s) para una línea larga
+Un segmento es false_start SOLO si cumple AMBAS condiciones:
+1. La frase se CORTA a mitad de palabra o queda claramente incompleta
+2. Hay un REINICIO claro (el hablante vuelve a empezar la misma idea)
+
+Ejemplos de false_start REAL:
+- "Hoy vamos a-- Hoy vamos a hablar de..." (corte a mitad + reinicio)
+- "En este vi... En este video veremos..." (tartamudeo + reinicio)
+
+Ejemplos que NO son false_start:
+- "Hoy vamos a hablar de... eh... de inteligencia artificial" → frase COMPLETA con pausa, es alternative_take o best_take
+- "Bueno, eh, empecemos" → muletilla normal, NO es toma falsa
+- Segmento corto pero con frase completa → NO es toma falsa
+
+**Regla de oro: si tienes DUDA, clasifica como alternative_take en vez de false_start.**
 
 ### Para evaluar improvisaciones:
 - Si añade contexto útil → habilitar con score alto
 - Si es divagación sin valor → deshabilitar
 - Si es un chiste/comentario relevante → habilitar
 
+### Cuándo usar proposedSplits:
+Propón splits cuando un segmento contenga contenido que debería dividirse:
+
+1. **Frase repetida**: El hablante dice la misma frase dos veces dentro del mismo segmento → propón split entre ambas repeticiones y habilita solo la mejor mitad
+   - Ejemplo: Segmento con "Hoy vamos a hablar de IA. [pausa] Hoy vamos a hablar de inteligencia artificial" → split entre ambas frases
+2. **Contenido mixto**: El segmento cubre dos líneas distintas del guión que deberían evaluarse por separado → split en el punto de transición
+
+**NO usar proposedSplits para:**
+- Pausas normales dentro de una frase fluida
+- Segmentos cortos (<3s) donde no tiene sentido dividir
+
 ## Formato de Respuesta
 
 Para cada segmento incluye:
 - segmentId: El ID del segmento
 - enabled: true para incluir, false para descartar
-- score: 0-100 (calidad del contenido)
+- score: 0-100 — usa la escala completa con valores precisos (no solo múltiplos de 10):
+  - 90-100: Toma perfecta, fluida, completa, lista para usar
+  - 75-89: Buena toma con detalles menores (pequeña pausa, leve titubeo)
+  - 60-74: Toma aceptable pero con defectos notables
+  - 40-59: Toma mediocre, usar solo si no hay alternativa
+  - 20-39: Toma pobre, incompleta o con errores claros
+  - 0-19: Inutilizable (toma falsa, sin audio, ruido)
+  Diferencia entre tomas similares: si dos tomas son "buenas", da 82 a la mejor y 76 a la otra, NO 80 a ambas.
 - reason: Explicación en español
 - coversScriptLines: Array de números de línea [1, 2, 3...]
 - contentType: El tipo de contenido
 - bestTakeSegmentId: Si es alternative_take, cuál es la mejor toma
-- proposedSplits: Si hay contenido mixto, dónde cortar
+- proposedSplits: Si el segmento contiene una frase repetida o contenido mixto, dónde dividir
 
 ## Advertencias
 
@@ -118,7 +146,7 @@ Genera warnings para:
 - Contenido fuera de orden
 - Gaps largos en la cobertura
 
-Sé AGRESIVO cortando tomas falsas y repeticiones. Un buen editor elimina 40-70% del material crudo.`;
+Sé PRECISO: solo descarta segmentos cuando tengas evidencia clara. Es mejor conservar un segmento dudoso que eliminar contenido válido. Prioriza: 1) cubrir todas las líneas del guión, 2) seleccionar la toma más fluida, 3) descartar solo tomas falsas evidentes.`;
 }
 
 /**

@@ -5,17 +5,25 @@ import { temporal, type TemporalState } from "zundo";
 import type { AIPreselectionConfig } from "@/core/preselection/types";
 import { DEFAULT_AI_PRESELECTION_CONFIG } from "@/core/preselection/types";
 
+export type SilenceDetectionMethod = "ffmpeg" | "envelope";
+
 export interface SilenceDetectionConfig {
+  method?: SilenceDetectionMethod;
   thresholdDb?: number;
   minDurationSec?: number;
   paddingSec?: number;
+  amplitudeThreshold?: number;
+  envelopeSamplesPerSecond?: number;
 }
 
 // Default values for silence detection (used when fields are undefined)
 export const SILENCE_DEFAULTS = {
+  method: "ffmpeg" as SilenceDetectionMethod,
   thresholdDb: -40,
   minDurationSec: 0.5,
   paddingSec: 0.05,
+  amplitudeThreshold: 0.05,
+  envelopeSamplesPerSecond: 200,
 } as const;
 
 export type TakeSelectionCriteria = "clarity" | "fluency" | "energy" | "duration";

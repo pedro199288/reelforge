@@ -242,7 +242,7 @@ export const AI_PRESELECTION_MODELS: AIModelOption[] = [
   { provider: "anthropic", modelId: "claude-3-haiku-20240307", displayName: "Claude 3 Haiku (Rapido)", requiresApiKey: true },
   { provider: "openai", modelId: "gpt-4o", displayName: "GPT-4o", requiresApiKey: true },
   { provider: "openai", modelId: "gpt-4o-mini", displayName: "GPT-4o Mini (Rapido)", requiresApiKey: true },
-  { provider: "openai-compatible", modelId: "local-model", displayName: "LM Studio / Ollama (Local)", requiresApiKey: false },
+  { provider: "openai-compatible", modelId: "qwen/qwen2.5-vl-7b", displayName: "Qwen 2.5 VL 7B", requiresApiKey: false },
 ];
 
 /** Configuration for AI-powered preselection */

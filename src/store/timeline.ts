@@ -149,6 +149,7 @@ interface TimelineStore {
   ) => void;
   addSegment: (videoId: string, startMs: number, endMs: number) => string;
   deleteSegment: (videoId: string, segmentId: string) => void;
+  splitSegmentAt: (videoId: string, segmentId: string, splitAtMs: number) => string | null;
 
   // Bulk actions
   clearTimeline: (videoId: string) => void;
@@ -508,23 +509,32 @@ export const useTimelineStore = create<TimelineStore>()(
             const timeline = state.timelines[videoId];
             if (!timeline) return state;
 
+            const sorted = [...timeline.segments].sort((a, b) => a.startMs - b.startMs);
+            const idx = sorted.findIndex((s) => s.id === id);
+            if (idx < 0) return state;
+
+            const segment = sorted[idx];
+            const prev = sorted[idx - 1];
+            const next = sorted[idx + 1];
+
+            let clamped = newValue;
+            if (field === "startMs") {
+              // Don't overlap with previous segment, and keep min 100ms duration
+              clamped = Math.max(prev ? prev.endMs : 0, clamped);
+              clamped = Math.min(clamped, segment.endMs - 100);
+            } else {
+              // Keep min 100ms duration, and don't overlap with next segment
+              clamped = Math.max(segment.startMs + 100, clamped);
+              if (next) clamped = Math.min(next.startMs, clamped);
+            }
+
             return {
               timelines: {
                 ...state.timelines,
                 [videoId]: {
                   ...timeline,
                   segments: timeline.segments
-                    .map((s) => {
-                      if (s.id !== id) return s;
-                      // Ensure valid range
-                      if (field === "startMs") {
-                        const newStart = Math.max(0, Math.min(newValue, s.endMs - 100));
-                        return { ...s, startMs: newStart };
-                      } else {
-                        const newEnd = Math.max(s.startMs + 100, newValue);
-                        return { ...s, endMs: newEnd };
-                      }
-                    })
+                    .map((s) => (s.id !== id ? s : { ...s, [field]: clamped }))
                     .sort((a, b) => a.startMs - b.startMs),
                 },
               },
@@ -576,6 +586,59 @@ export const useTimelineStore = create<TimelineStore>()(
                   : state.selection,
             };
           }),
+
+        splitSegmentAt: (videoId, segmentId, splitAtMs) => {
+          const state = get();
+          const timeline = state.timelines[videoId];
+          if (!timeline) return null;
+
+          const segment = timeline.segments.find((s) => s.id === segmentId);
+          if (!segment) return null;
+
+          const MIN_DURATION_MS = 200;
+          const leftDuration = splitAtMs - segment.startMs;
+          const rightDuration = segment.endMs - splitAtMs;
+
+          if (leftDuration < MIN_DURATION_MS || rightDuration < MIN_DURATION_MS) {
+            return null;
+          }
+
+          const leftId = `${segmentId}-a`;
+          const rightId = `${segmentId}-b`;
+
+          const leftSegment: TimelineSegment = {
+            id: leftId,
+            startMs: segment.startMs,
+            endMs: splitAtMs,
+            enabled: segment.enabled,
+            preselectionScore: segment.preselectionScore,
+            preselectionReason: segment.preselectionReason,
+          };
+
+          const rightSegment: TimelineSegment = {
+            id: rightId,
+            startMs: splitAtMs,
+            endMs: segment.endMs,
+            enabled: segment.enabled,
+            preselectionScore: segment.preselectionScore,
+            preselectionReason: segment.preselectionReason,
+          };
+
+          set({
+            timelines: {
+              ...state.timelines,
+              [videoId]: {
+                ...timeline,
+                segments: timeline.segments
+                  .flatMap((s) => (s.id === segmentId ? [leftSegment, rightSegment] : [s]))
+                  .sort((a, b) => a.startMs - b.startMs),
+              },
+            },
+            selection: { type: "segment", id: rightId },
+          });
+
+          return rightId;
+        },
 
         // Bulk actions
         clearTimeline: (videoId) =>
@@ -811,6 +874,7 @@ export const useTimelineActions = () =>
       resizeSegment: state.resizeSegment,
       addSegment: state.addSegment,
       deleteSegment: state.deleteSegment,
+      splitSegmentAt: state.splitSegmentAt,
       clearTimeline: state.clearTimeline,
       clearSegments: state.clearSegments,
       importFromEvents: state.importFromEvents,

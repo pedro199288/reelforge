@@ -9,8 +9,6 @@ import {
   Pause,
   Clock,
   Scissors,
-  Eye,
-  Film,
   Crosshair,
   Sparkles,
   X,
@@ -30,6 +28,7 @@ import {
 } from "@/store/timeline";
 import { SegmentTimeline } from "./SegmentTimeline";
 import { usePlayheadSync } from "@/hooks/usePlayheadSync";
+import { useSegmentEditorShortcuts } from "@/hooks/useSegmentEditorShortcuts";
 import { FullscreenWrapper } from "./FullscreenWrapper";
 
 interface Segment {
@@ -82,17 +81,17 @@ export function SegmentEditorPanel({
   script,
   hasCaptions = false,
 }: SegmentEditorPanelProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [isPlaying, setIsPlaying] = useState(false);
-  const [mode, setMode] = useState<"full" | "preview">("full");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
-  const [showAIPanel, setShowAIPanel] = useState(false);
+  const [showAIPanel, setShowAIPanel] = useState(true);
 
   // Smooth playhead sync using RAF during playback
   const { currentTimeMs, isTransitioning } = usePlayheadSync({
-    videoRef,
+    videoElement: videoEl,
     isPlaying,
   });
   const currentTime = currentTimeMs / 1000;
@@ -105,6 +104,13 @@ export function SegmentEditorPanel({
   const timelineSegments = useVideoSegments(videoId);
   const { importSemanticSegments, importPreselectedSegments, toggleSegment, clearSelection } = useTimelineActions();
   const selection = useTimelineSelection();
+
+  // Keyboard shortcuts (CapCut-style)
+  useSegmentEditorShortcuts({
+    videoId,
+    videoRef,
+    totalDurationMs: totalDuration * 1000,
+  });
 
   // Find the selected segment
   const selectedSegment = useMemo(() => {
@@ -253,36 +259,10 @@ export function SegmentEditorPanel({
     setTimeout(() => setIsJumping(false), 200);
   }, []);
 
-  // Handle video events (play/pause/ended)
+  // Preview playback: proactive edge detection with lookahead
+  // Always skips disabled segments during playback
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
-    const handleEnded = () => setIsPlaying(false);
-
-    video.addEventListener("play", handlePlay);
-    video.addEventListener("pause", handlePause);
-    video.addEventListener("ended", handleEnded);
-
-    return () => {
-      video.removeEventListener("play", handlePlay);
-      video.removeEventListener("pause", handlePause);
-      video.removeEventListener("ended", handleEnded);
-    };
-  }, []);
-
-  // Reset jump state when switching modes
-  useEffect(() => {
-    setIsJumping(false);
-    lastJumpTargetRef.current = null;
-  }, [mode]);
-
-  // Preview mode: proactive edge detection with lookahead
-  useEffect(() => {
-    // Only process in preview mode while playing
-    if (mode !== "preview" || !isPlaying || isJumping) return;
+    if (!isPlaying || isJumping) return;
 
     const video = videoRef.current;
     if (!video) return;
@@ -320,7 +300,7 @@ export function SegmentEditorPanel({
       // No more segments - end of video
       video.pause();
     }
-  }, [currentTimeMs, mode, isPlaying, isJumping, enabledSegments, performJump]);
+  }, [currentTimeMs, isPlaying, isJumping, enabledSegments, performJump]);
 
   const togglePlayback = useCallback(() => {
     const video = videoRef.current;
@@ -329,22 +309,20 @@ export function SegmentEditorPanel({
     if (isPlaying) {
       video.pause();
     } else {
-      // In preview mode, if starting from a cut region, jump to next segment
-      if (mode === "preview") {
-        const currentMs = video.currentTime * 1000;
-        const editedMs = mapTimeToEdited(currentMs);
-        if (editedMs === null) {
-          const nextSegment = enabledSegments.find((s) => s.startMs > currentMs);
-          if (nextSegment) {
-            video.currentTime = nextSegment.startMs / 1000;
-          } else if (enabledSegments.length > 0) {
-            video.currentTime = enabledSegments[0].startMs / 1000;
-          }
+      // If starting from a cut/disabled region, jump to next enabled segment
+      const currentMs = video.currentTime * 1000;
+      const editedMs = mapTimeToEdited(currentMs);
+      if (editedMs === null) {
+        const nextSegment = enabledSegments.find((s) => s.startMs > currentMs);
+        if (nextSegment) {
+          video.currentTime = nextSegment.startMs / 1000;
+        } else if (enabledSegments.length > 0) {
+          video.currentTime = enabledSegments[0].startMs / 1000;
         }
       }
       video.play();
     }
-  }, [isPlaying, mode, enabledSegments, mapTimeToEdited]);
+  }, [isPlaying, enabledSegments, mapTimeToEdited]);
 
   const handleSeekTo = useCallback((seconds: number) => {
     const video = videoRef.current;
@@ -406,10 +384,13 @@ export function SegmentEditorPanel({
           )}>
             {/* eslint-disable-next-line @remotion/warn-native-media-tag -- Not a Remotion composition */}
             <video
-              ref={videoRef}
+              ref={(el) => { videoRef.current = el; setVideoEl(el); }}
               src={videoPath}
               className="w-full h-full object-contain"
               onClick={togglePlayback}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
+              onEnded={() => setIsPlaying(false)}
             />
 
             {/* Play/Pause overlay */}
@@ -424,16 +405,6 @@ export function SegmentEditorPanel({
                 </div>
               </button>
             )}
-
-            {/* Mode indicator */}
-            <div className="absolute top-2 left-2">
-              <Badge
-                variant={mode === "preview" ? "default" : "secondary"}
-                className="text-xs"
-              >
-                {mode === "preview" ? "Preview" : "Completo"}
-              </Badge>
-            </div>
 
             {/* Time indicator */}
             <div className="absolute bottom-2 right-2 bg-black/70 px-2 py-1 rounded text-white text-sm font-mono">
@@ -499,26 +470,6 @@ export function SegmentEditorPanel({
               )}
             </div>
 
-            <div className="flex items-center gap-1">
-              <Button
-                variant={mode === "full" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setMode("full")}
-                className="gap-1"
-              >
-                <Film className="w-4 h-4" />
-                Completo
-              </Button>
-              <Button
-                variant={mode === "preview" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setMode("preview")}
-                className="gap-1"
-              >
-                <Eye className="w-4 h-4" />
-                Preview
-              </Button>
-            </div>
           </div>
 
           {/* Timeline integrated with video (no separate Card) */}

@@ -28,6 +28,7 @@ import {
 import type { Caption } from "../src/core/script/align";
 import {
   detectSilences,
+  detectSilencesEnvelope,
   getVideoDuration,
   silencesToSegments,
   getTotalDuration,
@@ -1350,9 +1351,12 @@ async function handleRequest(req: Request): Promise<Response> {
       filename: string;
       step: PipelineStep;
       config?: {
+        method?: "ffmpeg" | "envelope";
         thresholdDb?: number;
         minDurationSec?: number;
         paddingSec?: number;
+        amplitudeThreshold?: number;
+        envelopeSamplesPerSecond?: number;
         codecCopy?: boolean;
         crf?: number;
       };
@@ -1428,22 +1432,36 @@ async function handleRequest(req: Request): Promise<Response> {
 
         switch (step) {
           case "silences": {
+            const method = config?.method ?? "ffmpeg";
+
             sendEvent("progress", { step, progress: 10, message: "Obteniendo duración del video..." });
             const duration = await getVideoDuration(videoPath);
 
-            sendEvent("progress", { step, progress: 30, message: "Detectando silencios..." });
-            const silences = await detectSilences(videoPath, {
-              thresholdDb: config?.thresholdDb ?? -35,
-              minDurationSec: config?.minDurationSec ?? 0.5,
-            });
+            sendEvent("progress", { step, progress: 30, message: `Detectando silencios (${method})...` });
+
+            let silences;
+            if (method === "envelope") {
+              silences = await detectSilencesEnvelope(videoPath, {
+                amplitudeThreshold: config?.amplitudeThreshold ?? 0.05,
+                minDurationSec: config?.minDurationSec ?? 0.3,
+                samplesPerSecond: config?.envelopeSamplesPerSecond ?? 200,
+              });
+            } else {
+              silences = await detectSilences(videoPath, {
+                thresholdDb: config?.thresholdDb ?? -35,
+                minDurationSec: config?.minDurationSec ?? 0.5,
+              });
+            }
 
             sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
             const result: SilencesResult = {
               silences,
               videoDuration: duration,
               config: {
+                method,
                 thresholdDb: config?.thresholdDb ?? -35,
                 minDurationSec: config?.minDurationSec ?? 0.5,
+                amplitudeThreshold: method === "envelope" ? (config?.amplitudeThreshold ?? 0.05) : undefined,
               },
               createdAt: new Date().toISOString(),
             };

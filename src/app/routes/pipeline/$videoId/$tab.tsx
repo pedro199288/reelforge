@@ -59,7 +59,12 @@ interface BackendPipelineStatus {
 interface SilencesResult {
   silences: Array<{ start: number; end: number; duration: number }>;
   videoDuration: number;
-  config: { thresholdDb: number; minDurationSec: number };
+  config: {
+    method?: "ffmpeg" | "envelope";
+    thresholdDb: number;
+    minDurationSec: number;
+    amplitudeThreshold?: number;
+  };
   createdAt: string;
 }
 
@@ -493,6 +498,8 @@ function PipelinePage() {
             filename,
             step,
             config: {
+              method:
+                config.silence.method ?? SILENCE_DEFAULTS.method,
               thresholdDb:
                 config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb,
               minDurationSec:
@@ -500,6 +507,10 @@ function PipelinePage() {
                 SILENCE_DEFAULTS.minDurationSec,
               paddingSec:
                 config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
+              amplitudeThreshold:
+                config.silence.amplitudeThreshold ?? SILENCE_DEFAULTS.amplitudeThreshold,
+              envelopeSamplesPerSecond:
+                config.silence.envelopeSamplesPerSecond ?? SILENCE_DEFAULTS.envelopeSamplesPerSecond,
             },
             selectedSegments:
               step === "cut" && segmentSelection.length > 0
@@ -622,6 +633,8 @@ function PipelinePage() {
               filename,
               step,
               config: {
+                method:
+                  config.silence.method ?? SILENCE_DEFAULTS.method,
                 thresholdDb:
                   config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb,
                 minDurationSec:
@@ -629,6 +642,10 @@ function PipelinePage() {
                   SILENCE_DEFAULTS.minDurationSec,
                 paddingSec:
                   config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
+                amplitudeThreshold:
+                  config.silence.amplitudeThreshold ?? SILENCE_DEFAULTS.amplitudeThreshold,
+                envelopeSamplesPerSecond:
+                  config.silence.envelopeSamplesPerSecond ?? SILENCE_DEFAULTS.envelopeSamplesPerSecond,
               },
               script: scriptState?.rawScript || undefined,
               preselection: config.preselection,
@@ -1690,6 +1707,7 @@ function StepResultDisplay({
     switch (step) {
       case "silences": {
         const r = result as SilencesResult;
+        const method = r.config.method ?? "ffmpeg";
         return (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div>
@@ -1703,13 +1721,17 @@ function StepResultDisplay({
               </span>
             </div>
             <div>
-              <span className="text-muted-foreground">Threshold:</span>
-              <span className="ml-2 font-medium">{r.config.thresholdDb}dB</span>
+              <span className="text-muted-foreground">Metodo:</span>
+              <span className="ml-2 font-medium">
+                {method === "envelope" ? "Envolvente" : "FFmpeg"}
+              </span>
             </div>
             <div>
-              <span className="text-muted-foreground">Min duracion:</span>
+              <span className="text-muted-foreground">Threshold:</span>
               <span className="ml-2 font-medium">
-                {r.config.minDurationSec}s
+                {method === "envelope"
+                  ? r.config.amplitudeThreshold ?? 0.05
+                  : `${r.config.thresholdDb}dB`}
               </span>
             </div>
           </div>

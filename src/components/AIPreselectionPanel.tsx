@@ -109,8 +109,50 @@ export function AIPreselectionPanel({
 }: AIPreselectionPanelProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<AIPreselectionResult | null>(null);
+  const hasExistingAIAnalysis = currentSegments.some(s => s.contentType != null);
+
+  // Reconstruct AI result from persisted segments when component remounts
+  const effectiveResult = useMemo<AIPreselectionResult | null>(() => {
+    if (result) return result;
+    if (!hasExistingAIAnalysis) return null;
+
+    const segs = currentSegments;
+    const enabledSegs = segs.filter(s => s.enabled);
+    const coveredLines = [...new Set(segs.flatMap(s => s.coversScriptLines || []))].sort((a, b) => a - b);
+    const scriptLineCount = script ? script.split("\n").filter(l => l.trim()).length : 0;
+    const allLines = Array.from({ length: scriptLineCount }, (_, i) => i + 1);
+    const missingLines = allLines.filter(l => !coveredLines.includes(l));
+
+    return {
+      segments: segs,
+      summary: {
+        totalSegments: segs.length,
+        selectedSegments: enabledSegs.length,
+        falseStartsDetected: segs.filter(s => s.contentType === "false_start").length,
+        repetitionsDetected: segs.filter(s => s.contentType === "alternative_take").length,
+        coveredScriptLines: coveredLines,
+        missingScriptLines: missingLines,
+        estimatedFinalDurationMs: enabledSegs.reduce((sum, s) => sum + (s.endMs - s.startMs), 0),
+      },
+      warnings: [],
+      stats: {
+        totalSegments: segs.length,
+        selectedSegments: enabledSegs.length,
+        originalDurationMs: segs.reduce((sum, s) => sum + (s.endMs - s.startMs), 0),
+        selectedDurationMs: enabledSegs.reduce((sum, s) => sum + (s.endMs - s.startMs), 0),
+        scriptCoverage: scriptLineCount > 0 ? Math.round((coveredLines.length / scriptLineCount) * 100) : 0,
+        repetitionsRemoved: segs.filter(s => s.contentType === "alternative_take").length,
+        averageScore: enabledSegs.length > 0 ? Math.round(enabledSegs.reduce((sum, s) => sum + s.score, 0) / enabledSegs.length) : 0,
+        ambiguousSegments: 0,
+        falseStartsDetected: segs.filter(s => s.contentType === "false_start").length,
+        coveredScriptLines: coveredLines,
+        missingScriptLines: missingLines,
+      },
+    };
+  }, [result, hasExistingAIAnalysis, currentSegments, script]);
   const [selectedModel, setSelectedModel] = useState<string>(
-    AI_PRESELECTION_MODELS[0].modelId
+    AI_PRESELECTION_MODELS.find((m) => m.provider === "openai-compatible")?.modelId
+    || AI_PRESELECTION_MODELS[0].modelId
   );
   const [showDetails, setShowDetails] = useState(false);
   const [showCoverage, setShowCoverage] = useState(false);
@@ -248,7 +290,7 @@ export function AIPreselectionPanel({
 
   // Group segments by content type
   const segmentsByType = useMemo(() => {
-    const segments = result?.segments || currentSegments;
+    const segments = effectiveResult?.segments || currentSegments;
     const grouped = new Map<ContentType, PreselectedSegment[]>();
 
     for (const seg of segments) {
@@ -260,7 +302,7 @@ export function AIPreselectionPanel({
     }
 
     return grouped;
-  }, [result, currentSegments]);
+  }, [effectiveResult, currentSegments]);
 
   // Format log timestamp
   const formatLogTime = (date: Date) => {
@@ -435,7 +477,7 @@ export function AIPreselectionPanel({
                 <Loader2 className="w-4 h-4 mr-1 animate-spin" />
                 Analizando...
               </>
-            ) : result ? (
+            ) : (result || hasExistingAIAnalysis) ? (
               <>
                 <RefreshCw className="w-4 h-4 mr-1" />
                 Re-analizar
@@ -499,43 +541,43 @@ export function AIPreselectionPanel({
       )}
 
       {/* Results summary */}
-      {result && (
+      {effectiveResult && (
         <div className="space-y-3">
           {/* Quick stats */}
           <div className="grid grid-cols-4 gap-2">
             <div className="text-center p-2 rounded bg-green-50 dark:bg-green-950/30">
               <div className="text-lg font-bold text-green-600">
-                {result.summary.selectedSegments}
+                {effectiveResult.summary.selectedSegments}
               </div>
               <div className="text-[10px] text-muted-foreground">Seleccionados</div>
             </div>
             <div className="text-center p-2 rounded bg-red-50 dark:bg-red-950/30">
               <div className="text-lg font-bold text-red-600">
-                {result.summary.falseStartsDetected}
+                {effectiveResult.summary.falseStartsDetected}
               </div>
               <div className="text-[10px] text-muted-foreground">Tomas Falsas</div>
             </div>
             <div className="text-center p-2 rounded bg-yellow-50 dark:bg-yellow-950/30">
               <div className="text-lg font-bold text-yellow-600">
-                {result.summary.repetitionsDetected}
+                {effectiveResult.summary.repetitionsDetected}
               </div>
               <div className="text-[10px] text-muted-foreground">Repeticiones</div>
             </div>
             <div className="text-center p-2 rounded bg-blue-50 dark:bg-blue-950/30">
               <div className="text-lg font-bold text-blue-600">
-                {Math.round(result.summary.estimatedFinalDurationMs / 1000)}s
+                {Math.round(effectiveResult.summary.estimatedFinalDurationMs / 1000)}s
               </div>
               <div className="text-[10px] text-muted-foreground">Duracion</div>
             </div>
           </div>
 
           {/* Warnings */}
-          {result.warnings.length > 0 && (
+          {effectiveResult.warnings.length > 0 && (
             <div className="space-y-1">
-              {result.warnings.slice(0, 2).map(renderWarning)}
-              {result.warnings.length > 2 && (
+              {effectiveResult.warnings.slice(0, 2).map(renderWarning)}
+              {effectiveResult.warnings.length > 2 && (
                 <div className="text-xs text-muted-foreground text-center">
-                  +{result.warnings.length - 2} advertencias mas
+                  +{effectiveResult.warnings.length - 2} advertencias mas
                 </div>
               )}
             </div>
@@ -554,21 +596,21 @@ export function AIPreselectionPanel({
                   <FileText className="w-4 h-4" />
                   <span className="text-sm">Cobertura del Guion</span>
                   <Badge variant="outline" className="ml-auto text-xs">
-                    {result.summary.coveredScriptLines.length} /{" "}
-                    {result.summary.coveredScriptLines.length +
-                      result.summary.missingScriptLines.length}
+                    {effectiveResult.summary.coveredScriptLines.length} /{" "}
+                    {effectiveResult.summary.coveredScriptLines.length +
+                      effectiveResult.summary.missingScriptLines.length}
                   </Badge>
                 </div>
               </CollapsibleTrigger>
               <CollapsibleContent className="pt-2">
                 <ScriptCoverageMap
                   script={script}
-                  segments={result.segments}
-                  coveredLines={result.summary.coveredScriptLines}
-                  missingLines={result.summary.missingScriptLines}
+                  segments={effectiveResult.segments}
+                  coveredLines={effectiveResult.summary.coveredScriptLines}
+                  missingLines={effectiveResult.summary.missingScriptLines}
                   maxHeight="200px"
                   onLineClick={(lineNumber) => {
-                    const seg = result.segments.find(
+                    const seg = effectiveResult.segments.find(
                       (s) =>
                         s.coversScriptLines?.includes(lineNumber) && s.enabled
                     );
@@ -593,7 +635,7 @@ export function AIPreselectionPanel({
                 <Target className="w-4 h-4" />
                 <span className="text-sm">Decisiones por Segmento</span>
                 <Badge variant="outline" className="ml-auto text-xs">
-                  {result.segments.length}
+                  {effectiveResult.segments.length}
                 </Badge>
               </div>
             </CollapsibleTrigger>

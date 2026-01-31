@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import type { TimelineSegment } from "@/store/timeline";
+import { Waveform } from "@/components/Timeline/Waveform";
+import { useTimelineStore, type TimelineSegment } from "@/store/timeline";
 
 interface SegmentMarkerProps {
   segment: TimelineSegment;
@@ -10,6 +11,20 @@ interface SegmentMarkerProps {
   onSelect: () => void;
   onResize?: (field: "startMs" | "endMs", newValue: number) => void;
   onToggleEnabled?: () => void;
+  /** Offset in ms for contiguous (no-gap) layout */
+  contiguousOffsetMs?: number;
+  /** Waveform samples for this segment (used as background in contiguous mode) */
+  waveformSlice?: number[];
+}
+
+function downsampleForWidth(samples: number[], targetWidth: number): number[] {
+  if (samples.length <= targetWidth) return samples;
+  const step = samples.length / targetWidth;
+  const result: number[] = [];
+  for (let i = 0; i < targetWidth; i++) {
+    result.push(samples[Math.floor(i * step)]);
+  }
+  return result;
 }
 
 type DragMode = "resize-start" | "resize-end" | null;
@@ -50,8 +65,11 @@ export function SegmentMarker({
   onSelect,
   onResize,
   onToggleEnabled,
+  contiguousOffsetMs,
+  waveformSlice,
 }: SegmentMarkerProps) {
   const markerRef = useRef<HTMLDivElement>(null);
+  const preDragSnapshotRef = useRef<{ timelines: any } | null>(null);
   const [dragMode, setDragMode] = useState<DragMode>(null);
   const [dragStartX, setDragStartX] = useState(0);
   const [originalStartMs, setOriginalStartMs] = useState(0);
@@ -60,8 +78,10 @@ export function SegmentMarker({
   // Calculate pixels per millisecond based on zoom level
   const pxPerMs = (100 * zoomLevel) / 1000;
 
-  // Use actual calculated positions - no artificial expansion
-  const x = (segment.startMs - viewportStartMs) * pxPerMs;
+  // Use contiguous offset if provided, otherwise absolute position
+  const isContiguous = contiguousOffsetMs !== undefined;
+  const displayStartMs = isContiguous ? contiguousOffsetMs : segment.startMs;
+  const x = (displayStartMs - viewportStartMs) * pxPerMs;
   const actualWidth = (segment.endMs - segment.startMs) * pxPerMs;
   // Keep minimum width for clickability, but this is the VISUAL width only
   const width = Math.max(actualWidth, 4); // Minimum 4px for clickability
@@ -84,6 +104,13 @@ export function SegmentMarker({
 
       // Capture pointer for smooth dragging
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+      // Batch undo: save pre-drag state and pause undo tracking
+      const temporal = useTimelineStore.temporal.getState();
+      preDragSnapshotRef.current = {
+        timelines: useTimelineStore.getState().timelines,
+      };
+      temporal.pause();
     },
     [onSelect, onResize, segment.startMs, segment.endMs]
   );
@@ -114,6 +141,18 @@ export function SegmentMarker({
     (e: React.PointerEvent) => {
       if (dragMode) {
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+
+        // Batch undo: insert pre-drag snapshot as single undo entry and resume
+        const temporal = useTimelineStore.temporal.getState();
+        if (preDragSnapshotRef.current) {
+          useTimelineStore.temporal.setState({
+            pastStates: [...temporal.pastStates, preDragSnapshotRef.current],
+            futureStates: [],
+          });
+          preDragSnapshotRef.current = null;
+        }
+        temporal.resume();
+
         setDragMode(null);
       }
     },
@@ -155,7 +194,7 @@ export function SegmentMarker({
       ref={markerRef}
       className={cn(
         "absolute top-1 bottom-1 rounded transition-shadow select-none box-border",
-        "border-2 flex items-center justify-center text-xs font-medium",
+        "border-2 flex items-end justify-center text-xs font-medium",
         segment.enabled
           ? scoreColors
             ? `${scoreColors.bg} ${scoreColors.border} ${scoreColors.text}`
@@ -183,8 +222,21 @@ export function SegmentMarker({
         />
       )}
 
-      {/* Content */}
-      <span className="truncate px-1 pointer-events-none opacity-70">
+      {/* Waveform background (contiguous mode) */}
+      {waveformSlice && waveformSlice.length > 0 && (
+        <div className="absolute inset-0 overflow-hidden rounded pointer-events-none opacity-40">
+          <Waveform
+            data={downsampleForWidth(waveformSlice, Math.max(1, Math.round(width)))}
+            width={Math.max(1, Math.round(width))}
+            height={isContiguous ? 72 : 56}
+            color={segment.enabled ? "rgb(74, 222, 128)" : "rgb(156, 163, 175)"}
+            style="mirror"
+          />
+        </div>
+      )}
+
+      {/* Content label (bottom) */}
+      <span className="truncate px-1 pb-0.5 pointer-events-none opacity-70 text-[10px] leading-none">
         {segment.enabled
           ? segment.preselectionScore !== undefined && actualWidth > 30
             ? `${segment.preselectionScore}%`

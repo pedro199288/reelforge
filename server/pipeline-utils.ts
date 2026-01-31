@@ -40,8 +40,10 @@ export interface SilencesResult {
   silences: SilenceRange[];
   videoDuration: number;
   config: {
+    method?: "ffmpeg" | "envelope";
     thresholdDb: number;
     minDurationSec: number;
+    amplitudeThreshold?: number;
   };
   createdAt: string;
 }

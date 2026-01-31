@@ -7,9 +7,10 @@
  * - Detect false starts and aborted attempts
  * - Evaluate off-script content for value
  */
-import { generateObject } from "ai";
+import { generateObject, type LanguageModelUsage } from "ai";
 import { anthropic, createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
+import { OpenAICompatibleChatLanguageModel } from "@ai-sdk/openai-compatible";
 import { nanoid } from "nanoid";
 import type { Caption } from "../script/align";
 import type {
@@ -27,6 +28,7 @@ import type {
 import { logAITrace, type LogCollector } from "./logger";
 import {
   AIPreselectionResponseSchema,
+  type AIPreselectionResponse,
   type SegmentDecision,
 } from "./ai-preselection-schema";
 import {
@@ -51,15 +53,43 @@ function getModel(config: AIPreselectionConfig) {
     }
     return anthropic(config.modelId);
   } else if (config.provider === "openai-compatible") {
-    const openai = createOpenAI({
-      baseURL: config.baseUrl || "http://localhost:1234/v1",
-      apiKey: config.apiKey || "not-needed",
+    return new OpenAICompatibleChatLanguageModel(config.modelId, {
+      provider: "lmstudio.chat",
+      url: ({ path }) => `${config.baseUrl || "http://localhost:1234/v1"}${path}`,
+      headers: () => ({}),
+      supportsStructuredOutputs: true,
     });
-    return openai(config.modelId);
   } else {
     const openai = createOpenAI({ apiKey: config.apiKey });
     return openai(config.modelId);
   }
+}
+
+/**
+ * Generate AI preselection response using generateObject for all providers.
+ */
+async function generateAIResponse(
+  model: ReturnType<typeof getModel>,
+  config: AIPreselectionConfig,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<{ object: AIPreselectionResponse; usage: LanguageModelUsage }> {
+  console.log("[ai-preselect] Generating AI response for model:", config.modelId);
+  const isLocalModel = config.provider === "openai-compatible";
+  const result = await generateObject({
+    model,
+    schema: AIPreselectionResponseSchema,
+    system: systemPrompt,
+    prompt: userPrompt,
+    timeout: isLocalModel ? 300_000 : 120_000,
+    ...(isLocalModel && {
+      maxOutputTokens: 16384,
+      providerOptions: {
+        openaiCompatible: { strictJsonSchema: false },
+      },
+    }),
+  });
+  return { object: result.object, usage: result.usage };
 }
 
 /**
@@ -169,12 +199,9 @@ export async function aiPreselectSegments(
   const startTime = Date.now();
 
   try {
-    const { object: result, usage } = await generateObject({
-      model,
-      schema: AIPreselectionResponseSchema,
-      system: systemPrompt,
-      prompt: userPrompt,
-    });
+    const { object: result, usage } = await generateAIResponse(
+      model, aiConfig, systemPrompt, userPrompt
+    );
 
     const latencyMs = Date.now() - startTime;
 
@@ -270,12 +297,9 @@ export async function aiPreselectSegmentsFull(
   const startTime = Date.now();
 
   try {
-    const { object: result, usage } = await generateObject({
-      model,
-      schema: AIPreselectionResponseSchema,
-      system: systemPrompt,
-      prompt: userPrompt,
-    });
+    const { object: result, usage } = await generateAIResponse(
+      model, aiConfig, systemPrompt, userPrompt
+    );
 
     const latencyMs = Date.now() - startTime;
 
@@ -377,12 +401,9 @@ export async function rerunAIPreselection(
   const startTime = Date.now();
 
   try {
-    const { object: result, usage } = await generateObject({
-      model,
-      schema: AIPreselectionResponseSchema,
-      system: systemPrompt,
-      prompt: userPrompt,
-    });
+    const { object: result, usage } = await generateAIResponse(
+      model, aiConfig, systemPrompt, userPrompt
+    );
 
     const latencyMs = Date.now() - startTime;
 
