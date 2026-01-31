@@ -186,6 +186,21 @@ export function SegmentMarker({
     ? getScoreColorClasses(segment.preselectionScore)
     : null;
 
+  // Build tooltip text with score breakdown
+  const tooltipText = segment.scoreBreakdown
+    ? [
+        `Score: ${segment.preselectionScore ?? "—"}%`,
+        `Script: ${segment.scoreBreakdown.scriptMatch.toFixed(0)}%`,
+        `Whisper: ${segment.scoreBreakdown.whisperConfidence.toFixed(0)}%`,
+        `Recencia: ${segment.scoreBreakdown.takeOrder.toFixed(0)}%`,
+        `Completitud: ${segment.scoreBreakdown.completeness.toFixed(0)}%`,
+        `Duracion: ${segment.scoreBreakdown.duration.toFixed(0)}%`,
+        segment.totalTakes && segment.totalTakes > 1
+          ? `Toma ${segment.takeNumber}/${segment.totalTakes}`
+          : null,
+      ].filter(Boolean).join("\n")
+    : segment.preselectionReason || undefined;
+
   // Don't render if outside viewport (after hooks to follow React rules)
   if (x + width < -50 || x > 2000) return null;
 
@@ -212,6 +227,7 @@ export function SegmentMarker({
         width,
         cursor: dragMode ? "ew-resize" : "pointer",
       }}
+      title={tooltipText}
       onClick={handleBodyClick}
       onDoubleClick={handleDoubleClick}
     >
@@ -236,6 +252,13 @@ export function SegmentMarker({
             style="mirror"
           />
         </div>
+      )}
+
+      {/* Take indicator (top-left) */}
+      {segment.enabled && segment.totalTakes && segment.totalTakes > 1 && segment.takeNumber && actualWidth > 40 && (
+        <span className="absolute top-0.5 left-1 pointer-events-none text-[9px] font-bold opacity-80 leading-none">
+          T{segment.takeNumber}/{segment.totalTakes}
+        </span>
       )}
 
       {/* Content label (bottom) */}

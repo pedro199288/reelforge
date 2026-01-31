@@ -26,8 +26,9 @@ import { aiPreselectSegments } from "./ai-preselect";
 import {
   matchSegmentsToScript,
   calculateScriptCoverage,
+  detectTakeGroups,
 } from "./script-matcher";
-import { scoreSegments, selectByScore } from "./scorer";
+import { scoreSegments, selectByScore, selectBestPerGroup } from "./scorer";
 import { groupSimilarPhrases, mergeCaptions, type PhraseGroup } from "../takes/similarity";
 import {
   createLogCollector,
@@ -38,7 +39,7 @@ import {
 } from "./logger";
 
 /**
- * Builds a map of segment ID → take number from phrase groups
+ * Builds maps of segment ID → take number and segment ID → total takes from phrase groups
  *
  * When no script is available, this function uses similarity-based phrase grouping
  * to detect repetitions. Each group represents a distinct phrase, and takes within
@@ -48,8 +49,9 @@ function buildTakeGroupsFromPhrases(
   phraseGroups: PhraseGroup[],
   segments: Array<{ id: string; startMs: number; endMs: number }>,
   captions: Caption[]
-): Map<string, number> {
-  const takeGroups = new Map<string, number>();
+): { takeNumbers: Map<string, number>; totalTakes: Map<string, number> } {
+  const takeNumbers = new Map<string, number>();
+  const totalTakes = new Map<string, number>();
 
   for (const group of phraseGroups) {
     // Skip groups with only one take (no repetition)
@@ -57,6 +59,7 @@ function buildTakeGroupsFromPhrases(
 
     // Sort takes by time (they should already be sorted, but ensure it)
     const sortedTakes = [...group.takes].sort((a, b) => a.startMs - b.startMs);
+    const groupSize = sortedTakes.length;
 
     // Assign takeNumber to each segment that contains this take
     for (let i = 0; i < sortedTakes.length; i++) {
@@ -71,15 +74,20 @@ function buildTakeGroupsFromPhrases(
       if (segment) {
         // Only update if this takeNumber is higher (worse) than existing
         // This handles cases where a segment might contain multiple takes
-        const existing = takeGroups.get(segment.id) ?? 1;
+        const existing = takeNumbers.get(segment.id) ?? 1;
         if (takeNumber > existing) {
-          takeGroups.set(segment.id, takeNumber);
+          takeNumbers.set(segment.id, takeNumber);
+        }
+        // Always update totalTakes to the max group size
+        const existingTotal = totalTakes.get(segment.id) ?? 1;
+        if (groupSize > existingTotal) {
+          totalTakes.set(segment.id, groupSize);
         }
       }
     }
   }
 
-  return takeGroups;
+  return { takeNumbers, totalTakes };
 }
 
 /**
@@ -311,8 +319,8 @@ export async function preselectSegments(
           timing: { startMs: seg.startMs, endMs: seg.endMs, durationMs },
           scores: {
             total: 100,
-            breakdown: { scriptMatch: 0, takeOrder: 100, completeness: 100, duration: 100 },
-            weighted: { scriptMatch: 0, takeOrder: 100, completeness: 100, duration: 100 },
+            breakdown: { scriptMatch: 0, whisperConfidence: 50, takeOrder: 100, completeness: 100, duration: 100 },
+            weighted: { scriptMatch: 0, whisperConfidence: 50, takeOrder: 100, completeness: 100, duration: 100 },
           },
           takeInfo: { takeNumber: 1, detectionMethod: "none" },
           completeness: {
@@ -327,6 +335,7 @@ export async function preselectSegments(
           },
           criterionReasons: {
             scriptMatch: "Sin captions para evaluar",
+            whisperConfidence: "Sin captions disponibles",
             takeOrder: "Sin captions para detectar tomas",
             completeness: "Sin captions para evaluar",
             duration: "Duracion asumida como ideal",
@@ -348,6 +357,7 @@ export async function preselectSegments(
 
   // Build take groups from similarity-based phrase detection when no script is available
   let takeGroups: Map<string, number> | undefined;
+  let totalTakesMap: Map<string, number> | undefined;
   let repetitionsFromSimilarity = 0;
 
   if (!hasScript && captions.length > 0) {
@@ -360,8 +370,10 @@ export async function preselectSegments(
       minPhraseLength: 10,
     });
 
-    // Build map of segment ID → take number
-    takeGroups = buildTakeGroupsFromPhrases(phraseGroups, segmentsWithIds, captions);
+    // Build maps of segment ID → take number and segment ID → total takes
+    const result = buildTakeGroupsFromPhrases(phraseGroups, segmentsWithIds, captions);
+    takeGroups = result.takeNumbers;
+    totalTakesMap = result.totalTakes;
 
     // Count repetitions for stats
     repetitionsFromSimilarity = Array.from(takeGroups.values()).filter((t) => t > 1).length;
@@ -370,11 +382,38 @@ export async function preselectSegments(
   // Score all segments (passing takeGroups for no-script repetition detection)
   const scores = scoreSegments(segmentsWithIds, captions, script, config, {
     takeGroups,
+    totalTakesMap,
     collector,
   });
 
-  // Select segments based on scores
-  const selectedIds = selectByScore(scores, config);
+  // Select segments based on scores (best per take-group)
+  const selectedIds = selectBestPerGroup(scores, config, scriptMatches, takeGroups);
+
+  // Build take info maps for enriching PreselectedSegment
+  const takeNumberMap = new Map<string, number>();
+  const totalTakesResultMap = new Map<string, number>();
+  const takeGroupIdMap = new Map<string, string>();
+
+  if (scriptMatches) {
+    const scriptTakeGroups = detectTakeGroups(scriptMatches);
+    for (const [sentenceIdx, segIds] of scriptTakeGroups) {
+      const groupId = `script-s${sentenceIdx}`;
+      for (let i = 0; i < segIds.length; i++) {
+        const segId = segIds[i];
+        takeNumberMap.set(segId, i + 1);
+        totalTakesResultMap.set(segId, segIds.length);
+        takeGroupIdMap.set(segId, groupId);
+      }
+    }
+  } else if (takeGroups && totalTakesMap) {
+    for (const [segId, takeNum] of takeGroups) {
+      takeNumberMap.set(segId, takeNum);
+    }
+    for (const [segId, total] of totalTakesMap) {
+      totalTakesResultMap.set(segId, total);
+      takeGroupIdMap.set(segId, `sim-${segId}`);
+    }
+  }
 
   // Build result segments
   const segments: PreselectedSegment[] = segmentsWithIds.map((seg, index) => {
@@ -393,6 +432,9 @@ export async function preselectSegments(
       );
     }
 
+    const takeNum = takeNumberMap.get(seg.id);
+    const totalTakesVal = totalTakesResultMap.get(seg.id);
+
     return {
       id: seg.id,
       startMs: seg.startMs,
@@ -400,6 +442,10 @@ export async function preselectSegments(
       enabled,
       score: Math.round(score.totalScore),
       reason: score.reason,
+      takeGroupId: takeGroupIdMap.get(seg.id),
+      takeNumber: takeNum,
+      totalTakes: totalTakesVal,
+      scoreBreakdown: score.breakdown,
     };
   });
 
@@ -467,6 +513,7 @@ export async function reapplyPreselection(
 
   // Build take groups from similarity-based phrase detection when no script is available
   let takeGroups: Map<string, number> | undefined;
+  let totalTakesMapReapply: Map<string, number> | undefined;
   let repetitionsFromSimilarity = 0;
 
   if (!hasScript && captions.length > 0) {
@@ -475,15 +522,20 @@ export async function reapplyPreselection(
       threshold: 0.65,
       minPhraseLength: 10,
     });
-    takeGroups = buildTakeGroupsFromPhrases(phraseGroups, existingSegments, captions);
+    const result = buildTakeGroupsFromPhrases(phraseGroups, existingSegments, captions);
+    takeGroups = result.takeNumbers;
+    totalTakesMapReapply = result.totalTakes;
     repetitionsFromSimilarity = Array.from(takeGroups.values()).filter((t) => t > 1).length;
   }
 
   // Score segments (passing takeGroups for no-script repetition detection)
-  const scores = scoreSegments(existingSegments, captions, script, config, takeGroups);
+  const scores = scoreSegments(existingSegments, captions, script, config, {
+    takeGroups,
+    totalTakesMap: totalTakesMapReapply,
+  });
 
-  // Select based on scores
-  const selectedIds = selectByScore(scores, config);
+  // Select based on scores (best per take-group)
+  const selectedIds = selectBestPerGroup(scores, config, scriptMatches, takeGroups);
 
   // Build result
   const segments: PreselectedSegment[] = existingSegments.map((seg, index) => {

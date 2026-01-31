@@ -212,7 +212,18 @@ export function generateCriterionReasons(
     }
   }
 
-  // Take order reason
+  // Whisper confidence reason
+  if (config.weights.whisperConfidence > 0) {
+    if (breakdown.whisperConfidence >= 80) {
+      reasons.whisperConfidence = `Alta confianza de transcripcion (${breakdown.whisperConfidence}%)`;
+    } else if (breakdown.whisperConfidence >= 50) {
+      reasons.whisperConfidence = `Confianza media de transcripcion (${breakdown.whisperConfidence}%)`;
+    } else {
+      reasons.whisperConfidence = `Baja confianza de transcripcion (${breakdown.whisperConfidence}%)`;
+    }
+  }
+
+  // Take order reason (recency: last take preferred)
   if (takeNumber === 1) {
     reasons.takeOrder = "Primera toma (preferida)";
   } else if (takeNumber === 2) {

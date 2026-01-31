@@ -10,11 +10,13 @@ export interface PreselectionConfig {
   minScore: number;
   /** Weights for scoring criteria (must sum to 1.0) */
   weights: {
-    /** Priority: script coverage. Default: 0.45 */
+    /** Priority: script coverage. Default: 0.30 */
     scriptMatch: number;
-    /** First take preferred. Default: 0.25 */
+    /** Whisper transcription confidence. Default: 0.25 */
+    whisperConfidence: number;
+    /** Last take preferred (recency). Default: 0.20 */
     takeOrder: number;
-    /** Complete sentences preferred. Default: 0.20 */
+    /** Complete sentences preferred. Default: 0.15 */
     completeness: number;
     /** Appropriate duration. Default: 0.10 */
     duration: number;
@@ -34,9 +36,10 @@ export interface PreselectionConfig {
 export const DEFAULT_PRESELECTION_CONFIG: PreselectionConfig = {
   minScore: 50,
   weights: {
-    scriptMatch: 0.45,
-    takeOrder: 0.25,
-    completeness: 0.20,
+    scriptMatch: 0.30,
+    whisperConfidence: 0.25,
+    takeOrder: 0.20,
+    completeness: 0.15,
     duration: 0.10,
   },
   idealDuration: {
@@ -53,9 +56,10 @@ export const DEFAULT_PRESELECTION_CONFIG_NO_SCRIPT: PreselectionConfig = {
   minScore: 50,
   weights: {
     scriptMatch: 0, // No script to match
-    takeOrder: 0.50,
-    completeness: 0.30,
-    duration: 0.20,
+    whisperConfidence: 0.30,
+    takeOrder: 0.35,
+    completeness: 0.20,
+    duration: 0.15,
   },
   idealDuration: {
     minMs: 2000,
@@ -70,7 +74,9 @@ export const DEFAULT_PRESELECTION_CONFIG_NO_SCRIPT: PreselectionConfig = {
 export interface SegmentScoreBreakdown {
   /** Script coverage score (0-100) */
   scriptMatch: number;
-  /** Take order score (0-100) - first take gets highest */
+  /** Whisper transcription confidence score (0-100) */
+  whisperConfidence: number;
+  /** Take order score (0-100) - last take gets highest (recency) */
   takeOrder: number;
   /** Completeness score (0-100) - complete sentences */
   completeness: number;
@@ -142,6 +148,14 @@ export interface PreselectedSegment {
   bestTakeSegmentId?: string;
   /** Proposed splits if segment contains mixed content */
   proposedSplits?: ProposedSplit[];
+  /** Take group identifier (segments covering the same script content) */
+  takeGroupId?: string;
+  /** Take number within the group (1-based) */
+  takeNumber?: number;
+  /** Total number of takes in the group */
+  totalTakes?: number;
+  /** Score breakdown per criterion */
+  scoreBreakdown?: SegmentScoreBreakdown;
 }
 
 /**
@@ -281,6 +295,7 @@ export interface SegmentPreselectionLog {
     breakdown: SegmentScoreBreakdown;
     weighted: {
       scriptMatch: number;
+      whisperConfidence: number;
       takeOrder: number;
       completeness: number;
       duration: number;
@@ -332,6 +347,7 @@ export interface SegmentPreselectionLog {
     isAmbiguous: boolean;
     criterionReasons: {
       scriptMatch?: string;
+      whisperConfidence?: string;
       takeOrder?: string;
       completeness?: string;
       duration?: string;

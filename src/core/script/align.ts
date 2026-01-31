@@ -226,7 +226,7 @@ export function alignScript(script: ParsedScript, captions: Caption[]): Alignmen
  * Align two word sequences using dynamic programming (Needleman-Wunsch style)
  * Returns an array mapping script word indices to caption word indices (-1 if no match)
  */
-function alignWords(scriptWords: string[], captionWords: string[]): number[] {
+export function alignWords(scriptWords: string[], captionWords: string[]): number[] {
   const m = scriptWords.length;
   const n = captionWords.length;
 

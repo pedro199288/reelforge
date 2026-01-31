@@ -182,7 +182,13 @@ function SegmentLogCard({
               weight={weights.scriptMatch}
             />
             <ScoreBar
-              label="Orden de Toma"
+              label="Confianza Whisper"
+              score={segment.scores.breakdown.whisperConfidence}
+              weighted={segment.scores.weighted.whisperConfidence}
+              weight={weights.whisperConfidence}
+            />
+            <ScoreBar
+              label="Recencia de Toma"
               score={segment.scores.breakdown.takeOrder}
               weighted={segment.scores.weighted.takeOrder}
               weight={weights.takeOrder}
@@ -290,6 +296,12 @@ function SegmentLogCard({
                 <div className="text-muted-foreground">
                   <span className="font-medium">Script:</span>{" "}
                   {segment.decision.criterionReasons.scriptMatch}
+                </div>
+              )}
+              {segment.decision.criterionReasons.whisperConfidence && (
+                <div className="text-muted-foreground">
+                  <span className="font-medium">Whisper:</span>{" "}
+                  {segment.decision.criterionReasons.whisperConfidence}
                 </div>
               )}
               {segment.decision.criterionReasons.takeOrder && (

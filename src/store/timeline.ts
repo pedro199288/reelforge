@@ -42,6 +42,20 @@ export interface TimelineSegment {
   preselectionScore?: number;
   /** Human-readable reason for preselection decision */
   preselectionReason?: string;
+  /** Take group identifier */
+  takeGroupId?: string;
+  /** Take number within the group (1-based) */
+  takeNumber?: number;
+  /** Total number of takes in the group */
+  totalTakes?: number;
+  /** Score breakdown per criterion */
+  scoreBreakdown?: {
+    scriptMatch: number;
+    whisperConfidence: number;
+    takeOrder: number;
+    completeness: number;
+    duration: number;
+  };
 }
 
 /**
@@ -469,6 +483,10 @@ export const useTimelineStore = create<TimelineStore>()(
             enabled: seg.enabled,
             preselectionScore: seg.score,
             preselectionReason: seg.reason,
+            takeGroupId: seg.takeGroupId,
+            takeNumber: seg.takeNumber,
+            totalTakes: seg.totalTakes,
+            scoreBreakdown: seg.scoreBreakdown,
           }));
 
           set((state) => {
@@ -613,6 +631,10 @@ export const useTimelineStore = create<TimelineStore>()(
             enabled: segment.enabled,
             preselectionScore: segment.preselectionScore,
             preselectionReason: segment.preselectionReason,
+            takeGroupId: segment.takeGroupId,
+            takeNumber: segment.takeNumber,
+            totalTakes: segment.totalTakes,
+            scoreBreakdown: segment.scoreBreakdown,
           };
 
           const rightSegment: TimelineSegment = {
@@ -622,6 +644,10 @@ export const useTimelineStore = create<TimelineStore>()(
             enabled: segment.enabled,
             preselectionScore: segment.preselectionScore,
             preselectionReason: segment.preselectionReason,
+            takeGroupId: segment.takeGroupId,
+            takeNumber: segment.takeNumber,
+            totalTakes: segment.totalTakes,
+            scoreBreakdown: segment.scoreBreakdown,
           };
 
           set({

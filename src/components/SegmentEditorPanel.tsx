@@ -580,6 +580,43 @@ export function SegmentEditorPanel({
                       <span>{selectedSegment.preselectionReason}</span>
                     </div>
                   )}
+
+                  {/* Take group info */}
+                  {selectedSegment.totalTakes && selectedSegment.totalTakes > 1 && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <Badge variant="outline" className="text-xs">
+                        Toma {selectedSegment.takeNumber}/{selectedSegment.totalTakes}
+                      </Badge>
+                    </div>
+                  )}
+
+                  {/* Score breakdown bars */}
+                  {selectedSegment.scoreBreakdown && (
+                    <div className="mt-3 space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">Desglose de score</div>
+                      {[
+                        { label: "Script", value: selectedSegment.scoreBreakdown.scriptMatch },
+                        { label: "Whisper", value: selectedSegment.scoreBreakdown.whisperConfidence },
+                        { label: "Recencia", value: selectedSegment.scoreBreakdown.takeOrder },
+                        { label: "Completitud", value: selectedSegment.scoreBreakdown.completeness },
+                        { label: "Duracion", value: selectedSegment.scoreBreakdown.duration },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="flex items-center gap-2 text-xs">
+                          <span className="w-20 text-muted-foreground shrink-0">{label}</span>
+                          <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className={cn(
+                                "h-full rounded-full",
+                                value >= 80 ? "bg-green-500" : value >= 50 ? "bg-yellow-500" : "bg-red-500"
+                              )}
+                              style={{ width: `${value}%` }}
+                            />
+                          </div>
+                          <span className="w-8 text-right font-mono">{value.toFixed(0)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2 flex-shrink-0">

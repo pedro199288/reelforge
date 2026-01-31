@@ -118,5 +118,5 @@ export {
 } from "./script-matcher";
 
 // Scoring utilities
-export { scoreSegments, selectByScore } from "./scorer";
+export { scoreSegments, selectByScore, selectBestPerGroup } from "./scorer";
 export type { ScoreSegmentsOptions } from "./scorer";
