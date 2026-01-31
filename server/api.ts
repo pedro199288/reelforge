@@ -772,6 +772,13 @@ async function handleRequest(req: Request): Promise<Response> {
       const audioInfo = await getAudioStreamInfo(fullPath);
       const audioOffset = audioInfo.startTime;
 
+      // Extract at a higher internal rate then compute amplitude envelope.
+      // Using -ar <targetRate> directly would apply a lowpass filter at Nyquist
+      // (e.g. 100Hz for 200sps), which removes almost all speech energy (100-3000Hz).
+      // Instead: extract at 8000Hz and compute peak amplitude per block.
+      const internalRate = 8000;
+      const blockSize = Math.max(1, Math.round(internalRate / samplesPerSecond));
+
       // Build FFmpeg args with offset correction
       const ffmpegArgs: string[] = ["ffmpeg"];
 
@@ -782,8 +789,8 @@ async function handleRequest(req: Request): Promise<Response> {
       }
 
       ffmpegArgs.push("-i", fullPath);
-      ffmpegArgs.push("-ac", "1");                      // Mono
-      ffmpegArgs.push("-ar", String(samplesPerSecond)); // Sample rate
+      ffmpegArgs.push("-ac", "1");                    // Mono
+      ffmpegArgs.push("-ar", String(internalRate));   // Internal high rate
 
       if (audioFilters.length > 0) {
         ffmpegArgs.push("-af", audioFilters.join(","));
@@ -822,36 +829,48 @@ async function handleRequest(req: Request): Promise<Response> {
         byteOffset += chunk.length;
       }
 
-      const float32 = new Float32Array(buffer.buffer);
-      let samples = Array.from(float32);
+      const rawFloat32 = new Float32Array(buffer.buffer);
+
+      // Compute amplitude envelope: peak absolute value per block
+      const envelopeLength = Math.ceil(rawFloat32.length / blockSize);
+      let envelope = new Array<number>(envelopeLength);
+      for (let i = 0; i < envelopeLength; i++) {
+        const start = i * blockSize;
+        const end = Math.min(start + blockSize, rawFloat32.length);
+        let peak = 0;
+        for (let j = start; j < end; j++) {
+          const abs = Math.abs(rawFloat32[j]);
+          if (abs > peak) peak = abs;
+        }
+        envelope[i] = peak;
+      }
 
       // If audio starts after video (positive offset), prepend silence
       if (audioOffset > 0) {
         const silenceSamples = Math.round(audioOffset * samplesPerSecond);
         const silence = new Array(silenceSamples).fill(0);
-        samples = [...silence, ...samples];
+        envelope = [...silence, ...envelope];
       }
 
       // If videoDuration provided, ensure exact sample count
       if (videoDuration && videoDuration > 0) {
         const targetSamples = Math.round(videoDuration * samplesPerSecond);
-        if (samples.length > targetSamples) {
-          samples = samples.slice(0, targetSamples);
-        } else if (samples.length < targetSamples) {
-          const padding = new Array(targetSamples - samples.length).fill(0);
-          samples = [...samples, ...padding];
+        if (envelope.length > targetSamples) {
+          envelope = envelope.slice(0, targetSamples);
+        } else if (envelope.length < targetSamples) {
+          const padding = new Array(targetSamples - envelope.length).fill(0);
+          envelope = [...envelope, ...padding];
         }
       }
 
-      // Normalize samples
+      // Normalize envelope to 0..1
       let maxAbs = 0;
-      for (const s of samples) {
-        const abs = Math.abs(s);
-        if (abs > maxAbs) maxAbs = abs;
+      for (const s of envelope) {
+        if (s > maxAbs) maxAbs = s;
       }
-      const normalized = maxAbs > 0 ? samples.map(s => s / maxAbs) : samples;
+      const normalized = maxAbs > 0 ? envelope.map(s => s / maxAbs) : envelope;
 
-      const finalDuration = videoDuration ?? samples.length / samplesPerSecond;
+      const finalDuration = videoDuration ?? envelope.length / samplesPerSecond;
 
       return new Response(
         JSON.stringify({
