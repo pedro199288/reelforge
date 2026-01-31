@@ -1296,13 +1296,7 @@ async function handleRequest(req: Request): Promise<Response> {
 
       const captions: Caption[] = JSON.parse(await Bun.file(captionsPath).text());
 
-      // Validate script is provided
-      if (!script || script.trim().length === 0) {
-        return new Response(JSON.stringify({ error: "Script is required for re-preselection" }), {
-          status: 400,
-          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-        });
-      }
+      // Script is optional - scoring works without it (uses whisperConfidence, completeness, duration, takeOrder)
 
       // Get original segments with IDs from preselection (if available) or generate them
       let originalSegments: Array<{ id: string; startMs: number; endMs: number }>;
@@ -1538,46 +1532,43 @@ async function handleRequest(req: Request): Promise<Response> {
               endMs: s.endTime * 1000,
             }));
 
-            // Try to run preselection with logging when script is available
+            // Always run initial preselection to generate stable segment IDs
+            // Real scoring happens after captions are available (auto-reapply in captions step)
             let preselectionData: SegmentsResult["preselection"] | undefined;
             let preselectionLog = null;
 
-            if (script && script.trim().length > 0) {
-              sendEvent("progress", { step, progress: 50, message: "Ejecutando preselección con guion..." });
+            sendEvent("progress", { step, progress: 50, message: "Ejecutando preselección inicial..." });
 
-              try {
-                const preselectionResult = await preselectSegments(inputSegments, {
-                  captions: [], // No captions available yet in simplified pipeline
-                  script,
-                  videoDurationMs: silencesResult.videoDuration * 1000,
-                  videoId,
-                  collectLogs: true,
+            try {
+              const preselectionResult = await preselectSegments(inputSegments, {
+                captions: [], // No captions available yet - real scoring happens after captions step
+                script,
+                videoDurationMs: silencesResult.videoDuration * 1000,
+                videoId,
+                collectLogs: true,
+              });
+
+              preselectionData = {
+                segments: preselectionResult.segments,
+                stats: preselectionResult.stats,
+              };
+
+              // Save preselection log if available
+              if (preselectionResult.log) {
+                preselectionLog = preselectionResult.log;
+                sendEvent("progress", { step, progress: 75, message: "Guardando logs de preselección..." });
+                saveStepResult(videoId, "preselection-logs", {
+                  log: preselectionLog,
+                  savedAt: new Date().toISOString(),
                 });
-
-                preselectionData = {
-                  segments: preselectionResult.segments,
-                  stats: preselectionResult.stats,
-                };
-
-                // Save preselection log if available
-                if (preselectionResult.log) {
-                  preselectionLog = preselectionResult.log;
-                  sendEvent("progress", { step, progress: 75, message: "Guardando logs de preselección..." });
-                  saveStepResult(videoId, "preselection-logs", {
-                    log: preselectionLog,
-                    savedAt: new Date().toISOString(),
-                  });
-                  updateStepStatus(videoId, "preselection-logs", {
-                    status: "completed",
-                    completedAt: new Date().toISOString(),
-                  });
-                }
-              } catch (err) {
-                console.error("Preselection failed:", err);
-                sendEvent("progress", { step, progress: 75, message: "Preselección falló, continuando sin ella..." });
+                updateStepStatus(videoId, "preselection-logs", {
+                  status: "completed",
+                  completedAt: new Date().toISOString(),
+                });
               }
-            } else {
-              sendEvent("progress", { step, progress: 75, message: "Segmentos generados (sin guion para preselección)" });
+            } catch (err) {
+              console.error("Preselection failed:", err);
+              sendEvent("progress", { step, progress: 75, message: "Preselección falló, continuando sin ella..." });
             }
 
             sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
@@ -1769,6 +1760,74 @@ async function handleRequest(req: Request): Promise<Response> {
               completedAt: new Date().toISOString(),
               resultFile: resultPath,
             });
+
+            // Auto-reapply preselection now that captions are available
+            try {
+              const segmentsResultForReapply = loadStepResult<SegmentsResult>(videoId, "segments");
+              const cutResultForReapply = loadStepResult<CutResult>(videoId, "cut");
+
+              if (segmentsResultForReapply && cutResultForReapply?.cutMap && captionsCount > 0) {
+                sendEvent("progress", { step, progress: 95, message: "Re-aplicando preselección con captions..." });
+
+                // Load captions from the file we just generated
+                const captionsForReapply: Caption[] = JSON.parse(await Bun.file(fullSubsPath).text());
+
+                // Get original segments
+                let originalSegments: Array<{ id: string; startMs: number; endMs: number }>;
+                if (segmentsResultForReapply.preselection?.segments) {
+                  originalSegments = segmentsResultForReapply.preselection.segments.map((s) => ({
+                    id: s.id,
+                    startMs: s.startMs,
+                    endMs: s.endMs,
+                  }));
+                } else {
+                  const { nanoid } = await import("nanoid");
+                  originalSegments = segmentsResultForReapply.segments.map((s) => ({
+                    id: nanoid(8),
+                    startMs: s.startTime * 1000,
+                    endMs: s.endTime * 1000,
+                  }));
+                }
+
+                const reselectionResult = await reapplyPreselectionWithCaptions(
+                  originalSegments,
+                  {
+                    captions: captionsForReapply,
+                    cutMap: cutResultForReapply.cutMap,
+                    script,
+                    videoId,
+                    collectLogs: true,
+                  }
+                );
+
+                // Update segments.json with new preselection data
+                const updatedSegmentsResult: SegmentsResult = {
+                  ...segmentsResultForReapply,
+                  preselection: {
+                    segments: reselectionResult.segments,
+                    stats: reselectionResult.stats,
+                  },
+                };
+                saveStepResult(videoId, "segments", updatedSegmentsResult);
+
+                // Save updated preselection logs
+                if (reselectionResult.log) {
+                  saveStepResult(videoId, "preselection-logs", {
+                    log: reselectionResult.log,
+                    savedAt: new Date().toISOString(),
+                    isReapply: true,
+                  });
+                  updateStepStatus(videoId, "preselection-logs", {
+                    status: "completed",
+                    completedAt: new Date().toISOString(),
+                  });
+                }
+
+                console.log(`[captions] Auto-reapply preselection completed for ${videoId}`);
+              }
+            } catch (reapplyErr) {
+              console.error("Auto-reapply preselection after captions failed (non-fatal):", reapplyErr);
+            }
 
             sendEvent("complete", { step, result });
             break;

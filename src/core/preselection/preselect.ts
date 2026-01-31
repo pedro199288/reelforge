@@ -610,8 +610,8 @@ export interface ReapplyWithCaptionsOptions {
   captions: Caption[];
   /** Cut-map entries mapping original ↔ cut timestamps */
   cutMap: CutMapEntry[];
-  /** Script text for matching */
-  script: string;
+  /** Script text for matching (optional - scoring still works without it) */
+  script?: string;
   /** Video ID for logging */
   videoId: string;
   /** Whether to collect detailed logs */
