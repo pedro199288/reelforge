@@ -1053,168 +1053,203 @@ async function handleRequest(req: Request): Promise<Response> {
   // POST /api/pipeline/:videoId/ai-preselection - AI-First preselection with captions
   const aiPreselectionMatch = path.match(/^\/api\/pipeline\/([^/]+)\/ai-preselection$/);
   if (aiPreselectionMatch && req.method === "POST") {
+    const videoId = aiPreselectionMatch[1];
+    let body: { script?: string; aiConfig?: Partial<AIPreselectionConfig> };
     try {
-      const videoId = aiPreselectionMatch[1];
-      const body = await req.json();
-      const { script, aiConfig } = body as {
-        script?: string;
-        aiConfig?: Partial<AIPreselectionConfig>;
-      };
-
-      // Load required data
-      const segmentsResult = loadStepResult<SegmentsResult>(videoId, "segments");
-      if (!segmentsResult) {
-        return new Response(JSON.stringify({ error: "Segments result not found. Run segments step first." }), {
-          status: 400,
-          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-        });
-      }
-
-      const cutResult = loadStepResult<CutResult>(videoId, "cut");
-      if (!cutResult || !cutResult.cutMap) {
-        return new Response(JSON.stringify({ error: "Cut result not found or missing cut-map. Run cut step first." }), {
-          status: 400,
-          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-        });
-      }
-
-      const captionsResult = loadStepResult<CaptionsResult>(videoId, "captions");
-      if (!captionsResult) {
-        return new Response(JSON.stringify({ error: "Captions result not found. Run captions step first." }), {
-          status: 400,
-          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-        });
-      }
-
-      // Load captions from file
-      const captionsPath = join(process.cwd(), captionsResult.captionsPath);
-      if (!existsSync(captionsPath)) {
-        return new Response(JSON.stringify({ error: `Captions file not found: ${captionsResult.captionsPath}` }), {
-          status: 400,
-          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-        });
-      }
-
-      const captions: Caption[] = JSON.parse(await Bun.file(captionsPath).text());
-
-      // Get API key from environment or config
-      const apiKey = aiConfig?.apiKey || process.env.ANTHROPIC_API_KEY;
-      if (!apiKey && (!aiConfig?.provider || aiConfig.provider === "anthropic")) {
-        return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }), {
-          status: 400,
-          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-        });
-      }
-
-      // Build AI config
-      const fullAiConfig: AIPreselectionConfig = {
-        enabled: true,
-        provider: aiConfig?.provider || "anthropic",
-        modelId: aiConfig?.modelId || "claude-sonnet-4-20250514",
-        apiKey,
-        baseUrl: aiConfig?.baseUrl,
-      };
-
-      // Get segments with IDs
-      let existingSegments: Array<{ id: string; startMs: number; endMs: number }>;
-
-      if (segmentsResult.preselection?.segments) {
-        existingSegments = segmentsResult.preselection.segments.map((s) => ({
-          id: s.id,
-          startMs: s.startMs,
-          endMs: s.endMs,
-        }));
-      } else {
-        const { nanoid } = await import("nanoid");
-        existingSegments = segmentsResult.segments.map((s) => ({
-          id: nanoid(8),
-          startMs: s.startTime * 1000,
-          endMs: s.endTime * 1000,
-        }));
-      }
-
-      // Remap captions from cut video to original timestamps
-      const { remapCaptionsToOriginal } = await import("../src/core/preselection");
-      console.log(`[ai-preselect] Captions before remapping: ${captions.length}, cutMap entries: ${cutResult.cutMap.length}`);
-      const remappedCaptions = remapCaptionsToOriginal(captions, cutResult.cutMap);
-      console.log(`[ai-preselect] Captions after remapping: ${remappedCaptions.length}`);
-      if (captions.length > 0 && remappedCaptions.length === 0) {
-        console.warn(`[ai-preselect] WARNING: All ${captions.length} captions lost during remapping! Check cutMap alignment.`);
-        if (captions.length > 0) {
-          const firstCap = captions[0];
-          const firstEntry = cutResult.cutMap[0];
-          console.warn(`[ai-preselect] First caption: startMs=${firstCap.startMs}, endMs=${firstCap.endMs}`);
-          console.warn(`[ai-preselect] First cutMap entry: finalStartMs=${firstEntry?.finalStartMs}, finalEndMs=${firstEntry?.finalEndMs}`);
-        }
-      }
-
-      // Create log collector
-      const scriptLineCount = script ? script.split('\n').filter(l => l.trim()).length : undefined;
-      const collector = createLogCollector(
-        existingSegments.length,
-        !!script,
-        scriptLineCount,
-        remappedCaptions.length
-      );
-
-      // Run AI preselection
-      const aiResult: AIPreselectionResult = await rerunAIPreselection(
-        existingSegments,
-        {
-          captions: remappedCaptions,
-          script,
-          videoDurationMs: segmentsResult.totalDuration * 1000,
-          aiConfig: fullAiConfig,
-          collector,
-        }
-      );
-
-      // Update segments.json with new preselection data
-      const updatedSegmentsResult: SegmentsResult = {
-        ...segmentsResult,
-        preselection: {
-          segments: aiResult.segments,
-          stats: aiResult.stats,
-        },
-      };
-
-      saveStepResult(videoId, "segments", updatedSegmentsResult);
-
-      // Save preselection logs
-      const { DEFAULT_PRESELECTION_CONFIG } = await import("../src/core/preselection/types");
-      const preselectionLog = finalizeLog(
-        collector,
-        videoId,
-        DEFAULT_PRESELECTION_CONFIG,
-        aiResult.stats,
-        "ai"
-      );
-      saveStepResult(videoId, "preselection-logs", {
-        log: preselectionLog,
-        savedAt: new Date().toISOString(),
-        isAIPreselection: true,
-      });
-
-      updateStepStatus(videoId, "preselection-logs", {
-        status: "completed",
-        completedAt: new Date().toISOString(),
-      });
-
-      return new Response(JSON.stringify({
-        success: true,
-        result: aiResult,
-        message: "AI preselection completed successfully",
-      }), {
-        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      console.error("AI preselection error:", error);
-      return new Response(JSON.stringify({ error: message }), {
-        status: 500,
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+        status: 400,
         headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
       });
     }
+    const { script, aiConfig } = body;
+
+    // Validate required data before starting SSE stream
+    const segmentsResult = loadStepResult<SegmentsResult>(videoId, "segments");
+    if (!segmentsResult) {
+      return new Response(JSON.stringify({ error: "Segments result not found. Run segments step first." }), {
+        status: 400,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    const cutResult = loadStepResult<CutResult>(videoId, "cut");
+    if (!cutResult || !cutResult.cutMap) {
+      return new Response(JSON.stringify({ error: "Cut result not found or missing cut-map. Run cut step first." }), {
+        status: 400,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    const captionsResult = loadStepResult<CaptionsResult>(videoId, "captions");
+    if (!captionsResult) {
+      return new Response(JSON.stringify({ error: "Captions result not found. Run captions step first." }), {
+        status: 400,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    const captionsPath = join(process.cwd(), captionsResult.captionsPath);
+    if (!existsSync(captionsPath)) {
+      return new Response(JSON.stringify({ error: `Captions file not found: ${captionsResult.captionsPath}` }), {
+        status: 400,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    const apiKey = aiConfig?.apiKey || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey && (!aiConfig?.provider || aiConfig.provider === "anthropic")) {
+      return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }), {
+        status: 400,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+
+    // SSE stream with keep-alive to prevent Bun idle timeout
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const send = (event: string, data: unknown) => {
+          try {
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          } catch {
+            // Stream closed
+          }
+        };
+
+        // Keep-alive every 30s to prevent Bun idleTimeout (255s) from killing the connection
+        const keepAlive = setInterval(() => {
+          send("keepalive", { timestamp: Date.now() });
+        }, 30_000);
+
+        try {
+          send("status", { message: "Iniciando analisis IA..." });
+
+          const captions: Caption[] = JSON.parse(await Bun.file(captionsPath).text());
+
+          // Build AI config
+          const fullAiConfig: AIPreselectionConfig = {
+            enabled: true,
+            provider: aiConfig?.provider || "anthropic",
+            modelId: aiConfig?.modelId || "claude-sonnet-4-20250514",
+            apiKey,
+            baseUrl: aiConfig?.baseUrl,
+          };
+
+          // Get segments with IDs
+          let existingSegments: Array<{ id: string; startMs: number; endMs: number }>;
+
+          if (segmentsResult.preselection?.segments) {
+            existingSegments = segmentsResult.preselection.segments.map((s) => ({
+              id: s.id,
+              startMs: s.startMs,
+              endMs: s.endMs,
+            }));
+          } else {
+            const { nanoid } = await import("nanoid");
+            existingSegments = segmentsResult.segments.map((s) => ({
+              id: nanoid(8),
+              startMs: s.startTime * 1000,
+              endMs: s.endTime * 1000,
+            }));
+          }
+
+          // Remap captions from cut video to original timestamps
+          const { remapCaptionsToOriginal } = await import("../src/core/preselection");
+          console.log(`[ai-preselect] Captions before remapping: ${captions.length}, cutMap entries: ${cutResult.cutMap.length}`);
+          const remappedCaptions = remapCaptionsToOriginal(captions, cutResult.cutMap);
+          console.log(`[ai-preselect] Captions after remapping: ${remappedCaptions.length}`);
+          if (captions.length > 0 && remappedCaptions.length === 0) {
+            console.warn(`[ai-preselect] WARNING: All ${captions.length} captions lost during remapping! Check cutMap alignment.`);
+            if (captions.length > 0) {
+              const firstCap = captions[0];
+              const firstEntry = cutResult.cutMap[0];
+              console.warn(`[ai-preselect] First caption: startMs=${firstCap.startMs}, endMs=${firstCap.endMs}`);
+              console.warn(`[ai-preselect] First cutMap entry: finalStartMs=${firstEntry?.finalStartMs}, finalEndMs=${firstEntry?.finalEndMs}`);
+            }
+          }
+
+          send("status", { message: `Analizando ${existingSegments.length} segmentos con ${fullAiConfig.modelId}...` });
+
+          // Create log collector
+          const scriptLineCount = script ? script.split('\n').filter(l => l.trim()).length : undefined;
+          const collector = createLogCollector(
+            existingSegments.length,
+            !!script,
+            scriptLineCount,
+            remappedCaptions.length
+          );
+
+          // Run AI preselection
+          const aiResult: AIPreselectionResult = await rerunAIPreselection(
+            existingSegments,
+            {
+              captions: remappedCaptions,
+              script,
+              videoDurationMs: segmentsResult.totalDuration * 1000,
+              aiConfig: fullAiConfig,
+              collector,
+            }
+          );
+
+          send("status", { message: "Guardando resultados..." });
+
+          // Update segments.json with new preselection data
+          const updatedSegmentsResult: SegmentsResult = {
+            ...segmentsResult,
+            preselection: {
+              segments: aiResult.segments,
+              stats: aiResult.stats,
+            },
+          };
+
+          saveStepResult(videoId, "segments", updatedSegmentsResult);
+
+          // Save preselection logs
+          const { DEFAULT_PRESELECTION_CONFIG } = await import("../src/core/preselection/types");
+          const preselectionLog = finalizeLog(
+            collector,
+            videoId,
+            DEFAULT_PRESELECTION_CONFIG,
+            aiResult.stats,
+            "ai"
+          );
+          saveStepResult(videoId, "preselection-logs", {
+            log: preselectionLog,
+            savedAt: new Date().toISOString(),
+            isAIPreselection: true,
+          });
+
+          updateStepStatus(videoId, "preselection-logs", {
+            status: "completed",
+            completedAt: new Date().toISOString(),
+          });
+
+          send("result", {
+            success: true,
+            result: aiResult,
+            message: "AI preselection completed successfully",
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          console.error("AI preselection error:", error);
+          send("error", { error: message });
+        } finally {
+          clearInterval(keepAlive);
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        ...CORS_HEADERS,
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
   }
 
   // POST /api/pipeline/:videoId/reapply-preselection - Re-apply preselection with captions from cut video

@@ -220,14 +220,53 @@ export function AIPreselectionPanel({
       );
 
       if (!response.ok) {
-        const err = await response.json();
+        const err = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
         throw new Error(err.error || "Error en AI preselection");
       }
 
-      addLog("ai", "Respuesta recibida, procesando...");
+      addLog("ai", "Conexion SSE establecida, esperando respuesta del modelo...");
 
-      const data = await response.json();
-      const aiResult = data.result as AIPreselectionResult;
+      // Read SSE stream
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let aiResult: AIPreselectionResult | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const chunk of parts) {
+          const eventMatch = chunk.match(/event: (\w+)/);
+          const dataMatch = chunk.match(/data: (.+)/s);
+          if (!eventMatch || !dataMatch) continue;
+
+          const event = eventMatch[1];
+          const data = JSON.parse(dataMatch[1]);
+
+          switch (event) {
+            case "status":
+              addLog("ai", data.message);
+              break;
+            case "keepalive":
+              // Keep-alive ping, ignore
+              break;
+            case "result":
+              aiResult = data.result as AIPreselectionResult;
+              break;
+            case "error":
+              throw new Error(data.error);
+          }
+        }
+      }
+
+      if (!aiResult) {
+        throw new Error("No se recibio resultado del servidor");
+      }
 
       // Log analysis results
       const elapsed = ((Date.now() - startTimeRef.current) / 1000).toFixed(1);

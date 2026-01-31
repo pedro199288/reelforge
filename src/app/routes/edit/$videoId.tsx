@@ -509,6 +509,12 @@ function EditorPage() {
     }
   }, []);
 
+  const handleStepCompleted = useCallback(() => {
+    if (video) {
+      loadPipelineStatus(video);
+    }
+  }, [video, loadPipelineStatus]);
+
   // --- Undo/Redo ---
   const canUndo =
     useTimelineStore.temporal.getState().pastStates.length > 0;
@@ -673,7 +679,7 @@ function EditorPage() {
                 <EditorPipelinePanel
                   video={video}
                   segmentsResult={segmentsResult}
-                  onStepCompleted={() => loadPipelineStatus(video)}
+                  onStepCompleted={handleStepCompleted}
                   onOpenLogs={preselectionLog ? () => setRightPanelOpen(true) : undefined}
                   onSeekTo={handleSeekTo}
                 />

@@ -81,7 +81,7 @@ async function generateAIResponse(
     schema: AIPreselectionResponseSchema,
     system: systemPrompt,
     prompt: userPrompt,
-    timeout: isLocalModel ? 300_000 : 120_000,
+    timeout: isLocalModel ? 240_000 : 120_000,
     ...(isLocalModel && {
       maxOutputTokens: 16384,
       providerOptions: {
