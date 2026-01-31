@@ -9,17 +9,17 @@ import { PipelineProgressColumn } from "@/components/PipelineProgressColumn";
 import {
   ProcessingStatusInline,
   type ProcessingStepInfo,
-  type ProcessingStatus,
 } from "@/components/ProcessingStatusPanel";
+import {
+  type BackendPipelineStatus,
+  type ProcessProgress,
+  type PipelineState,
+  STEPS,
+  getVideoPipelineState,
+  getCompletedSteps,
+} from "@/types/pipeline";
 
 const API_URL = "http://localhost:3012";
-
-// Types for progress state shared between layout and child routes
-interface ProcessProgress {
-  step: string;
-  progress: number;
-  message: string;
-}
 
 // Context for header actions - allows child routes to render controls in the header
 interface PipelineHeaderContextValue {
@@ -44,95 +44,20 @@ export function usePipelineHeader() {
   return context;
 }
 
-type PipelineStep =
-  | "raw"
-  | "silences"
-  | "segments"
-  | "cut"
-  | "captions"
-  | "effects-analysis"
-  | "rendered";
-
-interface PipelineState {
-  raw: boolean;
-  silences: boolean;
-  segments: boolean;
-  cut: boolean;
-  captions: boolean;
-  "effects-analysis": boolean;
-  rendered: boolean;
-}
-
-type StepStatus = "pending" | "running" | "completed" | "error";
-
-interface StepState {
-  status: StepStatus;
-}
-
-interface BackendPipelineStatus {
-  videoId: string;
-  filename: string;
-  steps: Record<PipelineStep, StepState>;
-}
-
 interface VideoManifest {
   videos: Video[];
 }
-
-const STEPS: { key: PipelineStep; label: string }[] = [
-  { key: "raw", label: "Raw" },
-  { key: "silences", label: "Silencios" },
-  { key: "segments", label: "Segmentos" },
-  { key: "cut", label: "Cortado" },
-  { key: "captions", label: "Captions" },
-  { key: "effects-analysis", label: "Auto-Efectos" },
-  { key: "rendered", label: "Renderizado" },
-];
 
 export const Route = createFileRoute("/pipeline")({
   component: PipelineLayout,
 });
 
-function getVideoPipelineState(
-  video: Video,
-  backendStatus?: BackendPipelineStatus | null
-): PipelineState {
-  if (backendStatus) {
-    return {
-      raw: true,
-      silences: backendStatus.steps.silences?.status === "completed",
-      segments: backendStatus.steps.segments?.status === "completed",
-      cut: backendStatus.steps.cut?.status === "completed",
-      captions: backendStatus.steps.captions?.status === "completed" || video.hasCaptions,
-      "effects-analysis": backendStatus.steps["effects-analysis"]?.status === "completed",
-      rendered: backendStatus.steps.rendered?.status === "completed",
-    };
-  }
-
-  return {
-    raw: true,
-    silences: false,
-    segments: false,
-    cut: false,
-    captions: false,
-    "effects-analysis": false,
-    rendered: false,
-  };
-}
-
-function getCompletedSteps(state: PipelineState): number {
-  return Object.values(state).filter(Boolean).length;
-}
-
 function pipelineStateToStepInfo(state: PipelineState): ProcessingStepInfo[] {
-  return STEPS.map((step) => {
-    const status: ProcessingStatus = state[step.key] ? "completed" : "pending";
-    return {
-      key: step.key,
-      label: step.label,
-      status,
-    };
-  });
+  return STEPS.map((step) => ({
+    key: step.key,
+    label: step.label,
+    status: state[step.key] ? "completed" as const : "pending" as const,
+  }));
 }
 
 function PipelineLayout() {

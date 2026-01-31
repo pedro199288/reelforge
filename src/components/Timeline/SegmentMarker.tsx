@@ -15,6 +15,8 @@ interface SegmentMarkerProps {
   contiguousOffsetMs?: number;
   /** Waveform samples for this segment (used as background in contiguous mode) */
   waveformSlice?: number[];
+  /** Track height in pixels (for dynamic waveform sizing) */
+  trackHeight?: number;
 }
 
 function downsampleForWidth(samples: number[], targetWidth: number): number[] {
@@ -67,6 +69,7 @@ export function SegmentMarker({
   onToggleEnabled,
   contiguousOffsetMs,
   waveformSlice,
+  trackHeight,
 }: SegmentMarkerProps) {
   const markerRef = useRef<HTMLDivElement>(null);
   const preDragSnapshotRef = useRef<{ timelines: any } | null>(null);
@@ -222,13 +225,13 @@ export function SegmentMarker({
         />
       )}
 
-      {/* Waveform background (contiguous mode) */}
+      {/* Waveform background */}
       {waveformSlice && waveformSlice.length > 0 && (
-        <div className="absolute inset-0 overflow-hidden rounded pointer-events-none opacity-40">
+        <div className="absolute inset-0 overflow-hidden rounded pointer-events-none">
           <Waveform
             data={downsampleForWidth(waveformSlice, Math.max(1, Math.round(width)))}
             width={Math.max(1, Math.round(width))}
-            height={isContiguous ? 72 : 56}
+            height={(trackHeight ?? 80) - 8}
             color={segment.enabled ? "rgb(74, 222, 128)" : "rgb(156, 163, 175)"}
             style="mirror"
           />

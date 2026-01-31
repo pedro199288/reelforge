@@ -421,13 +421,13 @@ export function AIPreselectionPanel({
   return (
     <div className="p-4 space-y-4">
       {/* Header with controls */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-purple-500" />
-          <span className="font-semibold">Preseleccion IA</span>
-        </div>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-purple-500" />
+            <span className="font-semibold">Preseleccion IA</span>
+          </div>
 
-        <div className="flex items-center gap-2">
           {/* Status indicators */}
           <div className="flex items-center gap-2 text-xs">
             <div className="flex items-center gap-1">
@@ -451,10 +451,12 @@ export function AIPreselectionPanel({
               </span>
             </div>
           </div>
+        </div>
 
+        <div className="flex items-center gap-2">
           {/* Model selector */}
           <Select value={selectedModel} onValueChange={setSelectedModel}>
-            <SelectTrigger className="w-[180px] h-8 text-xs">
+            <SelectTrigger className="flex-1 h-8 text-xs">
               <SelectValue placeholder="Modelo" />
             </SelectTrigger>
             <SelectContent>
@@ -471,6 +473,7 @@ export function AIPreselectionPanel({
             onClick={runAIPreselection}
             disabled={isLoading || !hasCaptions}
             size="sm"
+            className="flex-shrink-0"
           >
             {isLoading ? (
               <>

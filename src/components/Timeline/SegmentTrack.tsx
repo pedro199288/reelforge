@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, useMemo } from "react";
+import { Waveform } from "./Waveform";
 import { TimelineTrack } from "./TimelineTrack";
 import { SegmentMarker } from "./SegmentMarker";
 import { LABEL_COLUMN_WIDTH, getPxPerMs } from "./constants";
@@ -19,8 +20,16 @@ interface SegmentTrackProps {
   onAddSegment?: (startMs: number, endMs: number) => void;
   /** When true, segments render contiguously without gaps */
   contiguous?: boolean;
-  /** Raw waveform data for per-segment waveform slices (contiguous mode) */
+  /** Raw waveform data for per-segment waveform slices */
   waveformRawData?: WaveformData | null;
+  /** Pre-computed waveform display data for the full viewport (used as background in full timeline mode) */
+  viewportWaveformData?: number[] | null;
+  /** Viewport width in pixels (for full-width waveform background) */
+  viewportWidthPx?: number;
+  /** Sub-sample offset in pixels for waveform alignment */
+  waveformOffsetPx?: number;
+  /** When true, double the track height */
+  expanded?: boolean;
 }
 
 export function SegmentTrack({
@@ -36,6 +45,10 @@ export function SegmentTrack({
   onAddSegment,
   contiguous = false,
   waveformRawData,
+  viewportWaveformData,
+  viewportWidthPx = 0,
+  waveformOffsetPx = 0,
+  expanded = false,
 }: SegmentTrackProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -57,9 +70,9 @@ export function SegmentTrack({
     return offsets;
   }, [contiguous, segments]);
 
-  // Waveform slices per segment (contiguous mode)
+  // Waveform slices per segment
   const segmentWaveforms = useMemo(() => {
-    if (!contiguous || !waveformRawData) return null;
+    if (!waveformRawData) return null;
 
     // Safety net: scale samplesPerMs if waveform duration doesn't match timeline
     const waveformDurationMs = (waveformRawData.samples.length / waveformRawData.sampleRate) * 1000;
@@ -76,7 +89,7 @@ export function SegmentTrack({
       map.set(seg.id, waveformRawData.samples.slice(start, end));
     }
     return map;
-  }, [contiguous, waveformRawData, segments, durationMs]);
+  }, [waveformRawData, segments, durationMs]);
 
   // Convert pixel position to milliseconds
   const pxToMs = useCallback(
@@ -191,8 +204,27 @@ export function SegmentTrack({
     .reduce((sum, s) => sum + (s.endMs - s.startMs), 0);
   const silenceDuration = silences.reduce((sum, s) => sum + s.duration * 1000, 0);
 
+  const trackHeight = expanded ? 160 : 80;
+
   return (
-    <TimelineTrack name="Segmentos" height={contiguous ? 80 : 64}>
+    <TimelineTrack name="Segmentos" height={trackHeight}>
+      {/* Full-width waveform background (full timeline mode: shows audio in gaps between segments) */}
+      {!contiguous && viewportWaveformData && viewportWidthPx > 0 && (() => {
+        // Clamp waveform width to actual content (avoids stretching when zoomed out past content)
+        const contentWidthPx = Math.round(Math.max(0, Math.min(viewportWidthPx, (durationMs - Math.max(0, viewportStartMs)) * pxPerMs)));
+        return (
+          <div className="absolute inset-0 pointer-events-none opacity-50">
+            <Waveform
+              data={viewportWaveformData}
+              width={contentWidthPx}
+              height={trackHeight}
+              color="rgb(74, 222, 128)"
+              style="mirror"
+              offsetPx={waveformOffsetPx}
+            />
+          </div>
+        );
+      })()}
       <div
         ref={trackRef}
         className={`absolute inset-0 ${contiguous ? "cursor-default" : "cursor-crosshair"}`}
@@ -236,7 +268,8 @@ export function SegmentTrack({
             onResize={(field, value) => onResizeSegment(segment.id, field, value)}
             onToggleEnabled={() => onToggleSegment(segment.id)}
             contiguousOffsetMs={contiguousOffsets?.get(segment.id)}
-            waveformSlice={segmentWaveforms?.get(segment.id)}
+            waveformSlice={contiguous ? segmentWaveforms?.get(segment.id) : undefined}
+            trackHeight={trackHeight}
           />
         ))}
 

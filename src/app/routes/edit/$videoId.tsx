@@ -12,11 +12,8 @@ import { CaptionedVideoForPlayer } from "@/remotion-compositions/CaptionedVideo/
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { Video } from "@/components/VideoList";
-import {
-  useWorkspaceStore,
-  useScript,
-  SILENCE_DEFAULTS,
-} from "@/store/workspace";
+import { useScript, useWorkspaceStore } from "@/store/workspace";
+import { parseScript } from "@/core/script/parser";
 import {
   useVideoSegments,
   useTimelineActions,
@@ -25,7 +22,6 @@ import {
 } from "@/store/timeline";
 import { useSubtitleStore } from "@/store/subtitles";
 import { SegmentTimeline } from "@/components/SegmentTimeline";
-import { AIPreselectionPanel } from "@/components/AIPreselectionPanel";
 import { PreselectionLogs } from "@/components/PreselectionLogs";
 import { usePlayheadSync } from "@/hooks/usePlayheadSync";
 import { useSegmentEditorShortcuts } from "@/hooks/useSegmentEditorShortcuts";
@@ -33,23 +29,24 @@ import type { PreselectedSegment, PreselectionLog } from "@/core/preselection";
 import {
   ArrowLeft,
   Play,
-  Pause,
-  Sparkles,
   FileText,
   PanelLeftClose,
   PanelLeftOpen,
-  Clock,
-  ToggleLeft,
-  ToggleRight,
   X,
-  Scissors,
   Undo2,
   Redo2,
   Eye,
   Pencil,
   SkipForward,
+  Zap,
+  CheckCircle2,
+  AlertTriangle,
+  PanelRightClose,
+  ScrollText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Textarea } from "@/components/ui/textarea";
+import { EditorPipelinePanel } from "@/components/EditorPipelinePanel";
 
 const API_URL = "http://localhost:3012";
 
@@ -128,15 +125,16 @@ function formatDuration(seconds: number): string {
 }
 
 function getCompletedCount(status: BackendPipelineStatus): number {
-  return Object.values(status.steps).filter(
-    (s) => s.status === "completed"
+  // Exclude "raw" from the count (always completed, not shown in UI)
+  return Object.entries(status.steps).filter(
+    ([key, s]) => key !== "raw" && s.status === "completed"
   ).length;
 }
 
-const TOTAL_STEPS = 7;
+const TOTAL_STEPS = 6;
 
 // --- Side panel tabs ---
-type SidePanelTab = "ai" | "script" | "details" | "logs";
+type SidePanelTab = "pipeline" | "script";
 
 // --- Component ---
 
@@ -157,11 +155,12 @@ function EditorPage() {
   const [sidePanelOpen, setSidePanelOpen] = useState(
     () => typeof window !== "undefined" && window.innerWidth >= 768
   );
-  const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>("details");
+  const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>("pipeline");
   const [isPlaying, setIsPlaying] = useState(false);
   const [previewMode, setPreviewMode] = useState<"edit" | "preview">("edit");
   const [continuousPlay, setContinuousPlay] = useState(false);
   const [cutVideoDuration, setCutVideoDuration] = useState<number | null>(null);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
 
   // --- Video ref ---
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -170,9 +169,10 @@ function EditorPage() {
 
   // --- Store data ---
   const scriptState = useScript(videoId);
-  const config = useWorkspaceStore((s) => s.pipelineConfig);
+  const setScript = useWorkspaceStore((state) => state.setScript);
+  const clearScript = useWorkspaceStore((state) => state.clearScript);
   const timelineSegments = useVideoSegments(videoId);
-  const { importSemanticSegments, importPreselectedSegments, toggleSegment, clearSelection } =
+  const { importSemanticSegments, importPreselectedSegments } =
     useTimelineActions();
   const selection = useTimelineSelection();
   const { highlightColor, fontFamily } = useSubtitleStore();
@@ -196,11 +196,6 @@ function EditorPage() {
   const videoPath = video
     ? `${API_URL}/api/stream/videos/${video.filename}`
     : "";
-
-  const hasCaptions = useMemo(() => {
-    if (video?.hasCaptions) return true;
-    return (pipelineStatus?.steps.captions?.status === "completed") || false;
-  }, [video, pipelineStatus]);
 
   const canPreview = useMemo(() => {
     if (!pipelineStatus) return false;
@@ -345,6 +340,11 @@ function EditorPage() {
       setPreviewMode("edit");
     }
   }, [canPreview, previewMode]);
+
+  // Close right panel if preselection logs disappear (e.g. video change)
+  useEffect(() => {
+    if (!preselectionLog) setRightPanelOpen(false);
+  }, [preselectionLog]);
 
   // --- Import segments to timeline store ---
   const lastImportRef = useRef<{
@@ -553,6 +553,19 @@ function EditorPage() {
       {/* Header */}
       <header className="flex items-center justify-between px-4 h-11 border-b bg-muted/30 flex-shrink-0">
         <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 hidden md:inline-flex"
+            onClick={() => setSidePanelOpen(!sidePanelOpen)}
+            title={sidePanelOpen ? "Cerrar panel lateral" : "Abrir panel lateral"}
+          >
+            {sidePanelOpen ? (
+              <PanelLeftClose className="w-4 h-4" />
+            ) : (
+              <PanelLeftOpen className="w-4 h-4" />
+            )}
+          </Button>
           <Link to="/pipeline/$videoId/$tab" params={{ videoId, tab: "segments" }}>
             <Button variant="ghost" size="sm" className="h-7 px-2 gap-1">
               <ArrowLeft className="w-4 h-4" />
@@ -569,6 +582,21 @@ function EditorPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {preselectionLog && (
+            <Button
+              variant={rightPanelOpen ? "default" : "ghost"}
+              size="sm"
+              className="h-7 px-2 gap-1.5 hidden md:inline-flex"
+              onClick={() => setRightPanelOpen(!rightPanelOpen)}
+              title={rightPanelOpen ? "Cerrar logs" : "Ver logs de preseleccion"}
+            >
+              {rightPanelOpen ? (
+                <PanelRightClose className="w-4 h-4" />
+              ) : (
+                <ScrollText className="w-4 h-4" />
+              )}
+            </Button>
+          )}
           {canPreview && (
             <Button
               variant={previewMode === "preview" ? "default" : "ghost"}
@@ -590,19 +618,6 @@ function EditorPage() {
               )}
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 hidden md:inline-flex"
-            onClick={() => setSidePanelOpen(!sidePanelOpen)}
-            title={sidePanelOpen ? "Cerrar panel lateral" : "Abrir panel lateral"}
-          >
-            {sidePanelOpen ? (
-              <PanelLeftClose className="w-4 h-4" />
-            ) : (
-              <PanelLeftOpen className="w-4 h-4" />
-            )}
-          </Button>
         </div>
       </header>
 
@@ -632,294 +647,83 @@ function EditorPage() {
             {/* Side panel tabs */}
             <div className="flex border-b bg-muted/20 flex-shrink-0">
               <SidePanelTabButton
-                active={sidePanelTab === "details"}
-                onClick={() => setSidePanelTab("details")}
+                active={sidePanelTab === "pipeline"}
+                onClick={() => setSidePanelTab("pipeline")}
               >
-                <Scissors className="w-3.5 h-3.5" />
-                Segmentos
+                <Zap className="w-3.5 h-3.5" />
+                Pipeline
               </SidePanelTabButton>
-              {hasCaptions && (
-                <SidePanelTabButton
-                  active={sidePanelTab === "ai"}
-                  onClick={() => setSidePanelTab("ai")}
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  IA
-                </SidePanelTabButton>
-              )}
-              {scriptState?.rawScript && (
-                <SidePanelTabButton
-                  active={sidePanelTab === "script"}
-                  onClick={() => setSidePanelTab("script")}
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  Script
-                </SidePanelTabButton>
-              )}
-              {preselectionLog && (
-                <SidePanelTabButton
-                  active={sidePanelTab === "logs"}
-                  onClick={() => setSidePanelTab("logs")}
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  Logs
-                </SidePanelTabButton>
-              )}
+              <SidePanelTabButton
+                active={sidePanelTab === "script"}
+                onClick={() => setSidePanelTab("script")}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Script
+                {scriptState?.rawScript ? (
+                  <CheckCircle2 className="w-3 h-3 text-green-500" />
+                ) : (
+                  <AlertTriangle className="w-3 h-3 text-yellow-500" />
+                )}
+              </SidePanelTabButton>
             </div>
 
             {/* Side panel content */}
-            <div className="flex-1 overflow-y-auto scrollbar-subtle">
-              {sidePanelTab === "details" && (
-                <div className="p-4 space-y-4">
-                  {/* Stats grid */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <StatCard
-                      label="Segmentos"
-                      value={`${stats.selectedCount}/${stats.totalSegments}`}
-                      color="text-primary"
-                    />
-                    <StatCard
-                      label="Duracion final"
-                      value={formatDuration(stats.selectedDuration)}
-                      color="text-green-600"
-                    />
-                    <StatCard
-                      label="Eliminado"
-                      value={formatDuration(stats.removedDuration)}
-                      color="text-red-600"
-                    />
-                    <StatCard
-                      label="Contenido"
-                      value={`${stats.percentKept.toFixed(0)}%`}
-                      color="text-foreground"
-                    />
-                  </div>
-
-                  {/* Preselection stats */}
-                  {segmentsResult?.preselection && (
-                    <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Sparkles className="w-4 h-4 text-blue-600" />
-                        <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
-                          Preseleccion IA
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs text-blue-600 dark:text-blue-400">
-                        {segmentsResult.preselection.stats.scriptCoverage <
-                          100 && (
-                          <span>
-                            Cobertura:{" "}
-                            {segmentsResult.preselection.stats.scriptCoverage.toFixed(
-                              0
-                            )}
-                            %
-                          </span>
-                        )}
-                        {segmentsResult.preselection.stats
-                          .repetitionsRemoved > 0 && (
-                          <span>
-                            Repeticiones:{" "}
-                            {
-                              segmentsResult.preselection.stats
-                                .repetitionsRemoved
-                            }
-                          </span>
-                        )}
-                        <span>
-                          Score:{" "}
-                          {segmentsResult.preselection.stats.averageScore.toFixed(
-                            0
-                          )}
-                          %
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Selected segment details */}
-                  {selectedSegment && selectedSegmentIndex && (
-                    <div className="border rounded-lg p-3 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="default" className="text-xs">
-                            #{selectedSegmentIndex}
-                          </Badge>
-                          <Badge
-                            variant={
-                              selectedSegment.enabled ? "default" : "secondary"
-                            }
-                            className={cn(
-                              "text-xs",
-                              selectedSegment.enabled
-                                ? "bg-green-100 text-green-700 border-green-300 dark:bg-green-900/30 dark:text-green-400"
-                                : "bg-red-100 text-red-700 border-red-300 dark:bg-red-900/30 dark:text-red-400"
-                            )}
-                          >
-                            {selectedSegment.enabled
-                              ? "Habilitado"
-                              : "Deshabilitado"}
-                          </Badge>
-                          {selectedSegment.preselectionScore !== undefined && (
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                "text-xs",
-                                selectedSegment.preselectionScore >= 85
-                                  ? "bg-green-100 text-green-700 border-green-300"
-                                  : selectedSegment.preselectionScore >= 60
-                                    ? "bg-yellow-100 text-yellow-700 border-yellow-300"
-                                    : "bg-red-100 text-red-700 border-red-300"
-                              )}
-                            >
-                              {selectedSegment.preselectionScore}%
-                            </Badge>
-                          )}
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={clearSelection}
-                          className="h-6 w-6 p-0"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3 text-sm">
-                        <div>
-                          <span className="text-muted-foreground block text-xs">
-                            Inicio
-                          </span>
-                          <span className="font-mono font-medium">
-                            {formatTime(selectedSegment.startMs / 1000)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground block text-xs">
-                            Fin
-                          </span>
-                          <span className="font-mono font-medium">
-                            {formatTime(selectedSegment.endMs / 1000)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground block text-xs">
-                            Duracion
-                          </span>
-                          <span className="font-medium flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-muted-foreground" />
-                            {formatDuration(
-                              (selectedSegment.endMs -
-                                selectedSegment.startMs) /
-                                1000
-                            )}
-                          </span>
-                        </div>
-                      </div>
-
-                      {selectedSegment.preselectionReason && (
-                        <div className="p-2 bg-muted/50 rounded border text-xs">
-                          <span className="text-muted-foreground">Razon: </span>
-                          <span>{selectedSegment.preselectionReason}</span>
-                        </div>
-                      )}
-
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            handleSeekTo(selectedSegment.startMs)
-                          }
-                          className="flex-1"
-                        >
-                          <Play className="w-3.5 h-3.5 mr-1" />
-                          Ir
-                        </Button>
-                        <Button
-                          variant={
-                            selectedSegment.enabled ? "outline" : "default"
-                          }
-                          size="sm"
-                          onClick={() =>
-                            toggleSegment(videoId, selectedSegment.id)
-                          }
-                          className="flex-1"
-                        >
-                          {selectedSegment.enabled ? (
-                            <>
-                              <ToggleRight className="w-3.5 h-3.5 mr-1" />
-                              Deshab.
-                            </>
-                          ) : (
-                            <>
-                              <ToggleLeft className="w-3.5 h-3.5 mr-1" />
-                              Habilitar
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* No segments message */}
-                  {!hasSegments && (
-                    <div className="text-center py-8 text-muted-foreground text-sm">
-                      No hay segmentos. Ejecuta el pipeline primero.
-                      <div className="mt-3">
-                        <Link
-                          to="/pipeline/$videoId/$tab"
-                          params={{ videoId, tab: "segments" }}
-                        >
-                          <Button variant="outline" size="sm">
-                            Ir al Pipeline
-                          </Button>
-                        </Link>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {sidePanelTab === "ai" && (
-                <AIPreselectionPanel
-                  videoId={videoId}
-                  script={scriptState?.rawScript}
-                  hasCaptions={hasCaptions}
-                  currentSegments={
-                    segmentsResult?.preselection?.segments || []
-                  }
-                  onSegmentsUpdate={(newSegments) => {
-                    importPreselectedSegments(videoId, newSegments, []);
-                  }}
-                  onSegmentClick={(segmentId) => {
-                    const segment = timelineSegments.find(
-                      (s) => s.id === segmentId
-                    );
-                    if (segment) {
-                      handleSeekTo(segment.startMs);
-                    }
-                  }}
+            <div className="flex-1 min-h-0 overflow-hidden">
+              {sidePanelTab === "pipeline" && video && (
+                <EditorPipelinePanel
+                  video={video}
+                  segmentsResult={segmentsResult}
+                  onStepCompleted={() => loadPipelineStatus(video)}
+                  onOpenLogs={preselectionLog ? () => setRightPanelOpen(true) : undefined}
+                  onSeekTo={handleSeekTo}
                 />
               )}
 
-              {sidePanelTab === "script" && scriptState?.rawScript && (
-                <div className="p-4">
-                  <h3 className="text-sm font-medium mb-3">Guion original</h3>
-                  <pre className="text-xs font-mono whitespace-pre-wrap bg-muted/50 rounded-lg p-3 border max-h-[600px] overflow-y-auto">
-                    {scriptState.rawScript}
-                  </pre>
+              {sidePanelTab === "script" && (
+                <div className="p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-medium">Guion original</h3>
+                    {scriptState?.rawScript && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => clearScript(videoId)}
+                        className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
+                      >
+                        <X className="w-3 h-3 mr-1" />
+                        Limpiar
+                      </Button>
+                    )}
+                  </div>
+                  <Textarea
+                    placeholder="Pega aqui tu guion original..."
+                    value={scriptState?.rawScript ?? ""}
+                    onChange={(e) => setScript(videoId, e.target.value)}
+                    className="min-h-[200px] text-xs font-mono resize-y"
+                  />
+                  {scriptState?.rawScript && (() => {
+                    const parsed = parseScript(scriptState.rawScript);
+                    const zoomCount = parsed.markers.filter((m) => m.type === "zoom").length;
+                    const highlightCount = parsed.markers.filter((m) => m.type === "highlight").length;
+                    return (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>{scriptState.rawScript.length} chars</span>
+                        {zoomCount > 0 && (
+                          <Badge variant="secondary" className="text-xs h-4 px-1.5">
+                            {zoomCount} zoom{zoomCount !== 1 ? "s" : ""}
+                          </Badge>
+                        )}
+                        {highlightCount > 0 && (
+                          <Badge variant="secondary" className="text-xs h-4 px-1.5">
+                            {highlightCount} highlight{highlightCount !== 1 ? "s" : ""}
+                          </Badge>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
-              {sidePanelTab === "logs" && preselectionLog && (
-                <div className="p-4">
-                  <PreselectionLogs
-                    log={preselectionLog}
-                    onSeekTo={(seconds) => handleSeekTo(seconds * 1000)}
-                  />
-                </div>
-              )}
             </div>
           </aside>
         )}
@@ -1004,6 +808,28 @@ function EditorPage() {
             <div className="text-muted-foreground">Sin video</div>
           )}
         </div>
+
+        {/* Right panel - Preselection Logs */}
+        {rightPanelOpen && preselectionLog && (
+          <aside className="hidden md:flex md:flex-col md:w-[420px] md:flex-shrink-0 border-l bg-background min-h-0">
+            <div className="flex items-center justify-end px-2 py-1 border-b flex-shrink-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0"
+                onClick={() => setRightPanelOpen(false)}
+              >
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+            <div className="flex-1 min-h-0 p-3">
+              <PreselectionLogs
+                log={preselectionLog}
+                onSeekTo={(seconds) => handleSeekTo(seconds * 1000)}
+              />
+            </div>
+          </aside>
+        )}
       </div>
 
       {/* Timeline - FULL WIDTH */}
@@ -1110,22 +936,5 @@ function SidePanelTabButton({
     >
       {children}
     </button>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: string;
-  color: string;
-}) {
-  return (
-    <div className="text-center p-3 bg-muted/50 rounded-lg">
-      <div className={cn("text-lg font-bold", color)}>{value}</div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-    </div>
   );
 }

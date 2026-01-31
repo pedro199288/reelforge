@@ -1,11 +1,9 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import { ZoomIn, ZoomOut, Maximize2, Crosshair } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { ZoomIn, ZoomOut, Maximize2, Crosshair, Film } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Waveform, WaveformPlaceholder } from "@/components/Timeline/Waveform";
 import { TimelineRuler } from "@/components/Timeline/TimelineRuler";
 import { TimelinePlayhead } from "@/components/Timeline/TimelinePlayhead";
 import { SegmentTrack } from "@/components/Timeline/SegmentTrack";
@@ -48,19 +46,21 @@ export function SegmentTimeline({
 }: SegmentTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
-  const [showFullTimeline, setShowFullTimeline] = useState(false);
-  const fullTimelineBeforeContinuousRef = useRef(false);
+  const [showFullTimeline, setShowFullTimeline] = useState(true);
+  const [trackExpanded, setTrackExpanded] = useState(true);
+  const fullTimelineBeforeContinuousRef = useRef(true);
   const prevContinuousPlayRef = useRef(continuousPlay);
   const prevShowFullTimelineRef = useRef(showFullTimeline);
   const hasInitializedFitRef = useRef(false);
-  // Track user scroll interaction to disable auto-scroll until center button is clicked
-  const userScrolledRef = useRef(false);
+  // Follow-playhead toggle: state for UI, ref for RAF loop
+  const [followPlayhead, setFollowPlayhead] = useState(true);
+  const followPlayheadRef = useRef(true);
   // Ref for RAF-based auto-scroll (updated every frame, read outside React cycle)
   const playheadMsRef = useRef(currentTimeMs);
   const autoScrollRafRef = useRef<number | null>(null);
 
   // Waveform data
-  const { rawData: waveformRawData, loading: waveformLoading } = useWaveform(
+  const { rawData: waveformRawData } = useWaveform(
     videoPath,
     { samplesPerSecond: 200, videoDurationSec: durationMs / 1000 }
   );
@@ -254,8 +254,9 @@ export function SegmentTimeline({
     // Extract visible samples
     const visibleSamples = waveformRawData.samples.slice(startSample, endSample);
 
-    // Downsample to fit viewport width (not full container)
-    const targetPoints = Math.max(100, Math.min(viewportWidthPx, visibleSamples.length));
+    // Downsample to fit actual content width (may be smaller than viewport when zoomed out)
+    const actualWidthPx = Math.round((endMs - startMs) * pxPerMs);
+    const targetPoints = Math.max(100, Math.min(actualWidthPx, visibleSamples.length));
     if (visibleSamples.length <= targetPoints) {
       return visibleSamples;
     }
@@ -304,7 +305,7 @@ export function SegmentTimeline({
         const deltaMs = e.deltaX / pxPerMs;
         const newStart = Math.max(0, currentViewport + deltaMs);
         useTimelineStore.getState().scrollTo(newStart);
-        userScrolledRef.current = true;
+        setFollowPlayhead(false);
       } else if (e.deltaY !== 0) {
         // Vertical scroll → zoom
         const delta = e.deltaY > 0 ? 0.8 : 1.25;
@@ -313,7 +314,7 @@ export function SegmentTimeline({
           Math.min(MAX_ZOOM_LEVEL, currentZoom * delta)
         );
         useTimelineStore.getState().setZoomLevel(newZoom);
-        userScrolledRef.current = true;
+        setFollowPlayhead(false);
       }
     };
 
@@ -334,11 +335,16 @@ export function SegmentTimeline({
     playheadMsRef.current = effectivePlayheadMs;
   }, [effectivePlayheadMs]);
 
+  // Sync followPlayhead ref with state (ref is read in RAF loop)
+  useEffect(() => {
+    followPlayheadRef.current = followPlayhead;
+  }, [followPlayhead]);
+
   // RAF-based auto-scroll - runs outside React render cycle for smooth tracking
   useEffect(() => {
     const tick = () => {
-      // Skip if user has manually scrolled
-      if (!userScrolledRef.current) {
+      // Skip if follow-playhead is disabled
+      if (followPlayheadRef.current) {
         // Read current values directly from store and refs (no React state dependency)
         const { zoomLevel: currentZoom, viewportStartMs: currentViewport } =
           useTimelineStore.getState();
@@ -375,15 +381,18 @@ export function SegmentTimeline({
     fitToView(effectiveDurationMs, viewportWidth > 0 ? viewportWidth : undefined);
   }, [fitToView, effectiveDurationMs, containerWidth]);
 
-  // Center the viewport on the current playhead position and re-enable auto-scroll
-  const handleCenterOnPlayhead = useCallback(() => {
-    const pxPerMs = getPxPerMs(zoomLevel);
-    const visibleDurationMs = containerWidth / pxPerMs;
-    // Center the playhead in the middle of the viewport
-    const newViewportStart = effectivePlayheadMs - visibleDurationMs / 2;
-    scrollTo(Math.max(0, newViewportStart));
-    // Re-enable auto-scroll
-    userScrolledRef.current = false;
+  // Toggle follow-playhead mode; when enabling, center viewport on playhead
+  const handleToggleFollowPlayhead = useCallback(() => {
+    setFollowPlayhead((prev) => {
+      if (!prev) {
+        // Re-enabling: center viewport on playhead
+        const pxPerMs = getPxPerMs(zoomLevel);
+        const visibleDurationMs = containerWidth / pxPerMs;
+        const newViewportStart = effectivePlayheadMs - visibleDurationMs / 2;
+        scrollTo(Math.max(0, newViewportStart));
+      }
+      return !prev;
+    });
   }, [zoomLevel, containerWidth, effectivePlayheadMs, scrollTo]);
 
   const handleResizeSegment = useCallback(
@@ -434,12 +443,12 @@ export function SegmentTimeline({
         dragStartX.current = e.clientX;
         dragStartViewport.current = viewportStartMs;
         bar.setPointerCapture(e.pointerId);
-        userScrolledRef.current = true;
+        setFollowPlayhead(false);
       } else {
         // Click on track: jump so the thumb centers on click position
         const targetRatio = Math.max(0, Math.min(1 - thumbRatio, clickRatio - thumbRatio / 2));
         scrollTo(targetRatio * effectiveDurationMs);
-        userScrolledRef.current = true;
+        setFollowPlayhead(false);
       }
     },
     [thumbLeft, thumbRatio, viewportStartMs, effectiveDurationMs, scrollTo]
@@ -475,22 +484,17 @@ export function SegmentTimeline({
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="full-timeline-view"
-              checked={showFullTimeline}
-              onCheckedChange={(checked) => setShowFullTimeline(checked === true)}
-            />
-            <Label htmlFor="full-timeline-view" className="text-xs cursor-pointer">
-              Timeline completo
-            </Label>
-          </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={zoomOut}>
-            <ZoomOut className="h-4 w-4" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={zoomOut}>
+                <ZoomOut className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Alejar zoom</TooltipContent>
+          </Tooltip>
           <Slider
             value={[zoomLevel]}
             min={0.01}
@@ -499,15 +503,61 @@ export function SegmentTimeline({
             className="w-24"
             onValueChange={([value]) => setZoomLevel(value)}
           />
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={zoomIn}>
-            <ZoomIn className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleFitToView} title="Ajustar a la vista">
-            <Maximize2 className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleCenterOnPlayhead} title="Centrar en playhead">
-            <Crosshair className="h-4 w-4" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={zoomIn}>
+                <ZoomIn className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Acercar zoom</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleFitToView}>
+                <Maximize2 className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Ajustar a la vista</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={followPlayhead ? "secondary" : "ghost"}
+                size="icon"
+                className="h-7 w-7"
+                onClick={handleToggleFollowPlayhead}
+              >
+                <Crosshair className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{followPlayhead ? "Dejar de seguir playhead" : "Seguir playhead"}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={showFullTimeline ? "secondary" : "ghost"}
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setShowFullTimeline(v => !v)}
+              >
+                <Film className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{showFullTimeline ? "Vista contigua (sin huecos)" : "Timeline completo"}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={trackExpanded ? "secondary" : "ghost"}
+                size="icon"
+                className="h-7 w-7 text-xs font-bold"
+                onClick={() => setTrackExpanded(v => !v)}
+              >
+                2x
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{trackExpanded ? "Altura normal" : "Duplicar altura del track"}</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
@@ -531,33 +581,6 @@ export function SegmentTimeline({
           }}
         />
 
-        {/* Waveform track (only in full timeline mode) */}
-        {showFullTimeline && (
-          <div className="flex border-b border-border">
-            <div className="w-20 shrink-0 bg-muted/30 border-r border-border flex items-center justify-center">
-              <span className="text-xs text-muted-foreground">Audio</span>
-            </div>
-            <div className="flex-1 h-24 relative bg-muted/10">
-              {waveformLoading ? (
-                <WaveformPlaceholder width={viewportWidthPx} height={96} />
-              ) : waveformDisplayData ? (
-                <Waveform
-                  data={waveformDisplayData}
-                  width={viewportWidthPx}
-                  height={96}
-                  color="rgb(74, 222, 128)"
-                  style="mirror"
-                  offsetPx={waveformOffsetPx}
-                />
-              ) : (
-                <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                  Sin waveform
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* Segment track - always visible, contiguous by default */}
         <SegmentTrack
           segments={segments}
@@ -572,6 +595,10 @@ export function SegmentTimeline({
           onAddSegment={isContiguous ? undefined : handleAddSegment}
           contiguous={isContiguous}
           waveformRawData={waveformRawData}
+          viewportWaveformData={waveformDisplayData}
+          viewportWidthPx={viewportWidthPx}
+          waveformOffsetPx={waveformOffsetPx}
+          expanded={trackExpanded}
         />
 
         {/* Playhead */}

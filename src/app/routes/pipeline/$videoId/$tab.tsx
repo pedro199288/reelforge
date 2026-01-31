@@ -11,7 +11,6 @@ import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import type { Video } from "@/components/VideoList";
 import {
   useWorkspaceStore,
-  useSelection,
   useScript,
   SILENCE_DEFAULTS,
 } from "@/store/workspace";
@@ -28,126 +27,23 @@ import {
   type ProcessingStepInfo,
   type ProcessingStatus,
 } from "@/components/ProcessingStatusPanel";
+import {
+  type PipelineStep,
+  type ProcessProgress,
+  type StepResult,
+  type SilencesResult,
+  type SegmentsResult,
+  type CutResult,
+  type CaptionsResult,
+  type EffectsAnalysisResultMeta,
+  type PipelineState,
+  STEPS,
+  getVideoPipelineState,
+  getCompletedSteps,
+} from "@/types/pipeline";
+import { usePipelineExecution } from "@/hooks/usePipelineExecution";
 
 const API_URL = "http://localhost:3012";
-
-interface ProcessProgress {
-  step: string;
-  progress: number;
-  message: string;
-}
-
-// Pipeline step execution types
-type StepStatus = "pending" | "running" | "completed" | "error";
-
-interface StepState {
-  status: StepStatus;
-  startedAt?: string;
-  completedAt?: string;
-  error?: string;
-  resultFile?: string;
-}
-
-interface BackendPipelineStatus {
-  videoId: string;
-  filename: string;
-  videoDuration?: number;
-  steps: Record<PipelineStep, StepState>;
-  updatedAt: string;
-}
-
-interface SilencesResult {
-  silences: Array<{ start: number; end: number; duration: number }>;
-  videoDuration: number;
-  config: {
-    method?: "ffmpeg" | "envelope";
-    thresholdDb: number;
-    minDurationSec: number;
-    amplitudeThreshold?: number;
-  };
-  createdAt: string;
-}
-
-interface SegmentsResult {
-  segments: Array<{
-    startTime: number;
-    endTime: number;
-    duration: number;
-    index: number;
-  }>;
-  totalDuration: number;
-  editedDuration: number;
-  timeSaved: number;
-  percentSaved: number;
-  config: { paddingSec: number; usedSemanticAnalysis?: boolean };
-  preselection?: {
-    segments: Array<{
-      id: string;
-      startMs: number;
-      endMs: number;
-      enabled: boolean;
-      score: number;
-      reason: string;
-    }>;
-    stats: {
-      totalSegments: number;
-      selectedSegments: number;
-      originalDurationMs: number;
-      selectedDurationMs: number;
-      scriptCoverage: number;
-      repetitionsRemoved: number;
-      averageScore: number;
-      ambiguousSegments: number;
-    };
-  };
-  createdAt: string;
-}
-
-interface CutResult {
-  outputPath: string;
-  originalDuration: number;
-  editedDuration: number;
-  segmentsCount: number;
-  createdAt: string;
-}
-
-interface CaptionsResult {
-  captionsPath: string;
-  captionsCount: number;
-  createdAt: string;
-}
-
-
-interface EffectsAnalysisResultMeta {
-  mainTopic: string;
-  topicKeywords: string[];
-  overallTone: string;
-  language: string;
-  wordCount: number;
-  enrichedCaptionsCount: number;
-  captionsHash: string;
-  model: string;
-  processingTimeMs: number;
-  createdAt: string;
-}
-
-type StepResult =
-  | SilencesResult
-  | SegmentsResult
-  | CutResult
-  | CaptionsResult
-  | EffectsAnalysisResultMeta;
-
-// Step dependencies - simplified 6-phase pipeline
-const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
-  raw: [],
-  silences: [],
-  segments: ["silences"],
-  cut: ["segments"],
-  captions: ["cut"],
-  "effects-analysis": ["captions"],
-  rendered: ["effects-analysis"],
-};
 
 export const Route = createFileRoute("/pipeline/$videoId/$tab")({
   component: PipelinePage,
@@ -155,95 +51,6 @@ export const Route = createFileRoute("/pipeline/$videoId/$tab")({
 
 interface VideoManifest {
   videos: Video[];
-}
-
-type PipelineStep =
-  | "raw"
-  | "silences"
-  | "segments"
-  | "cut"
-  | "captions"
-  | "effects-analysis"
-  | "rendered";
-
-interface PipelineState {
-  raw: boolean;
-  silences: boolean;
-  segments: boolean;
-  cut: boolean;
-  captions: boolean;
-  "effects-analysis": boolean;
-  rendered: boolean;
-}
-
-const STEPS: {
-  key: PipelineStep;
-  label: string;
-  description: string;
-  optional?: boolean;
-}[] = [
-  { key: "raw", label: "Raw", description: "Video original importado (incluye script opcional)" },
-  {
-    key: "silences",
-    label: "Silencios",
-    description: "Detectar silencios con FFmpeg",
-  },
-  {
-    key: "segments",
-    label: "Segmentos",
-    description: "Generar segmentos de contenido con preseleccion",
-  },
-  { key: "cut", label: "Cortado", description: "Cortar video sin silencios (genera cut-map)" },
-  {
-    key: "captions",
-    label: "Captions",
-    description: "Transcripcion del video cortado con Whisper",
-  },
-  {
-    key: "effects-analysis",
-    label: "Auto-Efectos",
-    description: "Analisis con IA para detectar zooms y highlights automaticos",
-    optional: true,
-  },
-  {
-    key: "rendered",
-    label: "Renderizado",
-    description: "Video final con subtitulos y efectos",
-  },
-];
-
-function getVideoPipelineState(
-  video: Video,
-  backendStatus?: BackendPipelineStatus | null,
-): PipelineState {
-  if (backendStatus) {
-    return {
-      raw: true,
-      silences: backendStatus.steps.silences?.status === "completed",
-      segments: backendStatus.steps.segments?.status === "completed",
-      cut: backendStatus.steps.cut?.status === "completed",
-      captions:
-        backendStatus.steps.captions?.status === "completed" ||
-        video.hasCaptions,
-      "effects-analysis":
-        backendStatus.steps["effects-analysis"]?.status === "completed",
-      rendered: backendStatus.steps.rendered?.status === "completed",
-    };
-  }
-
-  return {
-    raw: true,
-    silences: false,
-    segments: false,
-    cut: false,
-    captions: false,
-    "effects-analysis": false,
-    rendered: false,
-  };
-}
-
-function getCompletedSteps(state: PipelineState): number {
-  return Object.values(state).filter(Boolean).length;
 }
 
 function pipelineStateToStepInfo(
@@ -302,21 +109,27 @@ function PipelinePage() {
     useState<ProcessProgress | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Individual step execution state
-  const [backendStatus, setBackendStatus] =
-    useState<BackendPipelineStatus | null>(null);
-  const [statusError, setStatusError] = useState<string | null>(null);
-  const [stepProcessing, setStepProcessing] = useState<PipelineStep | null>(
-    null,
-  );
-  const [stepProgress, setStepProgress] = useState<ProcessProgress | null>(
-    null,
-  );
-  const [stepResults, setStepResults] = useState<Record<string, StepResult>>(
-    {},
-  );
-  const [preselectionLog, setPreselectionLog] = useState<PreselectionLog | null>(null);
-  const [isReapplyingPreselection, setIsReapplyingPreselection] = useState(false);
+  // Pipeline execution hook
+  const pipeline = usePipelineExecution({
+    videoId: selectedVideo?.id ?? "",
+    filename: selectedVideo?.filename ?? "",
+  });
+
+  const {
+    backendStatus,
+    statusError,
+    stepProcessing,
+    stepProgress,
+    stepResults,
+    preselectionLog,
+    canExecuteStep: canExecuteStepCheck,
+    executeStep,
+    executeUntilStep,
+    refreshStatus,
+    handleReapplyPreselection,
+    isReapplyingPreselection,
+    resetState,
+  } = pipeline;
 
   // Pipeline config from persistent store
   const config = useWorkspaceStore((state) => state.pipelineConfig);
@@ -329,417 +142,13 @@ function PipelinePage() {
   const setScript = useWorkspaceStore((state) => state.setScript);
   const clearScript = useWorkspaceStore((state) => state.clearScript);
 
-  // Segment selections for the current video
-  const segmentSelection = useSelection(selectedVideo?.id ?? "");
-
-  // Load result of a specific step
-  const loadStepResult = useCallback(
-    async (videoId: string, step: PipelineStep) => {
-      try {
-        const res = await fetch(
-          `${API_URL}/api/pipeline/result?videoId=${encodeURIComponent(videoId)}&step=${step}`,
-        );
-        if (res.ok) {
-          const result = (await res.json()) as StepResult;
-          setStepResults((prev) => ({ ...prev, [step]: result }));
-        }
-      } catch (err) {
-        console.error(`Error loading ${step} result:`, err);
-      }
-    },
-    [],
-  );
-
-  // Load preselection logs
-  const loadPreselectionLogs = useCallback(
-    async (videoId: string) => {
-      try {
-        const res = await fetch(
-          `${API_URL}/api/pipeline/${encodeURIComponent(videoId)}/preselection-logs`,
-        );
-        if (res.ok) {
-          const result = await res.json();
-          setPreselectionLog(result.log ?? null);
-        }
-      } catch (err) {
-        // Logs are optional, don't show error
-        console.debug("Preselection logs not available:", err);
-      }
-    },
-    [],
-  );
-
-  // Re-apply preselection with captions from cut video
-  const handleReapplyPreselection = useCallback(async () => {
-    if (!selectedVideo || !scriptState?.rawScript) return;
-
-    setIsReapplyingPreselection(true);
-
-    try {
-      const res = await fetch(
-        `${API_URL}/api/pipeline/${encodeURIComponent(selectedVideo.id)}/reapply-preselection`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ script: scriptState.rawScript }),
-        }
-      );
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `HTTP ${res.status}`);
-      }
-
-      const result = await res.json();
-
-      // Update local state with new preselection data
-      if (result.preselection) {
-        setStepResults((prev) => {
-          const segmentsResult = prev.segments as SegmentsResult | undefined;
-          if (segmentsResult) {
-            return {
-              ...prev,
-              segments: {
-                ...segmentsResult,
-                preselection: result.preselection,
-              },
-            };
-          }
-          return prev;
-        });
-      }
-
-      // Reload preselection logs
-      await loadPreselectionLogs(selectedVideo.id);
-
-      toast.success("Re-evaluacion completada", {
-        description: "La preseleccion se ha actualizado con los scores de Script Match reales",
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Error desconocido";
-      toast.error("Error en re-evaluacion", {
-        description: message,
-      });
-    } finally {
-      setIsReapplyingPreselection(false);
-    }
-  }, [selectedVideo, scriptState?.rawScript, loadPreselectionLogs]);
-
-  // Load backend pipeline status
-  const loadPipelineStatus = useCallback(
-    async (videoId: string, filename: string) => {
-      setStatusError(null);
-      try {
-        const res = await fetch(
-          `${API_URL}/api/pipeline/status?videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(filename)}`,
-        );
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `HTTP ${res.status}`);
-        }
-        const status = (await res.json()) as BackendPipelineStatus;
-        setBackendStatus(status);
-
-        // Load results for completed steps
-        const completedSteps = Object.entries(status.steps)
-          .filter(([, state]) => state.status === "completed")
-          .map(([step]) => step as PipelineStep);
-
-        for (const step of completedSteps) {
-          loadStepResult(videoId, step);
-        }
-
-        // Load preselection logs if segments step is completed
-        if (completedSteps.includes("segments")) {
-          loadPreselectionLogs(videoId);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Error desconocido";
-        console.error("Error loading pipeline status:", err);
-        setStatusError(`No se pudo conectar al servidor API: ${message}`);
-        toast.error("Servidor API no disponible", {
-          description: "Asegúrate de que el servidor esté corriendo en el puerto 3012",
-        });
-      }
-    },
-    [loadStepResult, loadPreselectionLogs],
-  );
-
-  // Check if a step can be executed
-  const canExecuteStepCheck = useCallback(
-    (
-      step: PipelineStep,
-      state: PipelineState,
-    ): { canExecute: boolean; missingDeps: PipelineStep[] } => {
-      const deps = STEP_DEPENDENCIES[step];
-      const missingDeps = deps.filter((dep) => !state[dep]);
-      return { canExecute: missingDeps.length === 0, missingDeps };
-    },
-    [],
-  );
-
-  // Execute a single pipeline step
-  const executeStep = useCallback(
-    async (step: PipelineStep) => {
-      if (!selectedVideo || stepProcessing) return;
-
-      const videoId = selectedVideo.id;
-      const filename = selectedVideo.filename;
-
-      setStepProcessing(step);
-      setStepProgress({ step, progress: 0, message: "Iniciando..." });
-
-      try {
-        const response = await fetch(`${API_URL}/api/pipeline/step`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            videoId,
-            filename,
-            step,
-            config: {
-              method:
-                config.silence.method ?? SILENCE_DEFAULTS.method,
-              thresholdDb:
-                config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb,
-              minDurationSec:
-                config.silence.minDurationSec ??
-                SILENCE_DEFAULTS.minDurationSec,
-              paddingSec:
-                config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
-              amplitudeThreshold:
-                config.silence.amplitudeThreshold ?? SILENCE_DEFAULTS.amplitudeThreshold,
-              envelopeSamplesPerSecond:
-                config.silence.envelopeSamplesPerSecond ?? SILENCE_DEFAULTS.envelopeSamplesPerSecond,
-            },
-            selectedSegments:
-              step === "cut" && segmentSelection.length > 0
-                ? segmentSelection
-                : undefined,
-            script: scriptState?.rawScript || undefined,
-            preselection: config.preselection,
-          }),
-        });
-
-        if (!response.ok) {
-          const err = await response.json();
-          throw new Error(err.error || "Error al ejecutar el paso");
-        }
-
-        // Read SSE stream
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error("No response body");
-
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n\n");
-          buffer = lines.pop() || "";
-
-          for (const chunk of lines) {
-            if (!chunk.trim()) continue;
-
-            const eventMatch = chunk.match(/event: (\w+)/);
-            const dataMatch = chunk.match(/data: (.+)/);
-
-            if (eventMatch && dataMatch) {
-              const eventType = eventMatch[1];
-              const data = JSON.parse(dataMatch[1]);
-
-              switch (eventType) {
-                case "progress":
-                  setStepProgress(data);
-                  break;
-                case "complete":
-                  toast.success(`${step} completado`, {
-                    description: `Paso "${step}" ejecutado correctamente`,
-                  });
-                  setStepResults((prev) => ({ ...prev, [step]: data.result }));
-                  await loadPipelineStatus(videoId, filename);
-                  break;
-                case "error":
-                  throw new Error(data.error);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        toast.error(`Error en ${step}`, {
-          description: err instanceof Error ? err.message : "Error desconocido",
-        });
-      } finally {
-        setStepProcessing(null);
-        setStepProgress(null);
-      }
-    },
-    [
-      selectedVideo,
-      stepProcessing,
-      config,
-      loadPipelineStatus,
-      scriptState,
-      segmentSelection,
-    ],
-  );
-
-  // Execute all steps up to and including the target step
-  const executeUntilStep = useCallback(
-    async (targetStep: PipelineStep) => {
-      if (!selectedVideo || stepProcessing) return;
-
-      const videoId = selectedVideo.id;
-      const filename = selectedVideo.filename;
-
-      const executableSteps: PipelineStep[] = [
-        "silences",
-        "segments",
-        "cut",
-        "captions",
-        "effects-analysis",
-      ];
-      const targetIndex = executableSteps.indexOf(targetStep);
-
-      if (targetIndex === -1) return;
-
-      const currentStatus = backendStatus;
-
-      const stepsToExecute = executableSteps
-        .slice(0, targetIndex + 1)
-        .filter((step) => {
-          const stepState = currentStatus?.steps[step];
-          return stepState?.status !== "completed";
-        });
-
-      if (stepsToExecute.length === 0) {
-        toast.info("Todos los pasos ya estan completados");
-        return;
-      }
-
-      for (const step of stepsToExecute) {
-        setStepProcessing(step);
-        setStepProgress({ step, progress: 0, message: `Iniciando ${step}...` });
-
-        try {
-          const response = await fetch(`${API_URL}/api/pipeline/step`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              videoId,
-              filename,
-              step,
-              config: {
-                method:
-                  config.silence.method ?? SILENCE_DEFAULTS.method,
-                thresholdDb:
-                  config.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb,
-                minDurationSec:
-                  config.silence.minDurationSec ??
-                  SILENCE_DEFAULTS.minDurationSec,
-                paddingSec:
-                  config.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec,
-                amplitudeThreshold:
-                  config.silence.amplitudeThreshold ?? SILENCE_DEFAULTS.amplitudeThreshold,
-                envelopeSamplesPerSecond:
-                  config.silence.envelopeSamplesPerSecond ?? SILENCE_DEFAULTS.envelopeSamplesPerSecond,
-              },
-              script: scriptState?.rawScript || undefined,
-              preselection: config.preselection,
-            }),
-          });
-
-          if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error || `Error al ejecutar ${step}`);
-          }
-
-          const reader = response.body?.getReader();
-          if (!reader) throw new Error("No response body");
-
-          const decoder = new TextDecoder();
-          let buffer = "";
-          let stepCompleted = false;
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n\n");
-            buffer = lines.pop() || "";
-
-            for (const chunk of lines) {
-              if (!chunk.trim()) continue;
-
-              const eventMatch = chunk.match(/event: (\w+)/);
-              const dataMatch = chunk.match(/data: (.+)/);
-
-              if (eventMatch && dataMatch) {
-                const eventType = eventMatch[1];
-                const data = JSON.parse(dataMatch[1]);
-
-                switch (eventType) {
-                  case "progress":
-                    setStepProgress(data);
-                    break;
-                  case "complete":
-                    setStepResults((prev) => ({
-                      ...prev,
-                      [step]: data.result,
-                    }));
-                    stepCompleted = true;
-                    break;
-                  case "error":
-                    throw new Error(data.error);
-                }
-              }
-            }
-          }
-
-          if (!stepCompleted) {
-            throw new Error(`Paso ${step} no se completo correctamente`);
-          }
-
-          await loadPipelineStatus(videoId, filename);
-        } catch (err) {
-          toast.error(`Error en ${step}`, {
-            description:
-              err instanceof Error ? err.message : "Error desconocido",
-          });
-          setStepProcessing(null);
-          setStepProgress(null);
-          return;
-        }
-      }
-
-      toast.success("Ejecucion completada", {
-        description: `Se ejecutaron ${stepsToExecute.length} paso(s) correctamente`,
-      });
-      setStepProcessing(null);
-      setStepProgress(null);
-    },
-    [
-      selectedVideo,
-      stepProcessing,
-      config,
-      loadPipelineStatus,
-      backendStatus,
-      scriptState,
-    ],
-  );
-
   // Load pipeline status when video changes
   useEffect(() => {
     if (selectedVideo) {
-      setBackendStatus(null);
-      setStepResults({});
-      loadPipelineStatus(selectedVideo.id, selectedVideo.filename);
+      resetState();
+      refreshStatus();
     }
-  }, [selectedVideo, loadPipelineStatus]);
+  }, [selectedVideo, resetState, refreshStatus]);
 
   // Start auto-processing
   const startAutoProcess = useCallback(async () => {
@@ -865,11 +274,9 @@ function PipelinePage() {
   // Refresh callback for reset actions
   const handleRefresh = useCallback(() => {
     loadVideos(false);
-    setBackendStatus(null);
-    if (selectedVideo) {
-      loadPipelineStatus(selectedVideo.id, selectedVideo.filename);
-    }
-  }, [loadVideos, selectedVideo, loadPipelineStatus]);
+    resetState();
+    refreshStatus();
+  }, [loadVideos, resetState, refreshStatus]);
 
   useEffect(() => {
     loadVideos(true);
