@@ -221,12 +221,15 @@ export function SegmentTimeline({
     }
   }, [showFullTimeline, viewportStartMs, mapOriginalToContiguous, mapContiguousToOriginal, scrollTo]);
 
+  // Viewport width for waveform/component calculations (exclude label column)
+  const viewportWidthPx = Math.max(0, containerWidth - LABEL_COLUMN_WIDTH);
+
   // Calculate waveform display data based on viewport
   const waveformDisplayData = useMemo(() => {
-    if (!waveformRawData) return null;
+    if (!waveformRawData || viewportWidthPx <= 0) return null;
 
     const pxPerMs = getPxPerMs(zoomLevel);
-    const visibleDurationMs = containerWidth / pxPerMs;
+    const visibleDurationMs = viewportWidthPx / pxPerMs;
     const startMs = Math.max(0, viewportStartMs);
     const endMs = Math.min(durationMs, viewportStartMs + visibleDurationMs);
 
@@ -251,8 +254,8 @@ export function SegmentTimeline({
     // Extract visible samples
     const visibleSamples = waveformRawData.samples.slice(startSample, endSample);
 
-    // Downsample to fit container width
-    const targetPoints = Math.max(100, Math.min(containerWidth, visibleSamples.length));
+    // Downsample to fit viewport width (not full container)
+    const targetPoints = Math.max(100, Math.min(viewportWidthPx, visibleSamples.length));
     if (visibleSamples.length <= targetPoints) {
       return visibleSamples;
     }
@@ -265,7 +268,7 @@ export function SegmentTimeline({
       result.push(visibleSamples[idx]);
     }
     return result;
-  }, [waveformRawData, zoomLevel, viewportStartMs, durationMs, containerWidth]);
+  }, [waveformRawData, zoomLevel, viewportStartMs, durationMs, viewportWidthPx]);
 
   // Calculate waveform offset for sub-sample alignment
   const waveformOffsetPx = useMemo(() => {
@@ -403,9 +406,6 @@ export function SegmentTimeline({
     },
     [videoId, addSegment]
   );
-
-  // Viewport width for components (ensure non-negative while measuring)
-  const viewportWidthPx = Math.max(0, containerWidth - LABEL_COLUMN_WIDTH);
 
   // --- Scrollbar calculations ---
   const totalContentPx = effectiveDurationMs * getPxPerMs(zoomLevel);
