@@ -32,6 +32,8 @@ interface SegmentTimelineProps {
   className?: string;
   /** Enable smooth CSS transitions on playhead (during playback) */
   enablePlayheadTransition?: boolean;
+  /** When true, force full timeline view (continuous playback mode) */
+  continuousPlay?: boolean;
 }
 
 export function SegmentTimeline({
@@ -42,11 +44,14 @@ export function SegmentTimeline({
   onSeek,
   className,
   enablePlayheadTransition = false,
+  continuousPlay = false,
 }: SegmentTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
-  const [compressedView, setCompressedView] = useState(false);
-  const prevCompressedViewRef = useRef(compressedView);
+  const [showFullTimeline, setShowFullTimeline] = useState(false);
+  const fullTimelineBeforeContinuousRef = useRef(false);
+  const prevContinuousPlayRef = useRef(continuousPlay);
+  const prevShowFullTimelineRef = useRef(showFullTimeline);
   const hasInitializedFitRef = useRef(false);
   // Track user scroll interaction to disable auto-scroll until center button is clicked
   const userScrolledRef = useRef(false);
@@ -57,7 +62,7 @@ export function SegmentTimeline({
   // Waveform data
   const { rawData: waveformRawData, loading: waveformLoading } = useWaveform(
     videoPath,
-    { samplesPerSecond: 200 }
+    { samplesPerSecond: 200, videoDurationSec: durationMs / 1000 }
   );
 
   // Store state
@@ -67,41 +72,42 @@ export function SegmentTimeline({
   const segments = useVideoSegments(videoId);
   const silences = useVideoSilences(videoId);
 
-  // Calculate compressed duration (only enabled segments)
-  const enabledSegments = useMemo(
-    () => segments.filter((s) => s.enabled).sort((a, b) => a.startMs - b.startMs),
+  // All segments sorted for contiguous layout (uses ALL segments, not just enabled)
+  const allSortedSegments = useMemo(
+    () => [...segments].sort((a, b) => a.startMs - b.startMs),
     [segments]
   );
-  const compressedDurationMs = useMemo(
-    () => enabledSegments.reduce((sum, s) => sum + (s.endMs - s.startMs), 0),
-    [enabledSegments]
+
+  // Contiguous duration: sum of all segment durations (no gaps)
+  const contiguousDurationMs = useMemo(
+    () => allSortedSegments.reduce((sum, s) => sum + (s.endMs - s.startMs), 0),
+    [allSortedSegments]
   );
 
-  // Map compressed time to original time
-  const mapCompressedToOriginal = useCallback(
-    (compressedMs: number): number => {
+  // Map contiguous time to original time
+  const mapContiguousToOriginal = useCallback(
+    (contiguousMs: number): number => {
       let accumulated = 0;
-      for (const segment of enabledSegments) {
+      for (const segment of allSortedSegments) {
         const segmentDuration = segment.endMs - segment.startMs;
-        if (compressedMs < accumulated + segmentDuration) {
-          return segment.startMs + (compressedMs - accumulated);
+        if (contiguousMs < accumulated + segmentDuration) {
+          return segment.startMs + (contiguousMs - accumulated);
         }
         accumulated += segmentDuration;
       }
-      return enabledSegments[enabledSegments.length - 1]?.endMs ?? 0;
+      return allSortedSegments[allSortedSegments.length - 1]?.endMs ?? 0;
     },
-    [enabledSegments]
+    [allSortedSegments]
   );
 
-  // Map original time to compressed time
-  // Returns the compressed position, or the edge of the nearest segment if in a gap
-  const mapOriginalToCompressed = useCallback(
+  // Map original time to contiguous time
+  const mapOriginalToContiguous = useCallback(
     (originalMs: number): number => {
-      if (enabledSegments.length === 0) return 0;
+      if (allSortedSegments.length === 0) return 0;
 
-      let compressedMs = 0;
-      for (let i = 0; i < enabledSegments.length; i++) {
-        const segment = enabledSegments[i];
+      let contiguousMs = 0;
+      for (let i = 0; i < allSortedSegments.length; i++) {
+        const segment = allSortedSegments[i];
 
         // Before first segment: show at start
         if (i === 0 && originalMs < segment.startMs) {
@@ -110,32 +116,35 @@ export function SegmentTimeline({
 
         // Inside this segment: interpolate position
         if (originalMs >= segment.startMs && originalMs <= segment.endMs) {
-          return compressedMs + (originalMs - segment.startMs);
+          return contiguousMs + (originalMs - segment.startMs);
         }
 
         // After this segment
         const segmentDuration = segment.endMs - segment.startMs;
 
         // Check if we're in the gap between this segment and the next
-        const nextSegment = enabledSegments[i + 1];
+        const nextSegment = allSortedSegments[i + 1];
         if (nextSegment && originalMs > segment.endMs && originalMs < nextSegment.startMs) {
           // In a gap: stick to end of previous segment
-          return compressedMs + segmentDuration;
+          return contiguousMs + segmentDuration;
         }
 
-        compressedMs += segmentDuration;
+        contiguousMs += segmentDuration;
       }
 
       // After all segments: show at end
-      return compressedDurationMs;
+      return contiguousDurationMs;
     },
-    [enabledSegments, compressedDurationMs]
+    [allSortedSegments, contiguousDurationMs]
   );
 
+  // Determine view mode
+  const isContiguous = !showFullTimeline;
+
   // Effective duration and playhead based on view mode
-  const effectiveDurationMs = compressedView ? compressedDurationMs : durationMs;
-  const effectivePlayheadMs = compressedView
-    ? mapOriginalToCompressed(currentTimeMs)
+  const effectiveDurationMs = isContiguous ? contiguousDurationMs : durationMs;
+  const effectivePlayheadMs = isContiguous
+    ? mapOriginalToContiguous(currentTimeMs)
     : currentTimeMs;
 
   // Store actions
@@ -166,36 +175,51 @@ export function SegmentTimeline({
     return () => observer.disconnect();
   }, []);
 
-  // Auto-fit to view on initial mount when we have container width and duration
+  // Sync showFullTimeline with continuousPlay toggle
   useEffect(() => {
-    if (!hasInitializedFitRef.current && containerWidth > 0 && durationMs > 0) {
+    const wasContinuous = prevContinuousPlayRef.current;
+    prevContinuousPlayRef.current = continuousPlay;
+
+    if (continuousPlay && !wasContinuous) {
+      // Turning on: save current state and force full timeline
+      fullTimelineBeforeContinuousRef.current = showFullTimeline;
+      if (!showFullTimeline) setShowFullTimeline(true);
+    } else if (!continuousPlay && wasContinuous) {
+      // Turning off: restore previous state
+      if (!fullTimelineBeforeContinuousRef.current) setShowFullTimeline(false);
+    }
+  }, [continuousPlay, showFullTimeline]);
+
+  // Auto-fit to view on initial mount when we have container width and duration
+  // Uses effectiveDurationMs so contiguous mode (default) fills the viewport correctly
+  useEffect(() => {
+    if (!hasInitializedFitRef.current && containerWidth > 0 && effectiveDurationMs > 0) {
       hasInitializedFitRef.current = true;
-      // Calculate viewport width (container minus label column)
       const viewportWidth = containerWidth - LABEL_COLUMN_WIDTH;
       if (viewportWidth > 0) {
-        fitToView(durationMs, viewportWidth);
+        fitToView(effectiveDurationMs, viewportWidth);
       }
     }
-  }, [containerWidth, durationMs, fitToView]);
+  }, [containerWidth, effectiveDurationMs, fitToView]);
 
-  // Sync viewport when switching between full and compressed view
+  // Sync viewport when switching between contiguous and full timeline view
   useEffect(() => {
-    const wasCompressed = prevCompressedViewRef.current;
-    prevCompressedViewRef.current = compressedView;
+    const wasFullTimeline = prevShowFullTimelineRef.current;
+    prevShowFullTimelineRef.current = showFullTimeline;
 
     // Only adjust on actual change
-    if (wasCompressed === compressedView) return;
+    if (wasFullTimeline === showFullTimeline) return;
 
-    if (compressedView) {
-      // Switching to compressed: map viewport position from original to compressed
-      const newViewportStart = mapOriginalToCompressed(viewportStartMs);
+    if (!showFullTimeline) {
+      // Switching to contiguous: map viewport position from original to contiguous
+      const newViewportStart = mapOriginalToContiguous(viewportStartMs);
       scrollTo(Math.max(0, newViewportStart));
     } else {
-      // Switching to full: map viewport position from compressed to original
-      const newViewportStart = mapCompressedToOriginal(viewportStartMs);
+      // Switching to full: map viewport position from contiguous to original
+      const newViewportStart = mapContiguousToOriginal(viewportStartMs);
       scrollTo(Math.max(0, newViewportStart));
     }
-  }, [compressedView, viewportStartMs, mapOriginalToCompressed, mapCompressedToOriginal, scrollTo]);
+  }, [showFullTimeline, viewportStartMs, mapOriginalToContiguous, mapContiguousToOriginal, scrollTo]);
 
   // Calculate waveform display data based on viewport
   const waveformDisplayData = useMemo(() => {
@@ -206,8 +230,18 @@ export function SegmentTimeline({
     const startMs = Math.max(0, viewportStartMs);
     const endMs = Math.min(durationMs, viewportStartMs + visibleDurationMs);
 
+    // Safety net: scale samplesPerMs if waveform duration doesn't match video duration
+    const waveformDurationMs = (waveformRawData.samples.length / waveformRawData.sampleRate) * 1000;
+    let samplesPerMs = waveformRawData.sampleRate / 1000;
+    if (durationMs > 0 && Math.abs(waveformDurationMs - durationMs) > 50) {
+      const ratio = waveformDurationMs / durationMs;
+      samplesPerMs *= ratio;
+      console.warn(
+        `[Waveform] duration mismatch: waveform=${waveformDurationMs.toFixed(0)}ms video=${durationMs.toFixed(0)}ms ratio=${ratio.toFixed(4)}`
+      );
+    }
+
     // Calculate sample indices
-    const samplesPerMs = waveformRawData.sampleRate / 1000;
     const startSample = Math.floor(startMs * samplesPerMs);
     const endSample = Math.min(
       waveformRawData.samples.length,
@@ -248,47 +282,41 @@ export function SegmentTimeline({
   }, [waveformRawData, zoomLevel, viewportStartMs]);
 
   // Handle horizontal scroll - mark user interaction to disable auto-scroll
-  // Mark that user has scrolled manually - disables auto-scroll until they click center button
-  const markUserScrolled = useCallback(() => {
-    userScrolledRef.current = true;
-  }, []);
-
-  // Native wheel handler for proper preventDefault with passive: false
+  // Single native wheel handler: preventDefault (needs passive:false) + zoom/pan logic.
+  // React onWheel can't call preventDefault on passive listeners, so everything
+  // lives in one native handler that reads latest state from the store directly.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const handleNativeWheel = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        // Prevent browser zoom/scroll when using ctrl+wheel for timeline zoom
-        e.preventDefault();
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+
+      const { zoomLevel: currentZoom, viewportStartMs: currentViewport } =
+        useTimelineStore.getState();
+
+      if (e.deltaX !== 0 && !e.ctrlKey && !e.metaKey) {
+        // Pan horizontally (trackpad or shift+wheel)
+        const pxPerMs = getPxPerMs(currentZoom);
+        const deltaMs = e.deltaX / pxPerMs;
+        const newStart = Math.max(0, currentViewport + deltaMs);
+        useTimelineStore.getState().scrollTo(newStart);
+        userScrolledRef.current = true;
+      } else if (e.deltaY !== 0) {
+        // Vertical scroll → zoom
+        const delta = e.deltaY > 0 ? 0.8 : 1.25;
+        const newZoom = Math.max(
+          MIN_ZOOM_LEVEL,
+          Math.min(MAX_ZOOM_LEVEL, currentZoom * delta)
+        );
+        useTimelineStore.getState().setZoomLevel(newZoom);
+        userScrolledRef.current = true;
       }
     };
 
-    container.addEventListener("wheel", handleNativeWheel, { passive: false });
-    return () => container.removeEventListener("wheel", handleNativeWheel);
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    return () => container.removeEventListener("wheel", handleWheel);
   }, []);
-
-  // React wheel handler for state updates
-  const handleWheel = useCallback(
-    (e: React.WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        // Zoom with ctrl/cmd + scroll
-        const delta = e.deltaY > 0 ? 0.8 : 1.25;
-        const newZoom = Math.max(MIN_ZOOM_LEVEL, Math.min(MAX_ZOOM_LEVEL, zoomLevel * delta));
-        setZoomLevel(newZoom);
-        markUserScrolled();
-      } else if (e.deltaX !== 0) {
-        // Pan horizontally (trackpad or shift+wheel)
-        const pxPerMs = getPxPerMs(zoomLevel);
-        const deltaMs = e.deltaX / pxPerMs;
-        const newStart = Math.max(0, viewportStartMs + deltaMs);
-        scrollTo(newStart);
-        markUserScrolled();
-      }
-    },
-    [zoomLevel, viewportStartMs, setZoomLevel, scrollTo, markUserScrolled]
-  );
 
   // Handle seek from ruler click
   const handleRulerSeek = useCallback(
@@ -379,6 +407,62 @@ export function SegmentTimeline({
   // Viewport width for components (ensure non-negative while measuring)
   const viewportWidthPx = Math.max(0, containerWidth - LABEL_COLUMN_WIDTH);
 
+  // --- Scrollbar calculations ---
+  const totalContentPx = effectiveDurationMs * getPxPerMs(zoomLevel);
+  const thumbRatio = totalContentPx > 0 ? Math.min(1, viewportWidthPx / totalContentPx) : 1;
+  const thumbLeft = effectiveDurationMs > 0 ? viewportStartMs / effectiveDurationMs : 0;
+  const showScrollbar = thumbRatio < 1;
+
+  const scrollbarRef = useRef<HTMLDivElement>(null);
+  const isDraggingScrollbar = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartViewport = useRef(0);
+
+  const handleScrollbarPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const bar = scrollbarRef.current;
+      if (!bar) return;
+
+      const rect = bar.getBoundingClientRect();
+      const clickRatio = (e.clientX - rect.left) / rect.width;
+
+      // If clicking on the thumb, start dragging
+      const thumbStart = thumbLeft;
+      const thumbEnd = thumbLeft + thumbRatio;
+      if (clickRatio >= thumbStart && clickRatio <= thumbEnd) {
+        isDraggingScrollbar.current = true;
+        dragStartX.current = e.clientX;
+        dragStartViewport.current = viewportStartMs;
+        bar.setPointerCapture(e.pointerId);
+        userScrolledRef.current = true;
+      } else {
+        // Click on track: jump so the thumb centers on click position
+        const targetRatio = Math.max(0, Math.min(1 - thumbRatio, clickRatio - thumbRatio / 2));
+        scrollTo(targetRatio * effectiveDurationMs);
+        userScrolledRef.current = true;
+      }
+    },
+    [thumbLeft, thumbRatio, viewportStartMs, effectiveDurationMs, scrollTo]
+  );
+
+  const handleScrollbarPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDraggingScrollbar.current) return;
+      const bar = scrollbarRef.current;
+      if (!bar) return;
+
+      const rect = bar.getBoundingClientRect();
+      const deltaRatio = (e.clientX - dragStartX.current) / rect.width;
+      const newViewport = dragStartViewport.current + deltaRatio * effectiveDurationMs;
+      scrollTo(Math.max(0, Math.min(effectiveDurationMs * (1 - thumbRatio), newViewport)));
+    },
+    [effectiveDurationMs, thumbRatio, scrollTo]
+  );
+
+  const handleScrollbarPointerUp = useCallback(() => {
+    isDraggingScrollbar.current = false;
+  }, []);
+
   return (
     <div className={cn("flex flex-col border rounded-lg bg-background", className)}>
       {/* Toolbar */}
@@ -393,12 +477,12 @@ export function SegmentTimeline({
 
           <div className="flex items-center gap-2">
             <Checkbox
-              id="compressed-view"
-              checked={compressedView}
-              onCheckedChange={(checked) => setCompressedView(checked === true)}
+              id="full-timeline-view"
+              checked={showFullTimeline}
+              onCheckedChange={(checked) => setShowFullTimeline(checked === true)}
             />
-            <Label htmlFor="compressed-view" className="text-xs cursor-pointer">
-              Solo segmentos
+            <Label htmlFor="full-timeline-view" className="text-xs cursor-pointer">
+              Timeline completo
             </Label>
           </div>
         </div>
@@ -430,8 +514,7 @@ export function SegmentTimeline({
       {/* Timeline content */}
       <div
         ref={containerRef}
-        className="relative overflow-hidden select-none"
-        onWheel={handleWheel}
+        className="relative overflow-hidden select-none overscroll-contain touch-none"
       >
         {/* Ruler */}
         <TimelineRuler
@@ -440,97 +523,56 @@ export function SegmentTimeline({
           viewportStartMs={viewportStartMs}
           viewportWidthPx={viewportWidthPx}
           onSeek={(ms) => {
-            if (compressedView) {
-              handleRulerSeek(mapCompressedToOriginal(ms));
+            if (isContiguous) {
+              handleRulerSeek(mapContiguousToOriginal(ms));
             } else {
               handleRulerSeek(ms);
             }
           }}
         />
 
-        {/* Waveform track */}
-        <div className="flex border-b border-border">
-          <div className="w-20 shrink-0 bg-muted/30 border-r border-border flex items-center justify-center">
-            <span className="text-xs text-muted-foreground">Audio</span>
-          </div>
-          <div className="flex-1 h-16 relative bg-muted/10">
-            {waveformLoading ? (
-              <WaveformPlaceholder width={viewportWidthPx} height={64} />
-            ) : waveformDisplayData ? (
-              <Waveform
-                data={waveformDisplayData}
-                width={viewportWidthPx}
-                height={64}
-                color="rgb(74, 222, 128)"
-                style="mirror"
-                offsetPx={waveformOffsetPx}
-              />
-            ) : (
-              <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                Sin waveform
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Segment track - hidden in compressed view since we show concatenated */}
-        {!compressedView && (
-          <SegmentTrack
-            segments={segments}
-            silences={silences}
-            zoomLevel={zoomLevel}
-            viewportStartMs={viewportStartMs}
-            durationMs={durationMs}
-            selection={selection}
-            onSelect={select}
-            onResizeSegment={handleResizeSegment}
-            onToggleSegment={handleToggleSegment}
-            onAddSegment={handleAddSegment}
-          />
-        )}
-
-        {/* Compressed segment view */}
-        {compressedView && (
+        {/* Waveform track (only in full timeline mode) */}
+        {showFullTimeline && (
           <div className="flex border-b border-border">
             <div className="w-20 shrink-0 bg-muted/30 border-r border-border flex items-center justify-center">
-              <span className="text-xs text-muted-foreground">Segmentos</span>
+              <span className="text-xs text-muted-foreground">Audio</span>
             </div>
-            <div className="flex-1 h-12 relative bg-green-50 dark:bg-green-950/20">
-              {/* Compressed segments as continuous blocks */}
-              {enabledSegments.map((segment, i) => {
-                const segmentDuration = segment.endMs - segment.startMs;
-                let offset = 0;
-                for (let j = 0; j < i; j++) {
-                  offset += enabledSegments[j].endMs - enabledSegments[j].startMs;
-                }
-                const pxPerMs = getPxPerMs(zoomLevel);
-                const x = (offset - viewportStartMs) * pxPerMs;
-                const width = segmentDuration * pxPerMs;
-
-                // Skip rendering if completely outside viewport
-                if (x + width < 0 || x > viewportWidthPx) return null;
-
-                return (
-                  <div
-                    key={segment.id}
-                    className="absolute top-1 bottom-1 bg-green-500/60 border border-green-600/40 rounded"
-                    style={{
-                      left: x,
-                      width: Math.max(width, 2),
-                    }}
-                  >
-                    <span className="absolute inset-0 flex items-center justify-center text-[10px] text-green-900 dark:text-green-100 font-medium overflow-hidden">
-                      {width > 30 && `#${i + 1}`}
-                    </span>
-                  </div>
-                );
-              })}
-              <div className="absolute bottom-0 right-2 text-[10px] text-muted-foreground bg-background/80 px-1 rounded">
-                {formatDurationMs(compressedDurationMs)} final
-              </div>
+            <div className="flex-1 h-24 relative bg-muted/10">
+              {waveformLoading ? (
+                <WaveformPlaceholder width={viewportWidthPx} height={96} />
+              ) : waveformDisplayData ? (
+                <Waveform
+                  data={waveformDisplayData}
+                  width={viewportWidthPx}
+                  height={96}
+                  color="rgb(74, 222, 128)"
+                  style="mirror"
+                  offsetPx={waveformOffsetPx}
+                />
+              ) : (
+                <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                  Sin waveform
+                </div>
+              )}
             </div>
           </div>
         )}
+
+        {/* Segment track - always visible, contiguous by default */}
+        <SegmentTrack
+          segments={segments}
+          silences={silences}
+          zoomLevel={zoomLevel}
+          viewportStartMs={viewportStartMs}
+          durationMs={effectiveDurationMs}
+          selection={selection}
+          onSelect={select}
+          onResizeSegment={handleResizeSegment}
+          onToggleSegment={handleToggleSegment}
+          onAddSegment={isContiguous ? undefined : handleAddSegment}
+          contiguous={isContiguous}
+          waveformRawData={waveformRawData}
+        />
 
         {/* Playhead */}
         <TimelinePlayhead
@@ -540,14 +582,26 @@ export function SegmentTimeline({
           enableTransition={enablePlayheadTransition}
         />
       </div>
+
+      {/* Horizontal scrollbar */}
+      {showScrollbar && (
+        <div
+          ref={scrollbarRef}
+          className="h-3 bg-muted/40 border-t cursor-pointer flex-shrink-0"
+          onPointerDown={handleScrollbarPointerDown}
+          onPointerMove={handleScrollbarPointerMove}
+          onPointerUp={handleScrollbarPointerUp}
+          onPointerCancel={handleScrollbarPointerUp}
+        >
+          <div
+            className="h-full bg-muted-foreground/25 hover:bg-muted-foreground/40 rounded-full transition-colors"
+            style={{
+              marginLeft: `${thumbLeft * 100}%`,
+              width: `${thumbRatio * 100}%`,
+            }}
+          />
+        </div>
+      )}
     </div>
   );
-}
-
-function formatDurationMs(ms: number): string {
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
 }

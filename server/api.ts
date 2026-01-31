@@ -724,13 +724,40 @@ async function handleRequest(req: Request): Promise<Response> {
     }
   }
 
+  // Helper: get audio stream info (start_time, duration) via ffprobe
+  async function getAudioStreamInfo(filePath: string): Promise<{ startTime: number; duration: number }> {
+    try {
+      const proc = spawn([
+        "npx", "remotion", "ffprobe",
+        "-v", "error",
+        "-select_streams", "a:0",
+        "-show_entries", "stream=start_time,duration",
+        "-of", "json",
+        filePath,
+      ], { stdout: "pipe", stderr: "pipe" });
+
+      const output = await new Response(proc.stdout).text();
+      await proc.exited;
+      const parsed = JSON.parse(output);
+      const stream = parsed?.streams?.[0];
+      return {
+        startTime: parseFloat(stream?.start_time ?? "0") || 0,
+        duration: parseFloat(stream?.duration ?? "0") || 0,
+      };
+    } catch {
+      // Fallback: no offset
+      return { startTime: 0, duration: 0 };
+    }
+  }
+
   // Waveform extraction endpoint
   if (path === "/api/waveform" && req.method === "POST") {
     try {
       const body = await req.json();
-      const { videoPath, samplesPerSecond = 100 } = body as {
+      const { videoPath, samplesPerSecond = 100, videoDuration } = body as {
         videoPath: string;
         samplesPerSecond?: number;
+        videoDuration?: number; // seconds, to align waveform with video
       };
 
       const fullPath = join(process.cwd(), "public", "videos", videoPath);
@@ -741,16 +768,36 @@ async function handleRequest(req: Request): Promise<Response> {
         );
       }
 
-      // Extract audio samples using FFmpeg
-      // Output: mono, resampled to target rate, 32-bit float PCM
-      const proc = spawn([
-        "ffmpeg",
-        "-i", fullPath,
-        "-ac", "1",                          // Mono
-        "-ar", String(samplesPerSecond),     // Sample rate
-        "-f", "f32le",                        // 32-bit float little-endian
-        "-",                                  // Output to stdout
-      ], {
+      // Get audio stream info for offset alignment
+      const audioInfo = await getAudioStreamInfo(fullPath);
+      const audioOffset = audioInfo.startTime;
+
+      // Build FFmpeg args with offset correction
+      const ffmpegArgs: string[] = ["ffmpeg"];
+
+      // If audio starts before video (negative offset / pre-roll), skip that portion
+      const audioFilters: string[] = [];
+      if (audioOffset < 0) {
+        audioFilters.push(`atrim=start=${Math.abs(audioOffset)},asetpts=PTS-STARTPTS`);
+      }
+
+      ffmpegArgs.push("-i", fullPath);
+      ffmpegArgs.push("-ac", "1");                      // Mono
+      ffmpegArgs.push("-ar", String(samplesPerSecond)); // Sample rate
+
+      if (audioFilters.length > 0) {
+        ffmpegArgs.push("-af", audioFilters.join(","));
+      }
+
+      // Limit extraction to video duration if provided
+      if (videoDuration && videoDuration > 0) {
+        ffmpegArgs.push("-t", String(videoDuration));
+      }
+
+      ffmpegArgs.push("-f", "f32le");  // 32-bit float little-endian
+      ffmpegArgs.push("-");            // Output to stdout
+
+      const proc = spawn(ffmpegArgs, {
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -769,14 +816,32 @@ async function handleRequest(req: Request): Promise<Response> {
       // Combine chunks and convert to Float32Array
       const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
       const buffer = new Uint8Array(totalLength);
-      let offset = 0;
+      let byteOffset = 0;
       for (const chunk of chunks) {
-        buffer.set(chunk, offset);
-        offset += chunk.length;
+        buffer.set(chunk, byteOffset);
+        byteOffset += chunk.length;
       }
 
       const float32 = new Float32Array(buffer.buffer);
-      const samples = Array.from(float32);
+      let samples = Array.from(float32);
+
+      // If audio starts after video (positive offset), prepend silence
+      if (audioOffset > 0) {
+        const silenceSamples = Math.round(audioOffset * samplesPerSecond);
+        const silence = new Array(silenceSamples).fill(0);
+        samples = [...silence, ...samples];
+      }
+
+      // If videoDuration provided, ensure exact sample count
+      if (videoDuration && videoDuration > 0) {
+        const targetSamples = Math.round(videoDuration * samplesPerSecond);
+        if (samples.length > targetSamples) {
+          samples = samples.slice(0, targetSamples);
+        } else if (samples.length < targetSamples) {
+          const padding = new Array(targetSamples - samples.length).fill(0);
+          samples = [...samples, ...padding];
+        }
+      }
 
       // Normalize samples
       let maxAbs = 0;
@@ -786,11 +851,18 @@ async function handleRequest(req: Request): Promise<Response> {
       }
       const normalized = maxAbs > 0 ? samples.map(s => s / maxAbs) : samples;
 
+      const finalDuration = videoDuration ?? samples.length / samplesPerSecond;
+
       return new Response(
         JSON.stringify({
           samples: normalized,
           sampleRate: samplesPerSecond,
-          duration: samples.length / samplesPerSecond,
+          duration: finalDuration,
+          alignment: {
+            audioStreamStartTime: audioInfo.startTime,
+            appliedOffset: audioOffset,
+            videoDuration: videoDuration ?? undefined,
+          },
         }),
         { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
       );
@@ -1043,7 +1115,18 @@ async function handleRequest(req: Request): Promise<Response> {
 
       // Remap captions from cut video to original timestamps
       const { remapCaptionsToOriginal } = await import("../src/core/preselection");
+      console.log(`[ai-preselect] Captions before remapping: ${captions.length}, cutMap entries: ${cutResult.cutMap.length}`);
       const remappedCaptions = remapCaptionsToOriginal(captions, cutResult.cutMap);
+      console.log(`[ai-preselect] Captions after remapping: ${remappedCaptions.length}`);
+      if (captions.length > 0 && remappedCaptions.length === 0) {
+        console.warn(`[ai-preselect] WARNING: All ${captions.length} captions lost during remapping! Check cutMap alignment.`);
+        if (captions.length > 0) {
+          const firstCap = captions[0];
+          const firstEntry = cutResult.cutMap[0];
+          console.warn(`[ai-preselect] First caption: startMs=${firstCap.startMs}, endMs=${firstCap.endMs}`);
+          console.warn(`[ai-preselect] First cutMap entry: finalStartMs=${firstEntry?.finalStartMs}, finalEndMs=${firstEntry?.finalEndMs}`);
+        }
+      }
 
       // Create log collector
       const scriptLineCount = script ? script.split('\n').filter(l => l.trim()).length : undefined;

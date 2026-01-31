@@ -1,9 +1,10 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useMemo } from "react";
 import { TimelineTrack } from "./TimelineTrack";
 import { SegmentMarker } from "./SegmentMarker";
 import { LABEL_COLUMN_WIDTH, getPxPerMs } from "./constants";
 import type { TimelineSegment, TimelineSelection } from "@/store/timeline";
 import type { SilenceRange } from "@/core/silence/detect";
+import type { WaveformData } from "@/core/audio/waveform";
 
 interface SegmentTrackProps {
   segments: TimelineSegment[];
@@ -16,6 +17,10 @@ interface SegmentTrackProps {
   onResizeSegment: (id: string, field: "startMs" | "endMs", newValue: number) => void;
   onToggleSegment: (id: string) => void;
   onAddSegment?: (startMs: number, endMs: number) => void;
+  /** When true, segments render contiguously without gaps */
+  contiguous?: boolean;
+  /** Raw waveform data for per-segment waveform slices (contiguous mode) */
+  waveformRawData?: WaveformData | null;
 }
 
 export function SegmentTrack({
@@ -29,6 +34,8 @@ export function SegmentTrack({
   onResizeSegment,
   onToggleSegment,
   onAddSegment,
+  contiguous = false,
+  waveformRawData,
 }: SegmentTrackProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -36,6 +43,40 @@ export function SegmentTrack({
   const [dragEnd, setDragEnd] = useState<number | null>(null);
 
   const pxPerMs = getPxPerMs(zoomLevel);
+
+  // Contiguous offsets: accumulated ms offset for each segment (no gaps)
+  const contiguousOffsets = useMemo(() => {
+    if (!contiguous) return null;
+    const sorted = [...segments].sort((a, b) => a.startMs - b.startMs);
+    const offsets = new Map<string, number>();
+    let accumulated = 0;
+    for (const seg of sorted) {
+      offsets.set(seg.id, accumulated);
+      accumulated += seg.endMs - seg.startMs;
+    }
+    return offsets;
+  }, [contiguous, segments]);
+
+  // Waveform slices per segment (contiguous mode)
+  const segmentWaveforms = useMemo(() => {
+    if (!contiguous || !waveformRawData) return null;
+
+    // Safety net: scale samplesPerMs if waveform duration doesn't match timeline
+    const waveformDurationMs = (waveformRawData.samples.length / waveformRawData.sampleRate) * 1000;
+    let samplesPerMs = waveformRawData.sampleRate / 1000;
+    if (durationMs > 0 && Math.abs(waveformDurationMs - durationMs) > 50) {
+      const ratio = waveformDurationMs / durationMs;
+      samplesPerMs *= ratio;
+    }
+
+    const map = new Map<string, number[]>();
+    for (const seg of segments) {
+      const start = Math.floor(seg.startMs * samplesPerMs);
+      const end = Math.min(waveformRawData.samples.length, Math.ceil(seg.endMs * samplesPerMs));
+      map.set(seg.id, waveformRawData.samples.slice(start, end));
+    }
+    return map;
+  }, [contiguous, waveformRawData, segments, durationMs]);
 
   // Convert pixel position to milliseconds
   const pxToMs = useCallback(
@@ -151,18 +192,18 @@ export function SegmentTrack({
   const silenceDuration = silences.reduce((sum, s) => sum + s.duration * 1000, 0);
 
   return (
-    <TimelineTrack name="Segmentos" height={48}>
+    <TimelineTrack name="Segmentos" height={contiguous ? 80 : 64}>
       <div
         ref={trackRef}
-        className="absolute inset-0 cursor-crosshair"
+        className={`absolute inset-0 ${contiguous ? "cursor-default" : "cursor-crosshair"}`}
         onClick={handleTrackClick}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
       >
-        {/* Render silences as dark background regions */}
-        {silences.map((silence, index) => {
+        {/* Render silences as dark background regions (only in full timeline mode) */}
+        {!contiguous && silences.map((silence, index) => {
           const startMs = silence.start * 1000;
           const endMs = silence.end * 1000;
           const x = (startMs - viewportStartMs) * pxPerMs;
@@ -194,6 +235,8 @@ export function SegmentTrack({
             onSelect={() => onSelect({ type: "segment", id: segment.id })}
             onResize={(field, value) => onResizeSegment(segment.id, field, value)}
             onToggleEnabled={() => onToggleSegment(segment.id)}
+            contiguousOffsetMs={contiguousOffsets?.get(segment.id)}
+            waveformSlice={segmentWaveforms?.get(segment.id)}
           />
         ))}
 
