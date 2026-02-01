@@ -4,6 +4,7 @@ import type { Video } from "@/components/VideoList";
 
 export type PipelineStep =
   | "raw"
+  | "full-captions"
   | "silences"
   | "segments"
   | "cut"
@@ -122,6 +123,7 @@ export type StepResult =
 
 export interface PipelineState {
   raw: boolean;
+  "full-captions": boolean;
   silences: boolean;
   segments: boolean;
   cut: boolean;
@@ -134,10 +136,11 @@ export interface PipelineState {
 
 export const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   raw: [],
+  "full-captions": [],
   silences: [],
   segments: ["silences"],
   cut: ["segments"],
-  captions: ["cut"],
+  captions: ["full-captions", "cut"],
   "effects-analysis": ["captions"],
   rendered: ["effects-analysis"],
 };
@@ -149,6 +152,11 @@ export const STEPS: {
   optional?: boolean;
 }[] = [
   { key: "raw", label: "Raw", description: "Video original importado (incluye script opcional)" },
+  {
+    key: "full-captions",
+    label: "Full Captions",
+    description: "Transcripción completa del video original con Whisper",
+  },
   {
     key: "silences",
     label: "Silencios",
@@ -162,8 +170,8 @@ export const STEPS: {
   { key: "cut", label: "Cortado", description: "Cortar video sin silencios (genera cut-map)" },
   {
     key: "captions",
-    label: "Captions",
-    description: "Transcripcion del video cortado con Whisper",
+    label: "Captions Post-Cuts",
+    description: "Captions derivados de full-captions + cut-map (sin segundo Whisper)",
   },
   {
     key: "effects-analysis",
@@ -187,6 +195,7 @@ export function getVideoPipelineState(
   if (backendStatus) {
     return {
       raw: true,
+      "full-captions": backendStatus.steps["full-captions"]?.status === "completed",
       silences: backendStatus.steps.silences?.status === "completed",
       segments: backendStatus.steps.segments?.status === "completed",
       cut: backendStatus.steps.cut?.status === "completed",
@@ -201,6 +210,7 @@ export function getVideoPipelineState(
 
   return {
     raw: true,
+    "full-captions": false,
     silences: false,
     segments: false,
     cut: false,

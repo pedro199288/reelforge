@@ -11,6 +11,7 @@ import type { PreselectionStats, PreselectedSegment } from "../src/core/preselec
 
 export type PipelineStep =
   | "silences"
+  | "full-captions"
   | "segments"
   | "cut"
   | "captions"
@@ -107,14 +108,18 @@ export interface EffectsAnalysisResultMeta {
 }
 
 // Step dependencies: step -> required preceding steps
-// Simplified 6-phase pipeline:
-// silences -> segments -> cut -> captions -> effects-analysis -> rendered
+// Pipeline:
+// silences -> segments -> cut ─┐
+//                               ├─> captions -> effects-analysis -> rendered
+// full-captions ───────────────┘
 // preselection-logs is a side-effect of segments, generated alongside it
+// captions are derived from full-captions + cut-map (no second Whisper run)
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   silences: [],
+  "full-captions": [],
   segments: ["silences"],
   cut: ["segments"],
-  captions: ["cut"],
+  captions: ["full-captions", "cut"],
   "effects-analysis": ["captions"],  // Now depends on post-cut captions
   rendered: ["effects-analysis"],
   "preselection-logs": ["segments"],  // Generated alongside segments
@@ -164,6 +169,7 @@ function getInitialStatus(videoId: string, filename: string): PipelineStatus {
     filename,
     steps: {
       silences: { ...emptyStep },
+      "full-captions": { ...emptyStep },
       segments: { ...emptyStep },
       cut: { ...emptyStep },
       captions: { ...emptyStep },

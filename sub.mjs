@@ -65,6 +65,8 @@ const extractToTempAudioFile = (fileToTranscribe, tempOutFile) => {
   );
 };
 
+const rawMode = process.argv.includes("--raw");
+
 const subFile = async (filePath, fileName, folder, promptText = null) => {
   // Always save subtitles to public/subs/ directory
   const subsDir = path.join(process.cwd(), "public", "subs");
@@ -77,6 +79,7 @@ const subFile = async (filePath, fileName, folder, promptText = null) => {
   const additionalArgs = [
     ["--beam-size", "5"],
     ["--best-of", "3"],
+    ["--no-context"],
   ];
 
   if (promptText) {
@@ -101,25 +104,31 @@ const subFile = async (filePath, fileName, folder, promptText = null) => {
 
   const { captions } = toCaptionsDTW(whisperCppOutput);
 
-  // Clean up captions: fix timing issues, filter low confidence, remove false starts/repeated phrases
-  const log = [];
-  const cleanedCaptions = fullCleanup(captions, {
-    minConfidence: 0.15,
-    maxWordDurationMs: 800,
-    log,
-  });
+  if (rawMode) {
+    // In raw mode, save without cleanup (preserves all words for downstream derivation)
+    console.log(`  Raw mode: ${captions.length} captions (no cleanup)`);
+    writeFileSync(outPath, JSON.stringify(captions, null, 2));
+  } else {
+    // Clean up captions: fix timing issues, filter low confidence, remove false starts/repeated phrases
+    const log = [];
+    const cleanedCaptions = fullCleanup(captions, {
+      minConfidence: 0.15,
+      maxWordDurationMs: 800,
+      log,
+    });
 
-  console.log(
-    `  Cleaned: ${captions.length} -> ${cleanedCaptions.length} captions`,
-  );
+    console.log(
+      `  Cleaned: ${captions.length} -> ${cleanedCaptions.length} captions`,
+    );
 
-  writeFileSync(outPath, JSON.stringify(cleanedCaptions, null, 2));
+    writeFileSync(outPath, JSON.stringify(cleanedCaptions, null, 2));
 
-  // Save cleanup log alongside captions for debugging
-  if (log.length > 0) {
-    const logPath = outPath.replace(".json", ".cleanup-log.json");
-    writeFileSync(logPath, JSON.stringify(log, null, 2));
-    console.log(`  Cleanup log: ${log.length} items removed (${logPath})`);
+    // Save cleanup log alongside captions for debugging
+    if (log.length > 0) {
+      const logPath = outPath.replace(".json", ".cleanup-log.json");
+      writeFileSync(logPath, JSON.stringify(log, null, 2));
+      console.log(`  Cleanup log: ${log.length} items removed (${logPath})`);
+    }
   }
 };
 
@@ -194,6 +203,8 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] === "--script" && i + 1 < args.length) {
     scriptPath = args[i + 1];
     i++; // Skip next arg
+  } else if (args[i] === "--raw") {
+    // Already handled via rawMode flag
   } else {
     videoArgs.push(args[i]);
   }

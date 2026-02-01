@@ -1401,7 +1401,7 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     // Validate step name
-    const validSteps: PipelineStep[] = ["silences", "segments", "cut", "captions", "effects-analysis", "rendered"];
+    const validSteps: PipelineStep[] = ["silences", "full-captions", "segments", "cut", "captions", "effects-analysis", "rendered"];
     if (!validSteps.includes(step)) {
       return new Response(JSON.stringify({ error: `Invalid step: ${step}` }), {
         status: 400,
@@ -1683,71 +1683,128 @@ async function handleRequest(req: Request): Promise<Response> {
             break;
           }
 
-          case "captions": {
-            sendEvent("progress", { step, progress: 10, message: "Verificando video cortado..." });
-            const cutResult = loadStepResult<CutResult>(videoId, "cut");
+          case "full-captions": {
+            sendEvent("progress", { step, progress: 10, message: "Verificando video original..." });
 
-            if (!cutResult) {
-              throw new Error("Cut result not found");
+            if (!existsSync(videoPath)) {
+              throw new Error(`Video original not found: ${videoPath}`);
             }
 
-            const cutVideoPath = join(process.cwd(), cutResult.outputPath);
-            if (!existsSync(cutVideoPath)) {
-              throw new Error(`Cut video not found: ${cutResult.outputPath}`);
+            sendEvent("progress", { step, progress: 20, message: "Generando subtítulos del video completo con Whisper..." });
+
+            // Build sub.mjs args — use original video, raw mode (no cleanup), optionally with script
+            const fullCaptionsSubArgs = ["node", "sub.mjs", "--raw"];
+            if (script) {
+              const scriptDir = join(process.cwd(), "public", "pipeline", videoId);
+              if (!existsSync(scriptDir)) {
+                mkdirSync(scriptDir, { recursive: true });
+              }
+              const scriptFile = join(scriptDir, "script-prompt.txt");
+              const { writeFileSync: writeSync } = await import("node:fs");
+              writeSync(scriptFile, script);
+              fullCaptionsSubArgs.push("--script", scriptFile);
             }
+            fullCaptionsSubArgs.push(videoPath);
 
-            sendEvent("progress", { step, progress: 20, message: "Generando subtítulos con Whisper..." });
+            const fullCaptionsProc = spawn(fullCaptionsSubArgs, { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
 
-            // Run sub.mjs as a subprocess
-            const proc = spawn(["node", "sub.mjs", cutVideoPath], {
-              cwd: process.cwd(),
-              stdout: "pipe",
-              stderr: "pipe",
-            });
-
-            // Capture stderr for error reporting
-            const stderrChunks: string[] = [];
-            const stderrReader = proc.stderr.getReader();
-            const decoder = new TextDecoder();
+            const fcStderrChunks: string[] = [];
+            const fcStderrReader = fullCaptionsProc.stderr.getReader();
+            const fcDecoder = new TextDecoder();
             (async () => {
               try {
                 while (true) {
-                  const { done, value } = await stderrReader.read();
+                  const { done, value } = await fcStderrReader.read();
                   if (done) break;
-                  stderrChunks.push(decoder.decode(value, { stream: true }));
+                  fcStderrChunks.push(fcDecoder.decode(value, { stream: true }));
                 }
-              } catch {
-                // Ignore read errors
-              }
+              } catch {}
             })();
 
-            // Wait for completion
-            const exitCode = await proc.exited;
-
-            if (exitCode !== 0) {
-              const stderrOutput = stderrChunks.join("").trim();
-              throw new Error(`Subtitle generation failed with code ${exitCode}${stderrOutput ? `: ${stderrOutput}` : ""}`);
+            const fcExitCode = await fullCaptionsProc.exited;
+            if (fcExitCode !== 0) {
+              const fcStderrOutput = fcStderrChunks.join("").trim();
+              throw new Error(`Full captions generation failed (code ${fcExitCode})${fcStderrOutput ? `: ${fcStderrOutput}` : ""}`);
             }
 
-            // Determine output subs path
-            const ext = extname(cutResult.outputPath);
-            const name = basename(cutResult.outputPath, ext);
-            const subsPath = join("public", "subs", `${name}.json`);
+            // Determine subs path — original video name without -cut suffix
+            const fcExt = extname(filename);
+            const fcName = basename(filename, fcExt);
+            const fcSubsPath = join("public", "subs", `${fcName}.json`);
 
             sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
 
-            // Count captions
-            let captionsCount = 0;
-            const fullSubsPath = join(process.cwd(), subsPath);
-            if (existsSync(fullSubsPath)) {
+            let fcCaptionsCount = 0;
+            const fcFullSubsPath = join(process.cwd(), fcSubsPath);
+            if (existsSync(fcFullSubsPath)) {
               try {
-                const captions = JSON.parse(await Bun.file(fullSubsPath).text());
-                captionsCount = Array.isArray(captions) ? captions.length : 0;
-              } catch {
-                // Ignore parse errors
-              }
+                const fcCaptions = JSON.parse(await Bun.file(fcFullSubsPath).text());
+                fcCaptionsCount = Array.isArray(fcCaptions) ? fcCaptions.length : 0;
+              } catch {}
             }
 
+            const fcResult: CaptionsResult = {
+              captionsPath: fcSubsPath,
+              captionsCount: fcCaptionsCount,
+              createdAt: new Date().toISOString(),
+            };
+
+            const fcResultPath = saveStepResult(videoId, step, fcResult);
+            updateStepStatus(videoId, step, {
+              status: "completed",
+              completedAt: new Date().toISOString(),
+              resultFile: fcResultPath,
+            });
+
+            sendEvent("complete", { step, result: fcResult });
+            break;
+          }
+
+          case "captions": {
+            sendEvent("progress", { step, progress: 10, message: "Cargando full captions y cut-map..." });
+
+            // Load full captions result
+            const fullCaptionsResult = loadStepResult<CaptionsResult>(videoId, "full-captions");
+            if (!fullCaptionsResult) {
+              throw new Error("Full captions not found. Run full-captions step first.");
+            }
+
+            const fullCaptionsPath = join(process.cwd(), fullCaptionsResult.captionsPath);
+            if (!existsSync(fullCaptionsPath)) {
+              throw new Error(`Full captions file not found: ${fullCaptionsResult.captionsPath}`);
+            }
+
+            // Load cut result for cut-map
+            const cutResult = loadStepResult<CutResult>(videoId, "cut");
+            if (!cutResult?.cutMap) {
+              throw new Error("Cut result not found. Run cut step first.");
+            }
+
+            sendEvent("progress", { step, progress: 30, message: "Derivando captions del video cortado..." });
+
+            const fullCaptions: Caption[] = JSON.parse(await Bun.file(fullCaptionsPath).text());
+
+            // Derive cut captions via forward remapping (no Whisper needed)
+            const { deriveCutCaptions } = await import("../src/core/captions/derive-cut-captions");
+            const cutCaptions = deriveCutCaptions(fullCaptions, cutResult.cutMap);
+
+            // Save derived captions to subs directory
+            const ext = extname(filename);
+            const name = basename(filename, ext);
+            const subsPath = join("public", "subs", `${name}-cut.json`);
+            const fullSubsPath = join(process.cwd(), subsPath);
+
+            // Ensure subs directory exists
+            const subsDir = join(process.cwd(), "public", "subs");
+            if (!existsSync(subsDir)) {
+              mkdirSync(subsDir, { recursive: true });
+            }
+
+            await Bun.write(fullSubsPath, JSON.stringify(cutCaptions, null, 2));
+
+            sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
+
+            const captionsCount = cutCaptions.length;
             const result: CaptionsResult = {
               captionsPath: subsPath,
               captionsCount,
@@ -1769,8 +1826,8 @@ async function handleRequest(req: Request): Promise<Response> {
               if (segmentsResultForReapply && cutResultForReapply?.cutMap && captionsCount > 0) {
                 sendEvent("progress", { step, progress: 95, message: "Re-aplicando preselección con captions..." });
 
-                // Load captions from the file we just generated
-                const captionsForReapply: Caption[] = JSON.parse(await Bun.file(fullSubsPath).text());
+                // cutCaptions are in cut timeline — pass them for reapply
+                const captionsForReapply = cutCaptions;
 
                 // Get original segments
                 let originalSegments: Array<{ id: string; startMs: number; endMs: number }>;
