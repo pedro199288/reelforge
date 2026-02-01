@@ -571,6 +571,7 @@ export function remapCaptionsToOriginal(
   cutMap: CutMapEntry[]
 ): Caption[] {
   const remapped: Caption[] = [];
+  let prevCutEndMs = -Infinity;
 
   for (const cap of captions) {
     // Find which segment in the cut video this caption falls into
@@ -580,6 +581,7 @@ export function remapCaptionsToOriginal(
 
     if (!segment) {
       // Caption doesn't fall into any mapped segment - skip it
+      prevCutEndMs = cap.endMs;
       continue;
     }
 
@@ -588,14 +590,24 @@ export function remapCaptionsToOriginal(
     const capDuration = cap.endMs - cap.startMs;
 
     // Map back to original video timestamps
-    const originalStart = segment.originalStartMs + offsetInSegment;
-    const originalEnd = originalStart + capDuration;
+    let originalStart = segment.originalStartMs + offsetInSegment;
+
+    // Close artificial gaps from cross-segment remapping:
+    // If words were adjacent in the CUT (<100ms gap) but remapping placed them
+    // far apart (>500ms) due to silence detection splitting segments, snap the
+    // second word right after the first — they were continuous speech.
+    const prev = remapped.length > 0 ? remapped[remapped.length - 1] : null;
+    const cutGap = cap.startMs - prevCutEndMs;
+    if (prev && cutGap < 100 && originalStart - prev.endMs > 500) {
+      originalStart = prev.endMs;
+    }
 
     remapped.push({
       ...cap,
       startMs: originalStart,
-      endMs: originalEnd,
+      endMs: originalStart + capDuration,
     });
+    prevCutEndMs = cap.endMs;
   }
 
   return remapped;

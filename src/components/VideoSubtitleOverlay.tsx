@@ -7,46 +7,70 @@ interface SubtitlePage {
   words: Caption[];
 }
 
-const GAP_THRESHOLD_MS = 400;
 const MAX_WORDS_PER_PAGE = 8;
+const MIN_TAIL_WORDS = 3;
+const SENTENCE_END_RE = /[.?!…]$/;
 
 /**
- * Groups word-level captions into displayable "pages" of ~6-8 words,
- * splitting on gaps >400ms between words.
+ * Two-pass sentence-aware pagination.
+ * Pass 1: Group words into sentences (split at . ? ! …)
+ * Pass 2: Split each sentence at word-count boundaries (~8 words max).
+ *         Short trailing chunks are merged back into the previous chunk.
  */
 function groupIntoPages(captions: Caption[]): SubtitlePage[] {
   if (captions.length === 0) return [];
 
-  const pages: SubtitlePage[] = [];
-  let currentWords: Caption[] = [captions[0]];
-
-  for (let i = 1; i < captions.length; i++) {
-    const prev = captions[i - 1];
-    const curr = captions[i];
-    const gap = curr.startMs - prev.endMs;
-
-    if (gap > GAP_THRESHOLD_MS || currentWords.length >= MAX_WORDS_PER_PAGE) {
-      pages.push({
-        startMs: currentWords[0].startMs,
-        endMs: currentWords[currentWords.length - 1].endMs,
-        words: currentWords,
-      });
-      currentWords = [curr];
-    } else {
-      currentWords.push(curr);
+  // Pass 1: sentences
+  const sentences: Caption[][] = [];
+  let current: Caption[] = [];
+  for (const cap of captions) {
+    current.push(cap);
+    if (SENTENCE_END_RE.test(cap.text.trim())) {
+      sentences.push(current);
+      current = [];
     }
   }
+  if (current.length > 0) sentences.push(current);
 
-  // Push the last page
-  if (currentWords.length > 0) {
-    pages.push({
-      startMs: currentWords[0].startMs,
-      endMs: currentWords[currentWords.length - 1].endMs,
-      words: currentWords,
-    });
+  // Pass 2: paginate each sentence
+  const pages: SubtitlePage[] = [];
+  for (const sentence of sentences) {
+    paginateSentence(sentence, pages);
+  }
+  return pages;
+}
+
+function paginateSentence(sentence: Caption[], pages: SubtitlePage[]) {
+  const chunks: Caption[][] = [];
+  let chunk: Caption[] = [];
+
+  for (let i = 0; i < sentence.length; i++) {
+    const cap = sentence[i];
+    chunk.push(cap);
+
+    // Split on max word count
+    if (chunk.length >= MAX_WORDS_PER_PAGE && i < sentence.length - 1) {
+      chunks.push(chunk);
+      chunk = [];
+    }
+  }
+  if (chunk.length > 0) chunks.push(chunk);
+
+  // Merge short tail back into previous chunk to avoid orphaned words
+  if (chunks.length > 1 && chunks[chunks.length - 1].length < MIN_TAIL_WORDS) {
+    const prev = chunks[chunks.length - 2];
+    const tail = chunks[chunks.length - 1];
+    prev.push(...tail);
+    chunks.pop();
   }
 
-  return pages;
+  for (const c of chunks) {
+    pages.push({
+      startMs: c[0].startMs,
+      endMs: c[c.length - 1].endMs,
+      words: c,
+    });
+  }
 }
 
 function getConfidenceColor(confidence: number | undefined): string {
@@ -55,6 +79,8 @@ function getConfidenceColor(confidence: number | undefined): string {
   if (confidence >= 0.5) return "text-yellow-400";
   return "text-red-400";
 }
+
+const LINGER_MS = 500;
 
 interface VideoSubtitleOverlayProps {
   captions: Caption[];
@@ -67,11 +93,24 @@ export function VideoSubtitleOverlay({
 }: VideoSubtitleOverlayProps) {
   const pages = useMemo(() => groupIntoPages(captions), [captions]);
 
-  // Find the active page for the current time
+  // Show a page only if a word is being spoken right now
+  // or was spoken within LINGER_MS ago (avoids flicker in tiny inter-word gaps).
+  // Hides during longer silence pauses.
   const activePage = useMemo(() => {
-    return pages.find(
-      (p) => currentTimeMs >= p.startMs && currentTimeMs <= p.endMs
-    );
+    for (const p of pages) {
+      if (currentTimeMs < p.startMs || currentTimeMs > p.endMs + LINGER_MS)
+        continue;
+
+      for (let i = p.words.length - 1; i >= 0; i--) {
+        const w = p.words[i];
+        // Word is currently being spoken
+        if (currentTimeMs >= w.startMs && currentTimeMs <= w.endMs) return p;
+        // Word was recently spoken (within linger window)
+        if (w.endMs <= currentTimeMs && currentTimeMs - w.endMs <= LINGER_MS)
+          return p;
+      }
+    }
+    return null;
   }, [pages, currentTimeMs]);
 
   if (!activePage) return null;
@@ -83,6 +122,7 @@ export function VideoSubtitleOverlay({
           {activePage.words.map((word, i) => {
             const isActive =
               currentTimeMs >= word.startMs && currentTimeMs <= word.endMs;
+            const wasSpoken = word.endMs < currentTimeMs;
 
             return (
               <span
@@ -90,7 +130,9 @@ export function VideoSubtitleOverlay({
                 className={
                   isActive
                     ? `font-bold ${getConfidenceColor(word.confidence)}`
-                    : "text-white/80"
+                    : wasSpoken
+                      ? "text-white/50"
+                      : "text-white/80"
                 }
               >
                 {word.text}
