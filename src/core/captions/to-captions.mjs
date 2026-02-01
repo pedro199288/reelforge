@@ -22,17 +22,21 @@ export function toCaptionsDTW(whisperCppOutput) {
     // Use DTW if available, fallback to segment offsets
     const startMs = dtwMs ?? item.offsets.from;
 
-    // endMs: next word's DTW start, or fallback to segment end
+    // endMs: estimate based on word length, capped by next word's start
+    // This avoids inflated durations during pauses between words
     let endMs;
+    const wordText = item.text.trim();
+    const estimatedMaxMs = Math.max(150, wordText.length * 70);
     const nextItem = transcription[i + 1];
     if (nextItem) {
       const nextDtwMs =
         nextItem.tokens[0].t_dtw === -1
           ? null
           : nextItem.tokens[0].t_dtw * 10;
-      endMs = nextDtwMs ?? nextItem.offsets.from;
+      const nextStart = nextDtwMs ?? nextItem.offsets.from;
+      endMs = Math.min(nextStart, startMs + estimatedMaxMs);
     } else {
-      endMs = item.offsets.to;
+      endMs = Math.min(item.offsets.to, startMs + estimatedMaxMs);
     }
 
     // Ensure reasonable minimum duration (50ms)

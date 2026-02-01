@@ -13,7 +13,49 @@
  */
 
 /**
- * Cleans up captions by fixing timing issues and filtering low confidence words
+ * Applies timing-only fixes: caps word durations and prevents overlaps.
+ * Does NOT remove any words — useful for raw mode where all words must be preserved.
+ * @param {Caption[]} captions - Captions to fix
+ * @param {Object} options - Fix options
+ * @param {number} [options.maxWordDurationMs=800] - Maximum duration for a single word
+ * @returns {Caption[]} Timing-fixed captions (same count as input)
+ */
+export function fixTimingOnly(captions, options = {}) {
+  const { maxWordDurationMs = 800 } = options;
+
+  if (captions.length === 0) return [];
+
+  const fixed = [];
+
+  for (let i = 0; i < captions.length; i++) {
+    const caption = captions[i];
+
+    // 1. Cap absurdly long durations at maxWordDurationMs
+    const duration = caption.endMs - caption.startMs;
+    const correctedEndMs =
+      duration > maxWordDurationMs
+        ? caption.startMs + maxWordDurationMs
+        : caption.endMs;
+
+    // 2. Ensure no overlap with previous caption
+    if (fixed.length > 0) {
+      const prev = fixed[fixed.length - 1];
+      if (prev.endMs > caption.startMs) {
+        prev.endMs = Math.max(prev.startMs + 50, caption.startMs - 10);
+      }
+    }
+
+    fixed.push({
+      ...caption,
+      endMs: correctedEndMs,
+    });
+  }
+
+  return fixed;
+}
+
+/**
+ * Cleans up captions by filtering low confidence words and fixing timing issues
  * @param {Caption[]} captions - Raw captions from Whisper
  * @param {Object} options - Cleanup options
  * @param {number} [options.minConfidence=0.15] - Minimum confidence threshold
@@ -30,7 +72,8 @@ export function cleanupCaptions(captions, options = {}) {
 
   if (captions.length === 0) return [];
 
-  const cleaned = [];
+  // First pass: filter out unwanted words
+  const filtered = [];
 
   for (let i = 0; i < captions.length; i++) {
     const caption = captions[i];
@@ -60,28 +103,11 @@ export function cleanupCaptions(captions, options = {}) {
       continue;
     }
 
-    // 3. Fix absurdly long durations (cap at maxWordDurationMs)
-    const duration = caption.endMs - caption.startMs;
-    const correctedEndMs =
-      duration > maxWordDurationMs
-        ? caption.startMs + maxWordDurationMs
-        : caption.endMs;
-
-    // 4. Ensure no overlap with previous caption
-    if (cleaned.length > 0) {
-      const prev = cleaned[cleaned.length - 1];
-      if (prev.endMs > caption.startMs) {
-        prev.endMs = Math.max(prev.startMs + 50, caption.startMs - 10);
-      }
-    }
-
-    cleaned.push({
-      ...caption,
-      endMs: correctedEndMs,
-    });
+    filtered.push(caption);
   }
 
-  return cleaned;
+  // Second pass: fix timing on the filtered set
+  return fixTimingOnly(filtered, { maxWordDurationMs });
 }
 
 /**

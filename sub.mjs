@@ -20,7 +20,7 @@ import {
   installWhisperCpp,
   transcribe,
 } from "@remotion/install-whisper-cpp";
-import { fullCleanup } from "./src/core/captions/cleanup.mjs";
+import { fullCleanup, fixTimingOnly } from "./src/core/captions/cleanup.mjs";
 import { toCaptionsDTW } from "./src/core/captions/to-captions.mjs";
 
 /**
@@ -105,9 +105,10 @@ const subFile = async (filePath, fileName, folder, promptText = null) => {
   const { captions } = toCaptionsDTW(whisperCppOutput);
 
   if (rawMode) {
-    // In raw mode, save without cleanup (preserves all words for downstream derivation)
-    console.log(`  Raw mode: ${captions.length} captions (no cleanup)`);
-    writeFileSync(outPath, JSON.stringify(captions, null, 2));
+    // In raw mode, preserve all words but apply timing fixes (cap duration + prevent overlap)
+    const fixedCaptions = fixTimingOnly(captions, { maxWordDurationMs: 800 });
+    console.log(`  Raw mode: ${fixedCaptions.length} captions (timing-only fix)`);
+    writeFileSync(outPath, JSON.stringify(fixedCaptions, null, 2));
   } else {
     // Clean up captions: fix timing issues, filter low confidence, remove false starts/repeated phrases
     const log = [];
