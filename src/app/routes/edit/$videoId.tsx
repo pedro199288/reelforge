@@ -24,7 +24,7 @@ import { useSubtitleStore } from "@/store/subtitles";
 import { SegmentTimeline } from "@/components/SegmentTimeline";
 import { PreselectionLogs } from "@/components/PreselectionLogs";
 import { usePlayheadSync } from "@/hooks/usePlayheadSync";
-import { useSegmentEditorShortcuts } from "@/hooks/useSegmentEditorShortcuts";
+import { useSegmentEditorShortcuts, isEditableElement } from "@/hooks/useSegmentEditorShortcuts";
 import type { PreselectedSegment, PreselectionLog } from "@/core/preselection";
 import {
   ArrowLeft,
@@ -46,6 +46,9 @@ import {
   Subtitles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip";
+import { ShortcutTooltipContent } from "@/components/ui/shortcut-tooltip";
+import { useHotkeys } from "react-hotkeys-hook";
 import { Textarea } from "@/components/ui/textarea";
 import { EditorPipelinePanel } from "@/components/EditorPipelinePanel";
 import { useOriginalCaptions } from "@/hooks/useOriginalCaptions";
@@ -195,6 +198,17 @@ function EditorPage() {
     videoRef,
     totalDurationMs: (segmentsResult?.totalDuration ?? 0) * 1000,
   });
+
+  // --- Footer keyboard shortcuts ---
+  useHotkeys("c", () => {
+    if (isEditableElement()) return;
+    setShowCaptions(v => !v);
+  }, []);
+
+  useHotkeys("j", () => {
+    if (isEditableElement()) return;
+    setContinuousPlay(v => !v);
+  }, []);
 
   // --- Original captions for overlay ---
   const captionsCompleted = pipelineStatus?.steps.captions?.status === "completed";
@@ -894,49 +908,65 @@ function EditorPage() {
         </div>
         <div className="flex items-center gap-1">
           {previewMode === "edit" && originalCaptions && (
-            <Button
-              variant={showCaptions ? "default" : "ghost"}
-              size="sm"
-              className={cn("h-6 px-2 text-xs gap-1", showCaptions && "bg-blue-600 hover:bg-blue-700 text-white")}
-              onClick={() => setShowCaptions(!showCaptions)}
-              title={showCaptions ? "Ocultar subtítulos" : "Mostrar subtítulos"}
-            >
-              <Subtitles className="w-3.5 h-3.5" />
-              CC
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={showCaptions ? "default" : "ghost"}
+                  size="sm"
+                  className={cn("h-6 px-2 text-xs gap-1", showCaptions && "bg-blue-600 hover:bg-blue-700 text-white")}
+                  onClick={() => setShowCaptions(!showCaptions)}
+                >
+                  <Subtitles className="w-3.5 h-3.5" />
+                  CC
+                </Button>
+              </TooltipTrigger>
+              <ShortcutTooltipContent shortcut="C">{showCaptions ? "Ocultar subtítulos" : "Mostrar subtítulos"}</ShortcutTooltipContent>
+            </Tooltip>
           )}
           {previewMode === "edit" && (
-            <Button
-              variant={continuousPlay ? "default" : "ghost"}
-              size="sm"
-              className={cn("h-6 px-2 text-xs gap-1", continuousPlay && "bg-amber-600 hover:bg-amber-700 text-white")}
-              onClick={() => setContinuousPlay(!continuousPlay)}
-              title={continuousPlay ? "Reproducción continua activa" : "Saltar segmentos deshabilitados"}
-            >
-              <SkipForward className="w-3.5 h-3.5" />
-              {continuousPlay ? "Continuo" : "Skip"}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={continuousPlay ? "default" : "ghost"}
+                  size="sm"
+                  className={cn("h-6 px-2 text-xs gap-1", continuousPlay && "bg-amber-600 hover:bg-amber-700 text-white")}
+                  onClick={() => setContinuousPlay(!continuousPlay)}
+                >
+                  <SkipForward className="w-3.5 h-3.5" />
+                  {continuousPlay ? "Continuo" : "Skip"}
+                </Button>
+              </TooltipTrigger>
+              <ShortcutTooltipContent shortcut="J">{continuousPlay ? "Reproducción continua activa" : "Saltar segmentos deshabilitados"}</ShortcutTooltipContent>
+            </Tooltip>
           )}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-xs"
-            onClick={handleUndo}
-            disabled={!canUndo}
-            title="Deshacer (Ctrl+Z)"
-          >
-            <Undo2 className="w-3.5 h-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-xs"
-            onClick={handleRedo}
-            disabled={!canRedo}
-            title="Rehacer (Ctrl+Shift+Z)"
-          >
-            <Redo2 className="w-3.5 h-3.5" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={handleUndo}
+                disabled={!canUndo}
+              >
+                <Undo2 className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <ShortcutTooltipContent shortcut="Mod+Z">Deshacer</ShortcutTooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={handleRedo}
+                disabled={!canRedo}
+              >
+                <Redo2 className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <ShortcutTooltipContent shortcut="Mod+Shift+Z">Rehacer</ShortcutTooltipContent>
+          </Tooltip>
         </div>
       </footer>
     </div>

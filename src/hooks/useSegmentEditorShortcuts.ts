@@ -10,7 +10,7 @@ interface UseSegmentEditorShortcutsOptions {
   enabled?: boolean;
 }
 
-function isEditableElement(): boolean {
+export function isEditableElement(): boolean {
   const el = document.activeElement;
   if (!el) return false;
   const tag = el.tagName;

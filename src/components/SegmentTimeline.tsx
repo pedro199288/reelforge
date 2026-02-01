@@ -1,8 +1,11 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from "react";
+import { useHotkeys } from "react-hotkeys-hook";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip";
+import { ShortcutTooltipContent } from "@/components/ui/shortcut-tooltip";
 import { ZoomIn, ZoomOut, Maximize2, Crosshair, Film } from "lucide-react";
+import { isEditableElement } from "@/hooks/useSegmentEditorShortcuts";
 import { cn } from "@/lib/utils";
 import { TimelineRuler } from "@/components/Timeline/TimelineRuler";
 import { TimelinePlayhead } from "@/components/Timeline/TimelinePlayhead";
@@ -475,6 +478,37 @@ export function SegmentTimeline({
     isDraggingScrollbar.current = false;
   }, []);
 
+  // --- Keyboard shortcuts ---
+  useHotkeys("-", () => {
+    if (isEditableElement()) return;
+    zoomOut();
+  }, { preventDefault: true }, [zoomOut]);
+
+  useHotkeys("=", () => {
+    if (isEditableElement()) return;
+    zoomIn();
+  }, { preventDefault: true }, [zoomIn]);
+
+  useHotkeys("shift+1", () => {
+    if (isEditableElement()) return;
+    handleFitToView();
+  }, { preventDefault: true }, [handleFitToView]);
+
+  useHotkeys("f", () => {
+    if (isEditableElement()) return;
+    handleToggleFollowPlayhead();
+  }, [handleToggleFollowPlayhead]);
+
+  useHotkeys("t", () => {
+    if (isEditableElement()) return;
+    setShowFullTimeline(v => !v);
+  }, []);
+
+  useHotkeys("h", () => {
+    if (isEditableElement()) return;
+    setTrackExpanded(v => !v);
+  }, []);
+
   return (
     <div className={cn("flex flex-col border rounded-lg bg-background", className)}>
       {/* Toolbar */}
@@ -496,7 +530,7 @@ export function SegmentTimeline({
                 <ZoomOut className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Alejar zoom</TooltipContent>
+            <ShortcutTooltipContent shortcut="-">Alejar zoom</ShortcutTooltipContent>
           </Tooltip>
           <Slider
             value={[zoomLevel]}
@@ -512,7 +546,7 @@ export function SegmentTimeline({
                 <ZoomIn className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Acercar zoom</TooltipContent>
+            <ShortcutTooltipContent shortcut="=">Acercar zoom</ShortcutTooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -520,7 +554,7 @@ export function SegmentTimeline({
                 <Maximize2 className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Ajustar a la vista</TooltipContent>
+            <ShortcutTooltipContent shortcut="Shift+1">Ajustar a la vista</ShortcutTooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -533,7 +567,7 @@ export function SegmentTimeline({
                 <Crosshair className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{followPlayhead ? "Dejar de seguir playhead" : "Seguir playhead"}</TooltipContent>
+            <ShortcutTooltipContent shortcut="F">{followPlayhead ? "Dejar de seguir playhead" : "Seguir playhead"}</ShortcutTooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -546,7 +580,7 @@ export function SegmentTimeline({
                 <Film className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{showFullTimeline ? "Vista contigua (sin huecos)" : "Timeline completo"}</TooltipContent>
+            <ShortcutTooltipContent shortcut="T">{showFullTimeline ? "Vista contigua (sin huecos)" : "Timeline completo"}</ShortcutTooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -559,7 +593,7 @@ export function SegmentTimeline({
                 2x
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{trackExpanded ? "Altura normal" : "Duplicar altura del track"}</TooltipContent>
+            <ShortcutTooltipContent shortcut="H">{trackExpanded ? "Altura normal" : "Duplicar altura del track"}</ShortcutTooltipContent>
           </Tooltip>
         </div>
       </div>

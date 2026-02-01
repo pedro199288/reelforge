@@ -124,4 +124,12 @@ export const SEGMENT_EDITOR_SHORTCUTS = [
   { key: "Shift + \u2192", description: "Seek +1 segundo" },
   { key: "\u2191", description: "Keypoint anterior" },
   { key: "\u2193", description: "Keypoint siguiente" },
+  { key: "-", description: "Alejar zoom" },
+  { key: "= (+)", description: "Acercar zoom" },
+  { key: "Shift + 1", description: "Ajustar a la vista" },
+  { key: "F", description: "Seguir playhead" },
+  { key: "T", description: "Timeline completo / contiguo" },
+  { key: "H", description: "Duplicar altura del track" },
+  { key: "C", description: "Mostrar/ocultar subtítulos" },
+  { key: "J", description: "Continuo / Skip" },
 ] as const;
