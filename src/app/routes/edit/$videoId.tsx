@@ -347,10 +347,7 @@ function EditorPage() {
   }, [preselectionLog]);
 
   // --- Import segments to timeline store ---
-  const lastImportRef = useRef<{
-    videoId: string;
-    hasPreselection: boolean;
-  } | null>(null);
+  const lastImportRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!segmentsResult || segmentsResult.segments.length === 0) return;
@@ -358,39 +355,28 @@ function EditorPage() {
     const hasPreselectionData =
       segmentsResult.preselection &&
       segmentsResult.preselection.segments.length > 0;
-    const importKey = { videoId, hasPreselection: !!hasPreselectionData };
 
-    if (
-      lastImportRef.current?.videoId === importKey.videoId &&
-      lastImportRef.current?.hasPreselection === importKey.hasPreselection &&
-      timelineSegments.length > 0
-    ) {
+    const fingerprint = hasPreselectionData
+      ? `${videoId}:pre:${segmentsResult.preselection!.segments.length}:${segmentsResult.preselection!.stats.averageScore.toFixed(1)}`
+      : `${videoId}:basic:${segmentsResult.segments.length}`;
+
+    if (lastImportRef.current === fingerprint && timelineSegments.length > 0) {
       return;
     }
 
-    const currentSegmentsHavePreselection =
-      timelineSegments.length > 0 &&
-      timelineSegments.some((s) => s.preselectionScore !== undefined);
-
-    const shouldImport =
-      timelineSegments.length === 0 ||
-      (hasPreselectionData && !currentSegmentsHavePreselection);
-
-    if (shouldImport) {
-      lastImportRef.current = importKey;
-      if (hasPreselectionData) {
-        importPreselectedSegments(
-          videoId,
-          segmentsResult.preselection!.segments,
-          []
-        );
-      } else {
-        const segmentsForStore = segmentsResult.segments.map((s) => ({
-          startMs: s.startTime * 1000,
-          endMs: s.endTime * 1000,
-        }));
-        importSemanticSegments(videoId, segmentsForStore, []);
-      }
+    lastImportRef.current = fingerprint;
+    if (hasPreselectionData) {
+      importPreselectedSegments(
+        videoId,
+        segmentsResult.preselection!.segments,
+        []
+      );
+    } else {
+      const segmentsForStore = segmentsResult.segments.map((s) => ({
+        startMs: s.startTime * 1000,
+        endMs: s.endTime * 1000,
+      }));
+      importSemanticSegments(videoId, segmentsForStore, []);
     }
   }, [
     videoId,
