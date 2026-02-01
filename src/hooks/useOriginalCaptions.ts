@@ -57,7 +57,9 @@ export function useOriginalCaptions(
         const cutResult = (await cutRes.json()) as { cutMap: CutMapEntry[] };
 
         // Fetch the actual captions JSON file
-        const subsRes = await fetch(`/${captionsResult.captionsPath}`);
+        // captionsPath is stored as "public/subs/..." but Vite serves public/ at root
+        const servablePath = captionsResult.captionsPath.replace(/^public\//, "");
+        const subsRes = await fetch(`/${servablePath}`);
         if (!subsRes.ok) {
           throw new Error("Failed to fetch captions file");
         }
