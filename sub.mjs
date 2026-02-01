@@ -19,9 +19,9 @@ import {
   downloadWhisperModel,
   installWhisperCpp,
   transcribe,
-  toCaptions,
 } from "@remotion/install-whisper-cpp";
 import { fullCleanup } from "./src/core/captions/cleanup.mjs";
+import { toCaptionsDTW } from "./src/core/captions/to-captions.mjs";
 
 /**
  * Clean script text by removing markers [zoom], [zoom:slow], {highlight}
@@ -75,7 +75,8 @@ const subFile = async (filePath, fileName, folder, promptText = null) => {
 
   // Build additional args, optionally including prompt from script
   const additionalArgs = [
-    ["--max-len", "1"], // Max 1 token per segment for better granularity
+    ["--beam-size", "5"],
+    ["--best-of", "3"],
   ];
 
   if (promptText) {
@@ -94,13 +95,11 @@ const subFile = async (filePath, fileName, folder, promptText = null) => {
     language: WHISPER_LANG,
     splitOnWord: true,
     // Optimization parameters for better accuracy
-    flashAttention: true,
+    flashAttention: false,
     additionalArgs,
   });
 
-  const { captions } = toCaptions({
-    whisperCppOutput,
-  });
+  const { captions } = toCaptionsDTW(whisperCppOutput);
 
   // Clean up captions: fix timing issues, filter low confidence, remove false starts/repeated phrases
   const log = [];
