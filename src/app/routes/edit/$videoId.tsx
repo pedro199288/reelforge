@@ -43,10 +43,13 @@ import {
   AlertTriangle,
   PanelRightClose,
   ScrollText,
+  Subtitles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Textarea } from "@/components/ui/textarea";
 import { EditorPipelinePanel } from "@/components/EditorPipelinePanel";
+import { useOriginalCaptions } from "@/hooks/useOriginalCaptions";
+import { VideoSubtitleOverlay } from "@/components/VideoSubtitleOverlay";
 
 const API_URL = "http://localhost:3012";
 
@@ -162,6 +165,7 @@ function EditorPage() {
   const [cutVideoDuration, setCutVideoDuration] = useState<number | null>(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [highlightedLogSegmentId, setHighlightedLogSegmentId] = useState<string | null>(null);
+  const [showCaptions, setShowCaptions] = useState(false);
 
   // --- Video ref ---
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -191,6 +195,10 @@ function EditorPage() {
     videoRef,
     totalDurationMs: (segmentsResult?.totalDuration ?? 0) * 1000,
   });
+
+  // --- Original captions for overlay ---
+  const captionsCompleted = pipelineStatus?.steps.captions?.status === "completed";
+  const { captions: originalCaptions } = useOriginalCaptions(videoId, captionsCompleted ?? false);
 
   // --- Derived data ---
   const totalDuration = segmentsResult?.totalDuration ?? 0;
@@ -803,6 +811,11 @@ function EditorPage() {
                 </button>
               )}
 
+              {/* Subtitle overlay */}
+              {showCaptions && originalCaptions && (
+                <VideoSubtitleOverlay captions={originalCaptions} currentTimeMs={currentTimeMs} />
+              )}
+
               {/* Time indicator */}
               <div className="absolute bottom-3 right-3 bg-black/70 px-2 py-1 rounded text-white text-sm font-mono">
                 {formatTime(currentTime)} / {formatTime(totalDuration)}
@@ -880,6 +893,18 @@ function EditorPage() {
           )}
         </div>
         <div className="flex items-center gap-1">
+          {previewMode === "edit" && originalCaptions && (
+            <Button
+              variant={showCaptions ? "default" : "ghost"}
+              size="sm"
+              className={cn("h-6 px-2 text-xs gap-1", showCaptions && "bg-blue-600 hover:bg-blue-700 text-white")}
+              onClick={() => setShowCaptions(!showCaptions)}
+              title={showCaptions ? "Ocultar subtítulos" : "Mostrar subtítulos"}
+            >
+              <Subtitles className="w-3.5 h-3.5" />
+              CC
+            </Button>
+          )}
           {previewMode === "edit" && (
             <Button
               variant={continuousPlay ? "default" : "ghost"}
