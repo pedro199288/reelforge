@@ -421,7 +421,7 @@ export function PreselectionLogs({ log, onSeekTo, highlightSegmentId }: Preselec
       const el = scrollContainerRef.current?.querySelector(
         `[data-segment-id="${highlightSegmentId}"]`
       );
-      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
 
     return () => clearTimeout(timer);

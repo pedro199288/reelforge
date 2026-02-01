@@ -266,7 +266,7 @@ export function SegmentMarker({
       )}
 
       {/* Show log button (top-right, hover only) */}
-      {onShowLog && segment.preselectionScore !== undefined && actualWidth > 40 && (
+      {onShowLog && segment.preselectionScore !== undefined && (
         <button
           type="button"
           className="absolute top-0.5 right-0.5 z-20 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-white/30"
