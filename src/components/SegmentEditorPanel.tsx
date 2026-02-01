@@ -126,36 +126,31 @@ export function SegmentEditorPanel({
   }, [selectedSegment, timelineSegments]);
 
   // Track if we've already imported for this video/preselection combination
-  const lastImportRef = useRef<{ videoId: string; hasPreselection: boolean } | null>(null);
+  const lastImportRef = useRef<string | null>(null);
 
   // Initialize timeline segments from prop segments
-  // Re-import if preselection data is available but current segments don't have it
+  // Re-import if preselection data changes (e.g., after captions reapply)
   useEffect(() => {
     if (segments.length === 0) return;
 
     const hasPreselectionData = preselection && preselection.segments.length > 0;
-    const importKey = { videoId, hasPreselection: !!hasPreselectionData };
 
-    // Check if we've already imported with these parameters
-    if (
-      lastImportRef.current?.videoId === importKey.videoId &&
-      lastImportRef.current?.hasPreselection === importKey.hasPreselection &&
-      timelineSegments.length > 0
-    ) {
+    // Build a fingerprint that changes when preselection data changes
+    const fingerprint = hasPreselectionData
+      ? `${videoId}:pre:${preselection.segments.length}:${preselection.stats.averageScore.toFixed(1)}`
+      : `${videoId}:basic:${segments.length}`;
+
+    // Skip if we've already imported with this exact fingerprint
+    if (lastImportRef.current === fingerprint && timelineSegments.length > 0) {
       return;
     }
 
-    const currentSegmentsHavePreselection =
-      timelineSegments.length > 0 &&
-      timelineSegments.some((s) => s.preselectionScore !== undefined);
-
-    // Import if no segments yet, or if preselection available but not applied
     const shouldImport =
       timelineSegments.length === 0 ||
-      (hasPreselectionData && !currentSegmentsHavePreselection);
+      lastImportRef.current !== fingerprint;
 
     if (shouldImport) {
-      lastImportRef.current = importKey;
+      lastImportRef.current = fingerprint;
       if (hasPreselectionData) {
         importPreselectedSegments(videoId, preselection.segments, []);
       } else {
