@@ -102,11 +102,12 @@ const subFile = async (filePath, fileName, folder, promptText = null) => {
     whisperCppOutput,
   });
 
-  // Clean up captions: remove duplicates, fix timing issues, filter low confidence
+  // Clean up captions: fix timing issues, filter low confidence, remove false starts/repeated phrases
+  const log = [];
   const cleanedCaptions = fullCleanup(captions, {
-    minConfidence: 0.25,
-    maxWordDurationMs: 800, // Reduced from 2500 - single words shouldn't last more than 800ms
-    duplicateWindowMs: 5000,
+    minConfidence: 0.15,
+    maxWordDurationMs: 800,
+    log,
   });
 
   console.log(
@@ -114,6 +115,13 @@ const subFile = async (filePath, fileName, folder, promptText = null) => {
   );
 
   writeFileSync(outPath, JSON.stringify(cleanedCaptions, null, 2));
+
+  // Save cleanup log alongside captions for debugging
+  if (log.length > 0) {
+    const logPath = outPath.replace(".json", ".cleanup-log.json");
+    writeFileSync(logPath, JSON.stringify(log, null, 2));
+    console.log(`  Cleanup log: ${log.length} items removed (${logPath})`);
+  }
 };
 
 const processVideo = async (fullPath, entry, directory, promptText = null) => {
