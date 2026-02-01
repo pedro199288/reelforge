@@ -176,6 +176,7 @@ export const CaptionedVideo: React.FC<{
             key={index}
             from={subtitleStartFrame}
             durationInFrames={durationInFrames}
+            style={{ zIndex: pages.length - index }}
           >
             <SubtitlePage
               key={index}

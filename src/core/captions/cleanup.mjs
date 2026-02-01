@@ -316,6 +316,5 @@ function arePhrasesSimilar(phrase1, phrase2) {
 export function fullCleanup(captions, options = {}) {
   const log = options.log ?? [];
   let result = cleanupCaptions(captions, { ...options, _log: log });
-  result = removeFalseStarts(result, log);
   return result;
 }
