@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,8 @@ import type {
 interface PreselectionLogsProps {
   log: PreselectionLog;
   onSeekTo?: (seconds: number) => void;
+  /** When set, auto-expand and scroll to this segment's log card */
+  highlightSegmentId?: string | null;
 }
 
 type FilterStatus = "all" | "selected" | "rejected" | "ambiguous";
@@ -345,7 +347,7 @@ function SegmentLogCard({
   );
 }
 
-export function PreselectionLogs({ log, onSeekTo }: PreselectionLogsProps) {
+export function PreselectionLogs({ log, onSeekTo, highlightSegmentId }: PreselectionLogsProps) {
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
   const [searchText, setSearchText] = useState("");
   const [minScore, setMinScore] = useState(0);
@@ -384,6 +386,9 @@ export function PreselectionLogs({ log, onSeekTo }: PreselectionLogsProps) {
     return { total, selected, avgScore };
   }, [log]);
 
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
   const toggleSegment = (segmentId: string) => {
     setOpenSegments((prev) => {
       const next = new Set(prev);
@@ -395,6 +400,32 @@ export function PreselectionLogs({ log, onSeekTo }: PreselectionLogsProps) {
       return next;
     });
   };
+
+  // Auto-expand and scroll to highlighted segment
+  useEffect(() => {
+    if (!highlightSegmentId) return;
+
+    // Expand the segment
+    setOpenSegments((prev) => {
+      const next = new Set(prev);
+      next.add(highlightSegmentId);
+      return next;
+    });
+
+    // Highlight with temporary ring
+    setHighlightedId(highlightSegmentId);
+    const timer = setTimeout(() => setHighlightedId(null), 2000);
+
+    // Scroll into view after a brief delay (to let expand animation finish)
+    requestAnimationFrame(() => {
+      const el = scrollContainerRef.current?.querySelector(
+        `[data-segment-id="${highlightSegmentId}"]`
+      );
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+
+    return () => clearTimeout(timer);
+  }, [highlightSegmentId]);
 
   const handleExport = () => {
     const dataStr = JSON.stringify(log, null, 2);
@@ -558,17 +589,25 @@ export function PreselectionLogs({ log, onSeekTo }: PreselectionLogsProps) {
         </div>
 
         {/* Segment List */}
-        <div className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-subtle">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-subtle">
           {filteredSegments.map((segment, index) => (
-            <SegmentLogCard
+            <div
               key={segment.segmentId}
-              segment={segment}
-              index={index}
-              weights={log.config.weights}
-              onSeekTo={onSeekTo}
-              isOpen={openSegments.has(segment.segmentId)}
-              onToggle={() => toggleSegment(segment.segmentId)}
-            />
+              data-segment-id={segment.segmentId}
+              className={cn(
+                "transition-shadow duration-300",
+                highlightedId === segment.segmentId && "ring-2 ring-blue-500 rounded-lg"
+              )}
+            >
+              <SegmentLogCard
+                segment={segment}
+                index={index}
+                weights={log.config.weights}
+                onSeekTo={onSeekTo}
+                isOpen={openSegments.has(segment.segmentId)}
+                onToggle={() => toggleSegment(segment.segmentId)}
+              />
+            </div>
           ))}
 
           {filteredSegments.length === 0 && (

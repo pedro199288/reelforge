@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
+import { BarChart3 } from "lucide-react";
 import { Waveform } from "@/components/Timeline/Waveform";
 import { useTimelineStore, type TimelineSegment } from "@/store/timeline";
 
@@ -11,6 +12,8 @@ interface SegmentMarkerProps {
   onSelect: () => void;
   onResize?: (field: "startMs" | "endMs", newValue: number) => void;
   onToggleEnabled?: () => void;
+  /** Callback to show the preselection log for this segment */
+  onShowLog?: () => void;
   /** Offset in ms for contiguous (no-gap) layout */
   contiguousOffsetMs?: number;
   /** Waveform samples for this segment (used as background in contiguous mode) */
@@ -67,6 +70,7 @@ export function SegmentMarker({
   onSelect,
   onResize,
   onToggleEnabled,
+  onShowLog,
   contiguousOffsetMs,
   waveformSlice,
   trackHeight,
@@ -211,7 +215,7 @@ export function SegmentMarker({
     <div
       ref={markerRef}
       className={cn(
-        "absolute top-1 bottom-1 rounded transition-shadow select-none box-border",
+        "group absolute top-1 bottom-1 rounded transition-shadow select-none box-border",
         "border-2 flex items-end justify-center text-xs font-medium",
         segment.enabled
           ? scoreColors
@@ -259,6 +263,21 @@ export function SegmentMarker({
         <span className="absolute top-0.5 left-1 pointer-events-none text-[9px] font-bold opacity-80 leading-none">
           T{segment.takeNumber}/{segment.totalTakes}
         </span>
+      )}
+
+      {/* Show log button (top-right, hover only) */}
+      {onShowLog && segment.preselectionScore !== undefined && actualWidth > 40 && (
+        <button
+          type="button"
+          className="absolute top-0.5 right-0.5 z-20 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-white/30"
+          onClick={(e) => {
+            e.stopPropagation();
+            onShowLog();
+          }}
+          title="Ver log de preseleccion"
+        >
+          <BarChart3 className="w-3 h-3" />
+        </button>
       )}
 
       {/* Content label (bottom) */}

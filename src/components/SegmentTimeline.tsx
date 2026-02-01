@@ -32,6 +32,8 @@ interface SegmentTimelineProps {
   enablePlayheadTransition?: boolean;
   /** When true, force full timeline view (continuous playback mode) */
   continuousPlay?: boolean;
+  /** Callback when user clicks the "show log" button on a segment */
+  onShowLog?: (segmentId: string) => void;
 }
 
 export function SegmentTimeline({
@@ -43,6 +45,7 @@ export function SegmentTimeline({
   className,
   enablePlayheadTransition = false,
   continuousPlay = false,
+  onShowLog,
 }: SegmentTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -599,6 +602,7 @@ export function SegmentTimeline({
           viewportWidthPx={viewportWidthPx}
           waveformOffsetPx={waveformOffsetPx}
           expanded={trackExpanded}
+          onShowLog={onShowLog}
         />
 
         {/* Playhead */}

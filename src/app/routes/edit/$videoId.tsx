@@ -161,6 +161,7 @@ function EditorPage() {
   const [continuousPlay, setContinuousPlay] = useState(false);
   const [cutVideoDuration, setCutVideoDuration] = useState<number | null>(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [highlightedLogSegmentId, setHighlightedLogSegmentId] = useState<string | null>(null);
 
   // --- Video ref ---
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -346,6 +347,11 @@ function EditorPage() {
     if (!preselectionLog) setRightPanelOpen(false);
   }, [preselectionLog]);
 
+  // Clear highlight when right panel closes
+  useEffect(() => {
+    if (!rightPanelOpen) setHighlightedLogSegmentId(null);
+  }, [rightPanelOpen]);
+
   // --- Import segments to timeline store ---
   const lastImportRef = useRef<string | null>(null);
 
@@ -500,6 +506,12 @@ function EditorPage() {
       loadPipelineStatus(video);
     }
   }, [video, loadPipelineStatus]);
+
+  // --- Show preselection log for a segment ---
+  const handleShowLog = useCallback((segmentId: string) => {
+    setRightPanelOpen(true);
+    setHighlightedLogSegmentId(segmentId);
+  }, []);
 
   // --- Undo/Redo ---
   const canUndo =
@@ -818,6 +830,7 @@ function EditorPage() {
               <PreselectionLogs
                 log={preselectionLog}
                 onSeekTo={(seconds) => handleSeekTo(seconds * 1000)}
+                highlightSegmentId={highlightedLogSegmentId}
               />
             </div>
           </aside>
@@ -839,6 +852,7 @@ function EditorPage() {
             }}
             enablePlayheadTransition={isTransitioning}
             continuousPlay={continuousPlay}
+            onShowLog={preselectionLog ? handleShowLog : undefined}
           />
         </div>
       )}

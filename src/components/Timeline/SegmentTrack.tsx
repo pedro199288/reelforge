@@ -30,6 +30,8 @@ interface SegmentTrackProps {
   waveformOffsetPx?: number;
   /** When true, double the track height */
   expanded?: boolean;
+  /** Callback when user clicks the "show log" button on a segment */
+  onShowLog?: (segmentId: string) => void;
 }
 
 export function SegmentTrack({
@@ -49,6 +51,7 @@ export function SegmentTrack({
   viewportWidthPx = 0,
   waveformOffsetPx = 0,
   expanded = false,
+  onShowLog,
 }: SegmentTrackProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -270,6 +273,7 @@ export function SegmentTrack({
             contiguousOffsetMs={contiguousOffsets?.get(segment.id)}
             waveformSlice={contiguous ? segmentWaveforms?.get(segment.id) : undefined}
             trackHeight={trackHeight}
+            onShowLog={onShowLog ? () => onShowLog(segment.id) : undefined}
           />
         ))}
 
