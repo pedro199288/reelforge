@@ -20,6 +20,8 @@ interface ScriptSentence {
   wordCount: number;
 }
 
+const BOUNDARY_TOLERANCE_MS = 150;
+
 /**
  * Extracts the transcribed text for a segment from captions
  */
@@ -28,7 +30,9 @@ export function getSegmentTranscription(
   captions: Caption[]
 ): string {
   const overlapping = captions.filter(
-    (cap) => cap.startMs < segment.endMs && cap.endMs > segment.startMs
+    (cap) =>
+      cap.startMs < segment.endMs + BOUNDARY_TOLERANCE_MS &&
+      cap.endMs > segment.startMs - BOUNDARY_TOLERANCE_MS
   );
 
   return overlapping.map((cap) => cap.text).join(" ").trim();

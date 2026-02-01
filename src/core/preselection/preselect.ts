@@ -591,11 +591,10 @@ export function remapCaptionsToOriginal(
     const originalStart = segment.originalStartMs + offsetInSegment;
     const originalEnd = originalStart + capDuration;
 
-    // Clamp to segment boundaries
     remapped.push({
       ...cap,
       startMs: originalStart,
-      endMs: Math.min(originalEnd, segment.originalEndMs),
+      endMs: originalEnd,
     });
   }
 

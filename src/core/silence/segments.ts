@@ -8,11 +8,11 @@ export interface Segment {
 }
 
 export interface SegmentConfig {
-  paddingSec: number; // Default: 0.05 (50ms)
+  paddingSec: number; // Default: 0.15 (150ms)
 }
 
 const DEFAULT_CONFIG: SegmentConfig = {
-  paddingSec: 0.05,
+  paddingSec: 0.15,
 };
 
 /**

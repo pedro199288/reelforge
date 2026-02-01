@@ -1520,7 +1520,7 @@ async function handleRequest(req: Request): Promise<Response> {
             const segments = silencesToSegments(
               silencesResult.silences,
               silencesResult.videoDuration,
-              { paddingSec: config?.paddingSec ?? 0.05 }
+              { paddingSec: config?.paddingSec ?? 0.15 }
             );
 
             const editedDuration = getTotalDuration(segments);
@@ -1579,7 +1579,7 @@ async function handleRequest(req: Request): Promise<Response> {
               timeSaved,
               percentSaved: (timeSaved / silencesResult.videoDuration) * 100,
               config: {
-                paddingSec: config?.paddingSec ?? 0.05,
+                paddingSec: config?.paddingSec ?? 0.15,
               },
               preselection: preselectionData,
               createdAt: new Date().toISOString(),
