@@ -317,6 +317,5 @@ export function fullCleanup(captions, options = {}) {
   const log = options.log ?? [];
   let result = cleanupCaptions(captions, { ...options, _log: log });
   result = removeFalseStarts(result, log);
-  result = removeRepeatedPhrases(result, log);
   return result;
 }

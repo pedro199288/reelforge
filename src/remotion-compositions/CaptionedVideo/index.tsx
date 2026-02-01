@@ -18,6 +18,7 @@ import { NoCaptionFile } from "./NoCaptionFile";
 import { Caption, createTikTokStyleCaptions } from "@remotion/captions";
 import { ZoomLayer } from "./ZoomLayer";
 import type { AlignedEvent } from "../../core/script/align";
+import { useSubtitleStyle } from "../../store/subtitles";
 
 export type SubtitleProp = {
   startInSeconds: number;
@@ -64,6 +65,7 @@ export const CaptionedVideo: React.FC<{
   const { delayRender, continueRender } = useDelayRender();
   const [handle] = useState(() => delayRender());
   const { fps } = useVideoConfig();
+  const style = useSubtitleStyle();
 
   const subtitlesFile = src
     .replace(/.mp4$/, ".json")
@@ -152,10 +154,17 @@ export const CaptionedVideo: React.FC<{
       </AbsoluteFill>
       {pages.map((page, index) => {
         const nextPage = pages[index + 1] ?? null;
-        const subtitleStartFrame = (page.startMs / 1000) * fps;
+        const prerollFrames = Math.max(
+          3,
+          Math.round((style.entranceDuration / 1000) * fps),
+        );
+        const subtitleStartFrame = Math.max(
+          0,
+          (page.startMs / 1000) * fps - prerollFrames,
+        );
         const subtitleEndFrame = Math.min(
           nextPage ? (nextPage.startMs / 1000) * fps : Infinity,
-          subtitleStartFrame + (SWITCH_CAPTIONS_EVERY_MS / 1000) * fps,
+          (page.startMs / 1000) * fps + (SWITCH_CAPTIONS_EVERY_MS / 1000) * fps,
         );
         const durationInFrames = subtitleEndFrame - subtitleStartFrame;
         if (durationInFrames <= 0) {
