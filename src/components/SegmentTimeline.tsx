@@ -313,13 +313,23 @@ export function SegmentTimeline({
         useTimelineStore.getState().scrollTo(newStart);
         setFollowPlayhead(false);
       } else if (e.deltaY !== 0) {
-        // Vertical scroll → zoom
+        // Vertical scroll → zoom toward cursor
         const delta = e.deltaY > 0 ? 0.8 : 1.25;
         const newZoom = Math.max(
           MIN_ZOOM_LEVEL,
           Math.min(MAX_ZOOM_LEVEL, currentZoom * delta)
         );
+
+        // Anchor zoom to cursor position
+        const rect = container.getBoundingClientRect();
+        const cursorPx = e.clientX - rect.left - LABEL_COLUMN_WIDTH;
+        const oldPxPerMs = getPxPerMs(currentZoom);
+        const cursorMs = currentViewport + Math.max(0, cursorPx) / oldPxPerMs;
+        const newPxPerMs = getPxPerMs(newZoom);
+        const newViewport = Math.max(0, cursorMs - Math.max(0, cursorPx) / newPxPerMs);
+
         useTimelineStore.getState().setZoomLevel(newZoom);
+        useTimelineStore.getState().scrollTo(newViewport);
         setFollowPlayhead(false);
       }
     };
