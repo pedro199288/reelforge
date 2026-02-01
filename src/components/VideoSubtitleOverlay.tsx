@@ -80,7 +80,7 @@ function getConfidenceColor(confidence: number | undefined): string {
   return "text-red-400";
 }
 
-const LINGER_MS = 500;
+const LINGER_MS = 200;
 
 interface VideoSubtitleOverlayProps {
   captions: Caption[];
@@ -95,21 +95,28 @@ export function VideoSubtitleOverlay({
 
   // Show a page only if a word is being spoken right now
   // or was spoken within LINGER_MS ago (avoids flicker in tiny inter-word gaps).
-  // Hides during longer silence pauses.
+  // Prioritize pages with an actively spoken word over lingering pages.
   const activePage = useMemo(() => {
+    // First pass: page with a word being spoken right now
     for (const p of pages) {
+      if (currentTimeMs < p.startMs || currentTimeMs > p.endMs) continue;
+      for (const w of p.words) {
+        if (currentTimeMs >= w.startMs && currentTimeMs <= w.endMs) return p;
+      }
+    }
+
+    // Second pass: most recent page with a recently spoken word (linger fallback)
+    for (let pi = pages.length - 1; pi >= 0; pi--) {
+      const p = pages[pi];
       if (currentTimeMs < p.startMs || currentTimeMs > p.endMs + LINGER_MS)
         continue;
-
       for (let i = p.words.length - 1; i >= 0; i--) {
         const w = p.words[i];
-        // Word is currently being spoken
-        if (currentTimeMs >= w.startMs && currentTimeMs <= w.endMs) return p;
-        // Word was recently spoken (within linger window)
         if (w.endMs <= currentTimeMs && currentTimeMs - w.endMs <= LINGER_MS)
           return p;
       }
     }
+
     return null;
   }, [pages, currentTimeMs]);
 
