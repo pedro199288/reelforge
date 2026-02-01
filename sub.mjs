@@ -79,7 +79,7 @@ const subFile = async (filePath, fileName, folder, promptText = null) => {
   const additionalArgs = [
     ["--beam-size", "5"],
     ["--best-of", "3"],
-    ["--no-context"],
+    ["--max-context", "0"],
   ];
 
   if (promptText) {
