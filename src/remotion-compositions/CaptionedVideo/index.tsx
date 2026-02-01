@@ -15,7 +15,8 @@ import SubtitlePage from "./SubtitlePage";
 import { getVideoMetadata } from "@remotion/media-utils";
 import { loadFont, type FontId, DEFAULT_FONT } from "../../load-font";
 import { NoCaptionFile } from "./NoCaptionFile";
-import { Caption, createTikTokStyleCaptions } from "@remotion/captions";
+import { Caption } from "@remotion/captions";
+import { createSentenceAwarePages } from "../../core/captions/create-sentence-aware-pages";
 import { ZoomLayer } from "./ZoomLayer";
 import type { AlignedEvent } from "../../core/script/align";
 import { useSubtitleStyle } from "../../store/subtitles";
@@ -136,9 +137,9 @@ export const CaptionedVideo: React.FC<{
   ]);
 
   const { pages } = useMemo(() => {
-    return createTikTokStyleCaptions({
-      combineTokensWithinMilliseconds: SWITCH_CAPTIONS_EVERY_MS,
+    return createSentenceAwarePages({
       captions: subtitles ?? [],
+      maxPageDurationMs: SWITCH_CAPTIONS_EVERY_MS,
     });
   }, [subtitles]);
 
@@ -162,10 +163,10 @@ export const CaptionedVideo: React.FC<{
           0,
           (page.startMs / 1000) * fps - prerollFrames,
         );
-        const subtitleEndFrame = Math.min(
-          nextPage ? (nextPage.startMs / 1000) * fps : Infinity,
-          (page.startMs / 1000) * fps + (SWITCH_CAPTIONS_EVERY_MS / 1000) * fps,
-        );
+        const pageEndMs = page.startMs + page.durationMs;
+        const subtitleEndFrame = nextPage
+          ? (Math.min(nextPage.startMs, pageEndMs) / 1000) * fps
+          : (pageEndMs / 1000) * fps;
         const durationInFrames = subtitleEndFrame - subtitleStartFrame;
         if (durationInFrames <= 0) {
           return null;
