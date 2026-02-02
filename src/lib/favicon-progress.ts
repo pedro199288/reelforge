@@ -7,6 +7,7 @@ function getOrCreateLink(): HTMLLinkElement {
     link = document.createElement("link");
     link.id = LINK_ID;
     link.rel = "icon";
+    link.type = "image/png";
     document.head.appendChild(link);
   }
   return link;

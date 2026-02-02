@@ -2,12 +2,15 @@
  * Play a short two-tone ascending chime (~300ms) using Web Audio API.
  * No external audio files needed. Fails silently if AudioContext is unavailable.
  */
-export function playNotificationSound() {
+export async function playNotificationSound() {
   try {
     const AudioCtx = window.AudioContext ?? (window as any).webkitAudioContext;
     if (!AudioCtx) return;
 
     const ctx = new AudioCtx();
+    // Resume context — required when created outside a direct user-gesture handler
+    if (ctx.state === "suspended") await ctx.resume();
+
     const gain = ctx.createGain();
     gain.connect(ctx.destination);
     gain.gain.setValueAtTime(0.15, ctx.currentTime);

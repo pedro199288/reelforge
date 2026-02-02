@@ -42,6 +42,7 @@ import {
   getCompletedSteps,
 } from "@/types/pipeline";
 import { usePipelineExecution } from "@/hooks/usePipelineExecution";
+import { useTabProgress } from "@/hooks/useTabProgress";
 
 const API_URL = "http://localhost:3012";
 
@@ -303,6 +304,19 @@ function PipelinePage() {
     if (!pipelineState) return 0;
     return Math.round((getCompletedSteps(pipelineState) / STEPS.length) * 100);
   }, [pipelineState]);
+
+  const displayCompletedCount = useMemo(() => {
+    if (!pipelineState) return 0;
+    return getCompletedSteps(pipelineState);
+  }, [pipelineState]);
+
+  // Tab title + favicon + sound for background progress
+  useTabProgress({
+    stepProcessing,
+    stepProgress,
+    completedCount: displayCompletedCount,
+    totalSteps: STEPS.length,
+  });
 
   // Convert pipeline state to step info for visual indicators
   const stepInfoList = useMemo(() => {
