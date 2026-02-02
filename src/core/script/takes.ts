@@ -1,7 +1,7 @@
 /**
  * Take detection - Compare script with transcription to detect repeated takes
  */
-import { normalize, similarity } from "./align";
+import { normalize, similarity, alignWords } from "./align";
 import type { Caption } from "./align";
 
 /**
@@ -91,27 +91,19 @@ export function splitIntoSentences(text: string): string[] {
   return sentences;
 }
 
+interface CaptionWord {
+  word: string;
+  normalized: string;
+  startMs: number;
+  endMs: number;
+  captionIndex: number;
+}
+
 /**
- * Find where a sentence appears in the captions
+ * Build a flat word array from captions with interpolated timestamps
  */
-function findSentenceInCaptions(
-  sentence: ScriptSentence,
-  captions: Caption[],
-  usedRanges: Array<{ start: number; end: number }>
-): Take[] {
-  const takes: Take[] = [];
-  const sentenceWords = sentence.normalized.split(/\s+/).filter(Boolean);
-
-  if (sentenceWords.length === 0) return takes;
-
-  // Build word array from captions with timestamps
-  const captionWords: {
-    word: string;
-    normalized: string;
-    startMs: number;
-    endMs: number;
-    captionIndex: number;
-  }[] = [];
+function buildCaptionWords(captions: Caption[]): CaptionWord[] {
+  const captionWords: CaptionWord[] = [];
 
   for (let ci = 0; ci < captions.length; ci++) {
     const cap = captions[ci];
@@ -129,78 +121,167 @@ function findSentenceInCaptions(
     }
   }
 
-  if (captionWords.length === 0) return takes;
+  return captionWords;
+}
 
-  // Sliding window to find matches
-  const minMatch = Math.max(2, Math.floor(sentenceWords.length * 0.5));
-  const windowSize = Math.max(sentenceWords.length, 3);
+/**
+ * Find candidate start positions where the sentence might begin.
+ * Looks for positions where at least one of the first 2 sentence words
+ * matches a caption word (similarity > 0.6).
+ */
+function findCandidatePositions(
+  sentenceWords: string[],
+  captionWords: CaptionWord[]
+): number[] {
+  const anchors = sentenceWords.slice(0, Math.min(2, sentenceWords.length));
+  const candidates: number[] = [];
 
-  for (let i = 0; i <= captionWords.length - minMatch; i++) {
-    // Check if this range overlaps with already used ranges
-    const windowEnd = Math.min(i + windowSize + 2, captionWords.length);
-    const potentialStart = captionWords[i].startMs;
-    const potentialEnd = captionWords[windowEnd - 1].endMs;
-
-    const overlaps = usedRanges.some(
-      (r) => potentialStart < r.end && potentialEnd > r.start
-    );
-    if (overlaps) continue;
-
-    // Calculate similarity for this window
-    let matchedWords = 0;
-    let totalSimilarity = 0;
-    const matchedIndices: number[] = [];
-
-    for (let sw = 0; sw < sentenceWords.length && i + sw < captionWords.length; sw++) {
-      const sim = similarity(sentenceWords[sw], captionWords[i + sw].normalized);
-      if (sim > 0.6) {
-        matchedWords++;
-        matchedIndices.push(i + sw);
+  for (let i = 0; i < captionWords.length; i++) {
+    for (const anchor of anchors) {
+      if (similarity(anchor, captionWords[i].normalized) > 0.6) {
+        candidates.push(i);
+        break;
       }
-      totalSimilarity += sim;
-    }
-
-    const avgSimilarity = totalSimilarity / sentenceWords.length;
-    const matchRatio = matchedWords / sentenceWords.length;
-
-    // Require reasonable match
-    if (matchRatio >= 0.5 && avgSimilarity >= 0.4) {
-      const startIdx = i;
-      const endIdx = Math.min(i + sentenceWords.length - 1, captionWords.length - 1);
-
-      // Get unique caption indices
-      const captionIndices = [
-        ...new Set(
-          captionWords
-            .slice(startIdx, endIdx + 1)
-            .map((cw) => cw.captionIndex)
-        ),
-      ];
-
-      const take: Take = {
-        id: `take-${sentence.index}-${takes.length}`,
-        sentenceIndex: sentence.index,
-        startMs: captionWords[startIdx].startMs,
-        endMs: captionWords[endIdx].endMs,
-        durationMs: captionWords[endIdx].endMs - captionWords[startIdx].startMs,
-        transcribedText: captionWords
-          .slice(startIdx, endIdx + 1)
-          .map((cw) => cw.word)
-          .join(" "),
-        confidence: avgSimilarity,
-        selected: takes.length === 0, // First take is selected by default
-        captionIndices,
-      };
-
-      takes.push(take);
-
-      // Mark this range as used to avoid overlapping matches
-      usedRanges.push({ start: take.startMs, end: take.endMs });
-
-      // Skip past this match
-      i = endIdx;
     }
   }
+
+  return candidates;
+}
+
+const TAKE_START_PADDING_MS = 100;
+const TAKE_END_PADDING_MS = 150;
+
+interface ScoredCandidate {
+  startIdx: number;
+  endIdx: number;
+  alignedRatio: number;
+  avgSimilarity: number;
+  score: number;
+  /** Indices into captionWords that were aligned */
+  alignedCaptionIndices: number[];
+}
+
+/**
+ * Find where a sentence appears in the captions using Needleman-Wunsch alignment.
+ * Collects all candidates first, then selects greedily by score avoiding overlaps.
+ */
+function findSentenceInCaptions(
+  sentence: ScriptSentence,
+  captions: Caption[]
+): Take[] {
+  const sentenceWords = sentence.normalized.split(/\s+/).filter(Boolean);
+
+  if (sentenceWords.length === 0) return [];
+
+  const captionWords = buildCaptionWords(captions);
+
+  if (captionWords.length === 0) return [];
+
+  const candidatePositions = findCandidatePositions(sentenceWords, captionWords);
+  const windowLen = Math.ceil(sentenceWords.length * 1.5) + 4;
+
+  // --- Phase 1: Score all candidates ---
+  const scored: ScoredCandidate[] = [];
+
+  for (const pos of candidatePositions) {
+    const sliceEnd = Math.min(pos + windowLen, captionWords.length);
+    const windowSlice = captionWords.slice(pos, sliceEnd);
+
+    if (windowSlice.length === 0) continue;
+
+    // Run NW alignment: maps each sentenceWord index → windowSlice index (or -1)
+    const alignment = alignWords(
+      sentenceWords,
+      windowSlice.map((cw) => cw.word)
+    );
+
+    // Evaluate alignment quality
+    let alignedCount = 0;
+    let totalSim = 0;
+    let firstAligned = -1;
+    let lastAligned = -1;
+    const alignedCaptionIndices: number[] = [];
+
+    for (let si = 0; si < alignment.length; si++) {
+      const wi = alignment[si];
+      if (wi === -1) continue;
+
+      const sim = similarity(sentenceWords[si], windowSlice[wi].normalized);
+      if (sim > 0.6) {
+        alignedCount++;
+        totalSim += sim;
+        alignedCaptionIndices.push(pos + wi);
+        if (firstAligned === -1) firstAligned = pos + wi;
+        lastAligned = pos + wi;
+      }
+    }
+
+    if (alignedCount === 0) continue;
+
+    const alignedRatio = alignedCount / sentenceWords.length;
+    const avgSimilarity = totalSim / alignedCount;
+
+    if (alignedRatio >= 0.6 && avgSimilarity >= 0.5) {
+      scored.push({
+        startIdx: firstAligned,
+        endIdx: lastAligned,
+        alignedRatio,
+        avgSimilarity,
+        score: alignedRatio * 0.6 + avgSimilarity * 0.4,
+        alignedCaptionIndices,
+      });
+    }
+  }
+
+  if (scored.length === 0) return [];
+
+  // --- Phase 2: Collect-then-select (greedy by score, no temporal overlap) ---
+  scored.sort((a, b) => b.score - a.score);
+
+  const selected: ScoredCandidate[] = [];
+
+  for (const candidate of scored) {
+    const candStart = captionWords[candidate.startIdx].startMs - TAKE_START_PADDING_MS;
+    const candEnd = captionWords[candidate.endIdx].endMs + TAKE_END_PADDING_MS;
+
+    const overlaps = selected.some((s) => {
+      const sStart = captionWords[s.startIdx].startMs - TAKE_START_PADDING_MS;
+      const sEnd = captionWords[s.endIdx].endMs + TAKE_END_PADDING_MS;
+      return candStart < sEnd && candEnd > sStart;
+    });
+
+    if (!overlaps) {
+      selected.push(candidate);
+    }
+  }
+
+  // --- Phase 3: Build Take[] ---
+  const takes: Take[] = selected.map((cand, idx) => {
+    const captionIndices = [
+      ...new Set(
+        captionWords
+          .slice(cand.startIdx, cand.endIdx + 1)
+          .map((cw) => cw.captionIndex)
+      ),
+    ];
+
+    return {
+      id: `take-${sentence.index}-${idx}`,
+      sentenceIndex: sentence.index,
+      startMs: Math.max(0, captionWords[cand.startIdx].startMs - TAKE_START_PADDING_MS),
+      endMs: captionWords[cand.endIdx].endMs + TAKE_END_PADDING_MS,
+      durationMs:
+        (captionWords[cand.endIdx].endMs + TAKE_END_PADDING_MS) -
+        Math.max(0, captionWords[cand.startIdx].startMs - TAKE_START_PADDING_MS),
+      transcribedText: captionWords
+        .slice(cand.startIdx, cand.endIdx + 1)
+        .map((cw) => cw.word)
+        .join(" "),
+      confidence: cand.score,
+      selected: false,
+      captionIndices,
+    };
+  });
 
   return takes;
 }
@@ -227,10 +308,7 @@ export function detectTakes(
       normalized: normalize(sentences[i]),
     };
 
-    // Clear used ranges for each sentence to allow same caption regions
-    // to match different sentences (they're independent)
-    const sentenceUsedRanges: Array<{ start: number; end: number }> = [];
-    const takes = findSentenceInCaptions(sentence, captions, sentenceUsedRanges);
+    const takes = findSentenceInCaptions(sentence, captions);
 
     // Sort takes by start time
     takes.sort((a, b) => a.startMs - b.startMs);
