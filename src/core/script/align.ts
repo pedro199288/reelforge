@@ -262,8 +262,22 @@ export function alignWords(scriptWords: string[], captionWords: string[]): numbe
 
   // Backtrack to find alignment
   const result: number[] = new Array(m).fill(-1);
+
+  // Start backtracking from the earliest j that achieves the optimal score.
+  // Without gap penalties, dp[m][j] is non-decreasing — once the max is
+  // reached, later columns just carry the same value via skip transitions.
+  // Starting from the earliest max prevents spanning into repeated words.
+  const maxScore = dp[m][n];
+  let bestJ = n;
+  for (let jj = 1; jj <= n; jj++) {
+    if (dp[m][jj] >= maxScore) {
+      bestJ = jj;
+      break;
+    }
+  }
+
   let i = m,
-    j = n;
+    j = bestJ;
 
   while (i > 0 && j > 0) {
     const [pi, pj] = path[i][j];
