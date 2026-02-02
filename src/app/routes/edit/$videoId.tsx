@@ -37,6 +37,7 @@ import {
   Redo2,
   Eye,
   Pencil,
+  Scissors,
   SkipForward,
   Zap,
   CheckCircle2,
@@ -53,8 +54,10 @@ import { useHotkeys } from "react-hotkeys-hook";
 import { Textarea } from "@/components/ui/textarea";
 import { EditorPipelinePanel } from "@/components/EditorPipelinePanel";
 import type { Caption } from "@/core/script/align";
+import type { CutMapEntry } from "@/core/preselection/types";
 import { useOriginalCaptions } from "@/hooks/useOriginalCaptions";
 import { useFullCaptions } from "@/hooks/useFullCaptions";
+import { useCutCaptions } from "@/hooks/useCutCaptions";
 import { VideoSubtitleOverlay } from "@/components/VideoSubtitleOverlay";
 import { groupIntoPages } from "@/core/captions/group-into-pages";
 import { CaptionListPanel } from "@/components/CaptionListPanel";
@@ -163,6 +166,7 @@ function EditorPage() {
     useState<SegmentsResult | null>(null);
   const [preselectionLog, setPreselectionLog] =
     useState<PreselectionLog | null>(null);
+  const [cutMap, setCutMap] = useState<CutMapEntry[] | null>(null);
 
   // --- UI state ---
   const [sidePanelOpen, setSidePanelOpen] = useState(
@@ -170,7 +174,8 @@ function EditorPage() {
   );
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>("pipeline");
   const [isPlaying, setIsPlaying] = useState(false);
-  const [previewMode, setPreviewMode] = useState<"edit" | "preview">("edit");
+  type ViewMode = "original" | "cut" | "preview";
+  const [viewMode, setViewMode] = useState<ViewMode>("original");
   const [continuousPlay, setContinuousPlay] = useState(() => {
     try { return localStorage.getItem("editor:continuousPlay") === "true"; } catch { return false; }
   });
@@ -191,9 +196,11 @@ function EditorPage() {
   useEffect(() => { try { localStorage.setItem("editor:continuousPlay", String(continuousPlay)); } catch {} }, [continuousPlay]);
   useEffect(() => { try { localStorage.setItem("editor:showCaptions", String(showCaptions)); } catch {} }, [showCaptions]);
 
-  // --- Video ref ---
+  // --- Video refs ---
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const cutVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [cutVideoEl, setCutVideoEl] = useState<HTMLVideoElement | null>(null);
   const playerRef = useRef<PlayerRef>(null);
 
   // --- Store data ---
@@ -206,9 +213,13 @@ function EditorPage() {
   const selection = useTimelineSelection();
   const { highlightColor, fontFamily } = useSubtitleStore();
 
+  // --- Active video element (depends on view mode) ---
+  const activeVideoEl = viewMode === "cut" ? cutVideoEl : videoEl;
+  const activeVideoRef = viewMode === "cut" ? cutVideoRef : videoRef;
+
   // --- Playhead sync ---
   const { currentTimeMs, isTransitioning } = usePlayheadSync({
-    videoElement: videoEl,
+    videoElement: viewMode === "preview" ? null : activeVideoEl,
     isPlaying,
   });
   const currentTime = currentTimeMs / 1000;
@@ -223,35 +234,49 @@ function EditorPage() {
   // --- Footer keyboard shortcuts ---
   useHotkeys("c", () => {
     if (isEditableElement()) return;
+    if (viewMode === "preview") return;
     setShowCaptions(v => !v);
-  }, []);
+  }, [viewMode]);
 
   useHotkeys("j", () => {
     if (isEditableElement()) return;
+    if (viewMode !== "original") return;
     setContinuousPlay(v => !v);
-  }, []);
+  }, [viewMode]);
 
   useHotkeys("r", () => {
     if (isEditableElement()) return;
+    if (viewMode === "preview") return;
     setPlaybackRate(prev => {
       const idx = PLAYBACK_RATES.indexOf(prev as typeof PLAYBACK_RATES[number]);
       return PLAYBACK_RATES[(idx + 1) % PLAYBACK_RATES.length];
     });
-  }, []);
+  }, [viewMode]);
 
-  // Apply playback rate to video element
+  // Apply playback rate to video elements
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = playbackRate;
+    if (cutVideoRef.current) cutVideoRef.current.playbackRate = playbackRate;
   }, [playbackRate]);
 
-  // Sync rate when video element mounts
+  // Sync rate when video elements mount
   useEffect(() => {
     if (videoEl && playbackRate !== 1) videoEl.playbackRate = playbackRate;
   }, [videoEl, playbackRate]);
 
+  useEffect(() => {
+    if (cutVideoEl && playbackRate !== 1) cutVideoEl.playbackRate = playbackRate;
+  }, [cutVideoEl, playbackRate]);
+
+  // --- Cut mode ---
+  const cutCompleted = pipelineStatus?.steps.cut?.status === "completed";
+  const canViewCut = cutCompleted === true;
+  const cutVideoStreamUrl = `${API_URL}/api/stream/videos/${videoId}-cut.mp4`;
+
   // --- Captions for overlay ---
   const captionsCompleted = pipelineStatus?.steps.captions?.status === "completed";
   const { captions: postCutCaptions } = useOriginalCaptions(videoId, captionsCompleted ?? false);
+  const { captions: rawCutCaptions } = useCutCaptions(videoId, captionsCompleted ?? false);
 
   const fullCaptionsCompleted = pipelineStatus?.steps["full-captions"]?.status === "completed";
   const { captions: fullCaptions } = useFullCaptions(videoId, fullCaptionsCompleted ?? false);
@@ -367,6 +392,21 @@ function EditorPage() {
     };
   }, [timelineSegments, enabledSegments, totalDuration]);
 
+  // --- "Cut desactualizado" detection ---
+  const isCutOutdated = useMemo(() => {
+    if (!cutMap || enabledSegments.length === 0) return false;
+    if (cutMap.length !== enabledSegments.length) return true;
+    const TOLERANCE_MS = 50;
+    return cutMap.some((entry, i) => {
+      const seg = enabledSegments[i];
+      if (!seg) return true;
+      return (
+        Math.abs(entry.originalStartMs - seg.startMs) > TOLERANCE_MS ||
+        Math.abs(entry.originalEndMs - seg.endMs) > TOLERANCE_MS
+      );
+    });
+  }, [cutMap, enabledSegments]);
+
   // --- Load video from manifest ---
   useEffect(() => {
     fetch(`/videos.manifest.json?t=${Date.now()}`)
@@ -419,6 +459,23 @@ function EditorPage() {
           } else {
             setPreselectionLog(null);
           }
+
+          // Load cut map if cut completed (for "outdated cut" detection)
+          if (status.steps.cut?.status === "completed") {
+            try {
+              const cutRes = await fetch(
+                `${API_URL}/api/pipeline/result?videoId=${encodeURIComponent(vid.id)}&step=cut`
+              );
+              if (cutRes.ok) {
+                const cutResult = (await cutRes.json()) as { cutMap: CutMapEntry[] };
+                setCutMap(cutResult.cutMap);
+              }
+            } catch {
+              // cutMap is optional for this feature
+            }
+          } else {
+            setCutMap(null);
+          }
         }
       } catch (err) {
         console.error("Error loading pipeline status:", err);
@@ -450,12 +507,18 @@ function EditorPage() {
     };
   }, [canPreview, cutVideoSrc]);
 
-  // Reset preview mode if preview becomes unavailable
+  // Reset view mode if current mode becomes unavailable
   useEffect(() => {
-    if (!canPreview && previewMode === "preview") {
-      setPreviewMode("edit");
-    }
-  }, [canPreview, previewMode]);
+    if (viewMode === "cut" && !canViewCut) setViewMode("original");
+    if (viewMode === "preview" && !canPreview) setViewMode(canViewCut ? "cut" : "original");
+  }, [canViewCut, canPreview, viewMode]);
+
+  // Pause all videos when switching modes
+  useEffect(() => {
+    videoRef.current?.pause();
+    cutVideoRef.current?.pause();
+    setIsPlaying(false);
+  }, [viewMode]);
 
   // Close right panel if all content disappears (e.g. video change)
   useEffect(() => {
@@ -560,6 +623,7 @@ function EditorPage() {
   }, []);
 
   useEffect(() => {
+    if (viewMode !== "original") return;
     if (!isPlaying || isJumpingRef.current || continuousPlay) return;
     if (enabledSegments.length === 0) return;
     const v = videoRef.current;
@@ -592,16 +656,16 @@ function EditorPage() {
     } else {
       v.pause();
     }
-  }, [currentTimeMs, isPlaying, enabledSegments, performJump, continuousPlay]);
+  }, [currentTimeMs, isPlaying, enabledSegments, performJump, continuousPlay, viewMode]);
 
   const togglePlayback = useCallback(() => {
-    const v = videoRef.current;
+    const v = activeVideoRef.current;
     if (!v) return;
 
     if (isPlaying) {
       v.pause();
     } else {
-      if (!continuousPlay) {
+      if (viewMode === "original" && !continuousPlay) {
         const currentMs = v.currentTime * 1000;
         const editedMs = mapTimeToEdited(currentMs);
         if (editedMs === null) {
@@ -617,13 +681,13 @@ function EditorPage() {
       }
       v.play();
     }
-  }, [isPlaying, enabledSegments, mapTimeToEdited, continuousPlay]);
+  }, [isPlaying, enabledSegments, mapTimeToEdited, continuousPlay, viewMode, activeVideoRef]);
 
   const handleSeekTo = useCallback((ms: number) => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = ms / 1000;
+    if (activeVideoRef.current) {
+      activeVideoRef.current.currentTime = ms / 1000;
     }
-  }, []);
+  }, [activeVideoRef]);
 
   const handleStepCompleted = useCallback(() => {
     if (video) {
@@ -726,26 +790,50 @@ function EditorPage() {
               )}
             </Button>
           )}
-          {canPreview && (
-            <Button
-              variant={previewMode === "preview" ? "default" : "ghost"}
-              size="sm"
-              className="h-7 px-2 gap-1.5"
-              onClick={() => setPreviewMode(previewMode === "edit" ? "preview" : "edit")}
-              title={previewMode === "edit" ? "Vista previa con efectos" : "Volver a edición"}
-            >
-              {previewMode === "edit" ? (
-                <>
+          {(canViewCut || canPreview) && (
+            <div className="flex items-center gap-1">
+              {canViewCut && viewMode !== "cut" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 gap-1.5"
+                  onClick={() => setViewMode("cut")}
+                  title="Ver video cortado"
+                >
+                  <Scissors className="w-4 h-4" />
+                  <span className="text-xs">Cut</span>
+                </Button>
+              )}
+              {canPreview && viewMode !== "preview" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 gap-1.5"
+                  onClick={() => setViewMode("preview")}
+                  title="Vista previa con efectos"
+                >
                   <Eye className="w-4 h-4" />
                   <span className="text-xs">Preview</span>
-                </>
-              ) : (
-                <>
-                  <Pencil className="w-4 h-4" />
-                  <span className="text-xs">Editar</span>
-                </>
+                </Button>
               )}
-            </Button>
+              {viewMode !== "original" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 gap-1.5"
+                  onClick={() => setViewMode("original")}
+                  title="Volver a edición"
+                >
+                  <Pencil className="w-4 h-4" />
+                  <span className="text-xs">Original</span>
+                </Button>
+              )}
+              {canViewCut && isCutOutdated && (
+                <Badge variant="outline" className="text-xs bg-amber-600/20 text-amber-400 border-amber-600/30">
+                  Cut desactualizado
+                </Badge>
+              )}
+            </div>
           )}
         </div>
       </header>
@@ -871,7 +959,7 @@ function EditorPage() {
 
         {/* Video player area */}
         <div className="flex-1 flex items-center justify-center bg-black min-h-0 overflow-hidden relative">
-          {previewMode === "preview" && canPreview && durationInFrames > 0 ? (
+          {viewMode === "preview" && canPreview && durationInFrames > 0 ? (
             <div
               style={{
                 width: "100%",
@@ -902,6 +990,47 @@ function EditorPage() {
                 spaceKeyToPlayOrPause
               />
             </div>
+          ) : viewMode === "cut" && canViewCut ? (
+            <>
+              {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
+              <video
+                ref={(el) => { cutVideoRef.current = el; setCutVideoEl(el); }}
+                src={cutVideoStreamUrl}
+                className="max-h-full max-w-full object-contain"
+                controls
+                onClick={togglePlayback}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onEnded={() => setIsPlaying(false)}
+                onError={() => {
+                  toast.error("Error al cargar video cortado, volviendo a original");
+                  setViewMode("original");
+                }}
+              />
+
+              {/* Subtitle overlay for cut video */}
+              {showCaptions && rawCutCaptions && (
+                <VideoSubtitleOverlay captions={rawCutCaptions} currentTimeMs={currentTimeMs} />
+              )}
+
+              {/* Time indicator */}
+              <div className="absolute bottom-3 right-3 bg-black/70 px-2 py-1 rounded text-white font-mono text-right">
+                <div className="text-sm">
+                  {formatTime(currentTime)}
+                </div>
+                <button
+                  type="button"
+                  className="text-[9px] text-white/50 hover:text-white cursor-pointer"
+                  onClick={() => {
+                    const ms = String(Math.round(currentTimeMs));
+                    navigator.clipboard.writeText(ms).then(() => toast.success(`Copiado: ${ms}ms`));
+                  }}
+                  title="Copiar ms"
+                >
+                  {Math.round(currentTimeMs)}ms
+                </button>
+              </div>
+            </>
           ) : videoPath ? (
             <>
               {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
@@ -1009,8 +1138,8 @@ function EditorPage() {
         )}
       </div>
 
-      {/* Timeline - FULL WIDTH */}
-      {showTimeline && (
+      {/* Timeline - FULL WIDTH — only in original mode */}
+      {showTimeline && viewMode === "original" && (
         <div className="flex-shrink-0 border-t">
           <SegmentTimeline
             videoId={videoId}
@@ -1039,10 +1168,15 @@ function EditorPage() {
       {/* Status bar */}
       <footer className="flex items-center justify-between px-4 h-8 border-t bg-muted/30 text-xs flex-shrink-0">
         <div className="flex items-center gap-4">
-          {previewMode === "preview" ? (
+          {viewMode === "preview" ? (
             <span className="text-muted-foreground flex items-center gap-1.5">
               <Eye className="w-3 h-3" />
               Vista previa — {formatDuration(cutVideoDuration ?? 0)}
+            </span>
+          ) : viewMode === "cut" ? (
+            <span className="text-muted-foreground flex items-center gap-1.5">
+              <Scissors className="w-3 h-3" />
+              Video cortado
             </span>
           ) : selectedSegment && selectedSegmentIndex ? (
             <span className="text-muted-foreground">
@@ -1059,7 +1193,8 @@ function EditorPage() {
           )}
         </div>
         <div className="flex items-center gap-1">
-          {previewMode === "edit" && activeCaptions && (
+          {/* CC button — original mode uses activeCaptions, cut mode uses rawCutCaptions */}
+          {viewMode === "original" && activeCaptions && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1075,7 +1210,23 @@ function EditorPage() {
               <ShortcutTooltipContent shortcut="C">{showCaptions ? "Ocultar subtítulos" : "Mostrar subtítulos"}</ShortcutTooltipContent>
             </Tooltip>
           )}
-          {showCaptions && captionSource && (
+          {viewMode === "cut" && rawCutCaptions && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={showCaptions ? "default" : "ghost"}
+                  size="sm"
+                  className={cn("h-6 px-2 text-xs gap-1", showCaptions && "bg-blue-600 hover:bg-blue-700 text-white")}
+                  onClick={() => setShowCaptions(!showCaptions)}
+                >
+                  <Subtitles className="w-3.5 h-3.5" />
+                  CC
+                </Button>
+              </TooltipTrigger>
+              <ShortcutTooltipContent shortcut="C">{showCaptions ? "Ocultar subtítulos" : "Mostrar subtítulos"}</ShortcutTooltipContent>
+            </Tooltip>
+          )}
+          {viewMode === "original" && showCaptions && captionSource && (
             <span className={cn(
               "text-[10px] px-1.5 py-0.5 rounded",
               captionSource === "post-cut"
@@ -1085,7 +1236,12 @@ function EditorPage() {
               {captionSource === "post-cut" ? "Post-Cuts" : "Full"}
             </span>
           )}
-          {previewMode === "edit" && (
+          {viewMode === "cut" && showCaptions && rawCutCaptions && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-600/20 text-cyan-400">
+              Cut-Subs
+            </span>
+          )}
+          {viewMode === "original" && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1101,7 +1257,7 @@ function EditorPage() {
               <ShortcutTooltipContent shortcut="J">{continuousPlay ? "Reproducción continua activa" : "Saltar segmentos deshabilitados"}</ShortcutTooltipContent>
             </Tooltip>
           )}
-          {previewMode === "edit" && (
+          {viewMode !== "preview" && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1120,34 +1276,38 @@ function EditorPage() {
               <ShortcutTooltipContent shortcut="R">Velocidad de reproducción</ShortcutTooltipContent>
             </Tooltip>
           )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={handleUndo}
-                disabled={!canUndo}
-              >
-                <Undo2 className="w-3.5 h-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <ShortcutTooltipContent shortcut="Mod+Z">Deshacer</ShortcutTooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={handleRedo}
-                disabled={!canRedo}
-              >
-                <Redo2 className="w-3.5 h-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <ShortcutTooltipContent shortcut="Mod+Shift+Z">Rehacer</ShortcutTooltipContent>
-          </Tooltip>
+          {viewMode === "original" && (
+            <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={handleUndo}
+                    disabled={!canUndo}
+                  >
+                    <Undo2 className="w-3.5 h-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <ShortcutTooltipContent shortcut="Mod+Z">Deshacer</ShortcutTooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={handleRedo}
+                    disabled={!canRedo}
+                  >
+                    <Redo2 className="w-3.5 h-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <ShortcutTooltipContent shortcut="Mod+Shift+Z">Rehacer</ShortcutTooltipContent>
+              </Tooltip>
+            </>
+          )}
         </div>
       </footer>
     </div>
