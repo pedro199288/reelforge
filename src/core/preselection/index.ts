@@ -16,6 +16,9 @@ export type {
   SegmentScriptMatch,
   InputSegment,
   CutMapEntry,
+  // Take-based scoring types
+  TakeScoreBreakdown,
+  TakeScore,
   // New AI-First types
   ContentType,
   ProposedSplit,
@@ -120,3 +123,20 @@ export {
 // Scoring utilities
 export { scoreSegments, selectByScore, selectBestPerGroup } from "./scorer";
 export type { ScoreSegmentsOptions } from "./scorer";
+
+// Take-based preselection
+export {
+  extractAndClassifyTakes,
+  mapTakesToSegments,
+} from "./take-extractor";
+export type {
+  ClassifiedTake,
+  TakeExtractionResult,
+} from "./take-extractor";
+
+export {
+  scoreTake,
+  selectBestTakes,
+  DEFAULT_TAKE_SCORE_CONFIG,
+} from "./take-scorer";
+export type { TakeScoreConfig } from "./take-scorer";

@@ -407,6 +407,32 @@ export interface PreselectionLog {
 }
 
 // =============================================================================
+// TAKE-BASED SCORING TYPES
+// =============================================================================
+
+/**
+ * Score breakdown for a single take (used in take-based preselection)
+ */
+export interface TakeScoreBreakdown {
+  scriptCoverage: number;
+  fluency: number;
+  whisperConfidence: number;
+  completeness: number;
+  duration: number;
+}
+
+/**
+ * Score result for a single take
+ */
+export interface TakeScore {
+  takeId: string;
+  sentenceIdx: number;
+  totalScore: number;
+  breakdown: TakeScoreBreakdown;
+  reason: string;
+}
+
+// =============================================================================
 // AI PRESELECTION TYPES
 // =============================================================================
 
