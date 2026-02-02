@@ -245,7 +245,7 @@ export function SegmentTrack({
           const width = (endMs - startMs) * pxPerMs;
 
           // Don't render if outside viewport
-          if (x + width < -50 || x > 2000) return null;
+          if (x + width < -50 || x > (viewportWidthPx || 2000) + 100) return null;
 
           return (
             <div
@@ -274,6 +274,7 @@ export function SegmentTrack({
             waveformSlice={contiguous ? segmentWaveforms?.get(segment.id) : undefined}
             trackHeight={trackHeight}
             onShowLog={onShowLog ? () => onShowLog(segment.id) : undefined}
+            viewportWidthPx={viewportWidthPx}
           />
         ))}
 

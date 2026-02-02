@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useCallback } from "react";
+import { useEffect, useMemo, useCallback, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,7 @@ import { PipelineResetActions } from "@/components/PipelineResetActions";
 import { EffectsAnalysisPanel } from "@/components/EffectsAnalysisPanel";
 import { AIPreselectionPanel } from "@/components/AIPreselectionPanel";
 import { usePipelineExecution } from "@/hooks/usePipelineExecution";
+import { useTabProgress } from "@/hooks/useTabProgress";
 import {
   type PipelineStep,
   type PipelineState,
@@ -129,15 +130,21 @@ export function EditorPipelinePanel({
   const selection = useTimelineSelection();
   const scriptState = useScript(videoId);
 
+  // Track previous completedCount — only notify parent on actual increases
+  const prevCompletedRef = useRef(0);
+
   // Load pipeline status on mount & when video changes
   useEffect(() => {
+    prevCompletedRef.current = 0;
     resetState();
     refreshStatus();
   }, [videoId, resetState, refreshStatus]);
 
   // Notify parent when a step completes (status changes)
   useEffect(() => {
-    if (completedCount > 0) {
+    const prev = prevCompletedRef.current;
+    prevCompletedRef.current = completedCount;
+    if (completedCount > prev) {
       onStepCompleted?.();
     }
   }, [completedCount, onStepCompleted]);
@@ -161,6 +168,14 @@ export function EditorPipelinePanel({
     return Math.round((displayCompletedCount / displaySteps.length) * 100);
   }, [pipelineState, displayCompletedCount, displaySteps]);
 
+  // Tab title + browser notification for background progress
+  useTabProgress({
+    stepProcessing,
+    stepProgress,
+    completedCount: displayCompletedCount,
+    totalSteps: displaySteps.length,
+  });
+
   // Process all pending steps
   const handleProcessAll = useCallback(() => {
     executeUntilStep("rendered");
@@ -170,8 +185,7 @@ export function EditorPipelinePanel({
   const handleRefresh = useCallback(() => {
     resetState();
     refreshStatus();
-    onStepCompleted?.();
-  }, [resetState, refreshStatus, onStepCompleted]);
+  }, [resetState, refreshStatus]);
 
   const isAnyProcessing = !!stepProcessing;
 
@@ -247,6 +261,7 @@ export function EditorPipelinePanel({
             videoId={videoId}
             disabled={isAnyProcessing}
             hasCaptions={video.hasCaptions}
+            backendStatus={backendStatus}
             onReset={handleRefresh}
           />
           <Button

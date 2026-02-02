@@ -20,6 +20,8 @@ interface SegmentMarkerProps {
   waveformSlice?: number[];
   /** Track height in pixels (for dynamic waveform sizing) */
   trackHeight?: number;
+  /** Viewport width in pixels (for viewport-aware culling) */
+  viewportWidthPx?: number;
 }
 
 function downsampleForWidth(samples: number[], targetWidth: number): number[] {
@@ -74,6 +76,7 @@ export function SegmentMarker({
   contiguousOffsetMs,
   waveformSlice,
   trackHeight,
+  viewportWidthPx,
 }: SegmentMarkerProps) {
   const markerRef = useRef<HTMLDivElement>(null);
   const preDragSnapshotRef = useRef<{ timelines: any } | null>(null);
@@ -206,7 +209,7 @@ export function SegmentMarker({
     : segment.preselectionReason || undefined;
 
   // Don't render if outside viewport (after hooks to follow React rules)
-  if (x + width < -50 || x > 2000) return null;
+  if (x + width < -50 || x > (viewportWidthPx || 2000) + 100) return null;
 
   const resizeHandleClass =
     "absolute top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/30 transition-colors z-10";

@@ -6,7 +6,7 @@
  */
 
 import { spawn, type Subprocess } from "bun";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { join, basename, extname, dirname } from "node:path";
 
 import {
@@ -18,6 +18,8 @@ import {
   loadStepResult,
   getPipelineDir,
   getStepResultPath,
+  resetStepStatus,
+  getStepPublicFiles,
   type PipelineStep,
   type SilencesResult,
   type SegmentsResult,
@@ -26,6 +28,7 @@ import {
   type CutMapEntry,
 } from "./pipeline-utils";
 import type { Caption } from "../src/core/script/align";
+import type { CleanupLogEntry } from "../src/core/captions/cleanup";
 import {
   detectSilences,
   detectSilencesEnvelope,
@@ -71,6 +74,22 @@ const batchState: BatchState = {
   completed: new Set(),
   errors: new Map(),
 };
+
+// Waveform cache: avoids re-running ffmpeg for the same video
+interface WaveformCacheEntry {
+  mtimeMs: number;
+  response: {
+    samples: number[];
+    sampleRate: number;
+    duration: number;
+    alignment: {
+      audioStreamStartTime: number;
+      appliedOffset: number;
+      videoDuration: number | undefined;
+    };
+  };
+}
+const waveformCache = new Map<string, WaveformCacheEntry>();
 
 interface ProcessConfig {
   thresholdDb?: number;
@@ -725,6 +744,100 @@ async function handleRequest(req: Request): Promise<Response> {
     }
   }
 
+  // Granular pipeline step reset endpoint
+  if (path === "/api/pipeline/reset-steps" && req.method === "POST") {
+    try {
+      const body = await req.json();
+      const { videoId, steps } = body as {
+        videoId: string;
+        steps: PipelineStep[];
+      };
+
+      if (!videoId || !Array.isArray(steps) || steps.length === 0) {
+        return new Response(JSON.stringify({ error: "Missing videoId or steps" }), {
+          status: 400,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      // Find the video in manifest to get filename
+      const manifestPath = join(process.cwd(), "public", "videos.manifest.json");
+      let manifest: { videos: Array<{ id: string; filename: string; title: string; size: number; hasCaptions: boolean }> } = { videos: [] };
+
+      if (existsSync(manifestPath)) {
+        manifest = JSON.parse(await Bun.file(manifestPath).text());
+      }
+
+      const video = manifest.videos.find((v) => v.id === videoId);
+      if (!video) {
+        return new Response(JSON.stringify({ error: `Video not found: ${videoId}` }), {
+          status: 404,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        });
+      }
+
+      const { unlinkSync } = await import("node:fs");
+      const deleted: string[] = [];
+      let manifestUpdated = false;
+
+      for (const step of steps) {
+        // 1. Delete step result file (e.g. pipeline/{videoId}/segments.json)
+        const resultPath = getStepResultPath(videoId, step);
+        if (existsSync(resultPath)) {
+          unlinkSync(resultPath);
+          deleted.push(resultPath.replace(process.cwd() + "/", ""));
+        }
+
+        // Also delete preselection-logs when resetting segments
+        if (step === "segments") {
+          const logsPath = getStepResultPath(videoId, "preselection-logs");
+          if (existsSync(logsPath)) {
+            unlinkSync(logsPath);
+            deleted.push(logsPath.replace(process.cwd() + "/", ""));
+          }
+          resetStepStatus(videoId, "preselection-logs");
+        }
+
+        // 2. Delete public files for the step
+        const publicFiles = getStepPublicFiles(videoId, step, video.filename);
+        for (const filePath of publicFiles) {
+          if (existsSync(filePath)) {
+            unlinkSync(filePath);
+            deleted.push(filePath.replace(process.cwd() + "/", ""));
+          }
+        }
+
+        // 3. Update manifest hasCaptions when resetting captions
+        if (step === "captions") {
+          const videoIndex = manifest.videos.findIndex((v) => v.id === videoId);
+          if (videoIndex >= 0) {
+            manifest.videos[videoIndex].hasCaptions = false;
+            manifestUpdated = true;
+          }
+        }
+
+        // 4. Reset step status to pending
+        resetStepStatus(videoId, step);
+      }
+
+      // Write manifest once if updated
+      if (manifestUpdated) {
+        await Bun.write(manifestPath, JSON.stringify(manifest, null, 2));
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, deleted, stepsReset: steps }),
+        { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return new Response(JSON.stringify({ error: message }), {
+        status: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   // Helper: get audio stream info (start_time, duration) via ffprobe
   async function getAudioStreamInfo(filePath: string): Promise<{ startTime: number; duration: number }> {
     try {
@@ -766,6 +879,17 @@ async function handleRequest(req: Request): Promise<Response> {
         return new Response(
           JSON.stringify({ error: `Video not found: ${videoPath}` }),
           { status: 404, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Check cache: key on videoPath + samplesPerSecond + videoDuration, validate with file mtime
+      const cacheKey = `${videoPath}:${samplesPerSecond}:${videoDuration ?? "auto"}`;
+      const fileMtimeMs = statSync(fullPath).mtimeMs;
+      const cached = waveformCache.get(cacheKey);
+      if (cached && cached.mtimeMs === fileMtimeMs) {
+        return new Response(
+          JSON.stringify(cached.response),
+          { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
         );
       }
 
@@ -873,17 +997,22 @@ async function handleRequest(req: Request): Promise<Response> {
 
       const finalDuration = videoDuration ?? envelope.length / samplesPerSecond;
 
+      const waveformResponse = {
+        samples: normalized,
+        sampleRate: samplesPerSecond,
+        duration: finalDuration,
+        alignment: {
+          audioStreamStartTime: audioInfo.startTime,
+          appliedOffset: audioOffset,
+          videoDuration: videoDuration ?? undefined,
+        },
+      };
+
+      // Store in cache
+      waveformCache.set(cacheKey, { mtimeMs: fileMtimeMs, response: waveformResponse });
+
       return new Response(
-        JSON.stringify({
-          samples: normalized,
-          sampleRate: samplesPerSecond,
-          duration: finalDuration,
-          alignment: {
-            audioStreamStartTime: audioInfo.startTime,
-            appliedOffset: audioOffset,
-            videoDuration: videoDuration ?? undefined,
-          },
-        }),
+        JSON.stringify(waveformResponse),
         { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
       );
     } catch (error) {
@@ -1508,11 +1637,21 @@ async function handleRequest(req: Request): Promise<Response> {
           }
 
           case "segments": {
-            sendEvent("progress", { step, progress: 10, message: "Cargando silencios..." });
+            sendEvent("progress", { step, progress: 10, message: "Cargando silencios y captions..." });
             const silencesResult = loadStepResult<SilencesResult>(videoId, "silences");
 
             if (!silencesResult) {
               throw new Error("Silences result not found");
+            }
+
+            // Load full captions (now a dependency, guaranteed to exist)
+            const fullCaptionsResult = loadStepResult<CaptionsResult>(videoId, "full-captions");
+            let fullCaptions: Caption[] = [];
+            if (fullCaptionsResult) {
+              const fcPath = join(process.cwd(), fullCaptionsResult.captionsPath);
+              if (existsSync(fcPath)) {
+                fullCaptions = JSON.parse(await Bun.file(fcPath).text());
+              }
             }
 
             // Generate segments from silences
@@ -1532,16 +1671,15 @@ async function handleRequest(req: Request): Promise<Response> {
               endMs: s.endTime * 1000,
             }));
 
-            // Always run initial preselection to generate stable segment IDs
-            // Real scoring happens after captions are available (auto-reapply in captions step)
+            // Run preselection with real captions from Whisper transcription
             let preselectionData: SegmentsResult["preselection"] | undefined;
             let preselectionLog = null;
 
-            sendEvent("progress", { step, progress: 50, message: "Ejecutando preselección inicial..." });
+            sendEvent("progress", { step, progress: 50, message: "Ejecutando preselección con captions..." });
 
             try {
               const preselectionResult = await preselectSegments(inputSegments, {
-                captions: [], // No captions available yet - real scoring happens after captions step
+                captions: fullCaptions,
                 script,
                 videoDurationMs: silencesResult.videoDuration * 1000,
                 videoId,
@@ -1718,7 +1856,20 @@ async function handleRequest(req: Request): Promise<Response> {
                   if (done) break;
                   fcStderrChunks.push(fcDecoder.decode(value, { stream: true }));
                 }
-              } catch {}
+              } catch { }
+            })();
+
+            // Pipe stdout to server console so sub.mjs logs are visible
+            const fcStdoutReader = fullCaptionsProc.stdout.getReader();
+            const fcStdoutDecoder = new TextDecoder();
+            (async () => {
+              try {
+                while (true) {
+                  const { done, value } = await fcStdoutReader.read();
+                  if (done) break;
+                  process.stdout.write(fcStdoutDecoder.decode(value, { stream: true }));
+                }
+              } catch { }
             })();
 
             const fcExitCode = await fullCaptionsProc.exited;
@@ -1740,7 +1891,7 @@ async function handleRequest(req: Request): Promise<Response> {
               try {
                 const fcCaptions = JSON.parse(await Bun.file(fcFullSubsPath).text());
                 fcCaptionsCount = Array.isArray(fcCaptions) ? fcCaptions.length : 0;
-              } catch {}
+              } catch { }
             }
 
             const fcResult: CaptionsResult = {
@@ -1785,8 +1936,16 @@ async function handleRequest(req: Request): Promise<Response> {
             const fullCaptions: Caption[] = JSON.parse(await Bun.file(fullCaptionsPath).text());
 
             // Derive cut captions via forward remapping (no Whisper needed)
+            // Cleanup pipeline: confidence filter → false starts → repeated phrases → timing fix
             const { deriveCutCaptions } = await import("../src/core/captions/derive-cut-captions");
-            const cutCaptions = deriveCutCaptions(fullCaptions, cutResult.cutMap);
+            const cleanupLog: CleanupLogEntry[] = [];
+            const cutCaptions = deriveCutCaptions(fullCaptions, cutResult.cutMap, {
+              cleanup: true,
+              cleanupLog,
+            });
+            if (cleanupLog.length > 0) {
+              console.log(`[captions] Cleanup: ${cleanupLog.length} items removed for ${videoId}`);
+            }
 
             // Save derived captions to subs directory
             const ext = extname(filename);
@@ -1817,74 +1976,6 @@ async function handleRequest(req: Request): Promise<Response> {
               completedAt: new Date().toISOString(),
               resultFile: resultPath,
             });
-
-            // Auto-reapply preselection now that captions are available
-            try {
-              const segmentsResultForReapply = loadStepResult<SegmentsResult>(videoId, "segments");
-              const cutResultForReapply = loadStepResult<CutResult>(videoId, "cut");
-
-              if (segmentsResultForReapply && cutResultForReapply?.cutMap && captionsCount > 0) {
-                sendEvent("progress", { step, progress: 95, message: "Re-aplicando preselección con captions..." });
-
-                // cutCaptions are in cut timeline — pass them for reapply
-                const captionsForReapply = cutCaptions;
-
-                // Get original segments
-                let originalSegments: Array<{ id: string; startMs: number; endMs: number }>;
-                if (segmentsResultForReapply.preselection?.segments) {
-                  originalSegments = segmentsResultForReapply.preselection.segments.map((s) => ({
-                    id: s.id,
-                    startMs: s.startMs,
-                    endMs: s.endMs,
-                  }));
-                } else {
-                  const { nanoid } = await import("nanoid");
-                  originalSegments = segmentsResultForReapply.segments.map((s) => ({
-                    id: nanoid(8),
-                    startMs: s.startTime * 1000,
-                    endMs: s.endTime * 1000,
-                  }));
-                }
-
-                const reselectionResult = await reapplyPreselectionWithCaptions(
-                  originalSegments,
-                  {
-                    captions: captionsForReapply,
-                    cutMap: cutResultForReapply.cutMap,
-                    script,
-                    videoId,
-                    collectLogs: true,
-                  }
-                );
-
-                // Update segments.json with new preselection data
-                const updatedSegmentsResult: SegmentsResult = {
-                  ...segmentsResultForReapply,
-                  preselection: {
-                    segments: reselectionResult.segments,
-                    stats: reselectionResult.stats,
-                  },
-                };
-                saveStepResult(videoId, "segments", updatedSegmentsResult);
-
-                // Save updated preselection logs
-                if (reselectionResult.log) {
-                  saveStepResult(videoId, "preselection-logs", {
-                    log: reselectionResult.log,
-                    savedAt: new Date().toISOString(),
-                    isReapply: true,
-                  });
-                  updateStepStatus(videoId, "preselection-logs", {
-                    status: "completed",
-                    completedAt: new Date().toISOString(),
-                  });
-                }
-
-                console.log(`[captions] Auto-reapply preselection completed for ${videoId}`);
-              }
-            } catch (reapplyErr) {
-              console.error("Auto-reapply preselection after captions failed (non-fatal):", reapplyErr);
-            }
 
             sendEvent("complete", { step, result });
             break;
@@ -2106,7 +2197,8 @@ console.log("Streaming:");
 console.log("  GET  /api/stream/*     - Stream video files with HTTP Range support");
 console.log("");
 console.log("Pipeline reset:");
-console.log("  POST /api/reset        - Reset pipeline phases (cut, captions, metadata)\n");
+console.log("  POST /api/reset             - Reset pipeline phases (cut, captions, metadata)");
+console.log("  POST /api/pipeline/reset-steps - Granular step reset with cascade\n");
 
 Bun.serve({
   port: PORT,

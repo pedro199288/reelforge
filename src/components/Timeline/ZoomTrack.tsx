@@ -19,6 +19,8 @@ interface ZoomTrackProps {
   captions?: Caption[];
   /** Snap threshold in pixels (default: 10) */
   snapThreshold?: number;
+  /** Viewport width in pixels (for viewport-aware culling) */
+  viewportWidthPx?: number;
 }
 
 export function ZoomTrack({
@@ -34,6 +36,7 @@ export function ZoomTrack({
   onToggleZoomType,
   captions = [],
   snapThreshold = 10,
+  viewportWidthPx,
 }: ZoomTrackProps) {
   const trackRef = useRef<HTMLDivElement>(null);
 
@@ -125,6 +128,7 @@ export function ZoomTrack({
             onToggleType={() => onToggleZoomType(zoom.id)}
             snapPoints={snapPoints}
             snapThreshold={snapThreshold}
+            viewportWidthPx={viewportWidthPx}
           />
         ))}
       </div>

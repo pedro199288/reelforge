@@ -1,4 +1,9 @@
 import type { Caption } from "@/core/script/align";
+import {
+  splitAtSilenceGaps,
+  dropPhantomEchoes,
+  DEFAULT_SILENCE_GAP_MS,
+} from "./split-at-silence";
 
 export interface SubtitlePage {
   startMs: number;
@@ -10,18 +15,50 @@ const MAX_WORDS_PER_PAGE = 8;
 const MIN_TAIL_WORDS = 3;
 const SENTENCE_END_RE = /[.?!…]$/;
 
+interface GroupIntoPagesOptions {
+  silenceGapMs?: number;
+}
+
 /**
- * Two-pass sentence-aware pagination.
+ * Three-pass sentence-aware pagination.
+ * Pass 0: Split at silence gaps (>= 700ms by default)
  * Pass 1: Group words into sentences (split at . ? ! …)
  * Pass 2: Split each sentence at word-count boundaries (~8 words max).
- *         Short trailing chunks are merged back into the previous chunk.
+ *         Short trailing chunks are merged back into the previous chunk
+ *         unless a silence gap separates them.
  */
-export function groupIntoPages(captions: Caption[]): SubtitlePage[] {
+export function groupIntoPages(
+  captions: Caption[],
+  options?: GroupIntoPagesOptions,
+): SubtitlePage[] {
   if (captions.length === 0) return [];
 
-  // Pass 1: sentences
+  const silenceGapMs = options?.silenceGapMs ?? DEFAULT_SILENCE_GAP_MS;
+
+  // Pass 0: split at silence gaps and drop phantom echoes
+  const silenceChunks = dropPhantomEchoes(
+    splitAtSilenceGaps(captions, silenceGapMs),
+  );
+
+  const pages: SubtitlePage[] = [];
+
+  for (const chunk of silenceChunks) {
+    // Pass 1: sentences within this silence chunk
+    const sentences = groupIntoSentences(chunk);
+
+    // Pass 2: paginate each sentence
+    for (const sentence of sentences) {
+      paginateSentence(sentence, pages, silenceGapMs);
+    }
+  }
+
+  return pages;
+}
+
+function groupIntoSentences(captions: Caption[]): Caption[][] {
   const sentences: Caption[][] = [];
   let current: Caption[] = [];
+
   for (const cap of captions) {
     current.push(cap);
     if (SENTENCE_END_RE.test(cap.text.trim())) {
@@ -31,15 +68,14 @@ export function groupIntoPages(captions: Caption[]): SubtitlePage[] {
   }
   if (current.length > 0) sentences.push(current);
 
-  // Pass 2: paginate each sentence
-  const pages: SubtitlePage[] = [];
-  for (const sentence of sentences) {
-    paginateSentence(sentence, pages);
-  }
-  return pages;
+  return sentences;
 }
 
-function paginateSentence(sentence: Caption[], pages: SubtitlePage[]) {
+function paginateSentence(
+  sentence: Caption[],
+  pages: SubtitlePage[],
+  silenceGapMs: number,
+) {
   const chunks: Caption[][] = [];
   let chunk: Caption[] = [];
 
@@ -55,12 +91,17 @@ function paginateSentence(sentence: Caption[], pages: SubtitlePage[]) {
   }
   if (chunk.length > 0) chunks.push(chunk);
 
-  // Merge short tail back into previous chunk to avoid orphaned words
+  // Merge short tail back into previous chunk to avoid orphaned words,
+  // but only if there is no silence gap between them.
   if (chunks.length > 1 && chunks[chunks.length - 1].length < MIN_TAIL_WORDS) {
     const prev = chunks[chunks.length - 2];
     const tail = chunks[chunks.length - 1];
-    prev.push(...tail);
-    chunks.pop();
+    const gap = tail[0].startMs - prev[prev.length - 1].endMs;
+
+    if (gap < silenceGapMs) {
+      prev.push(...tail);
+      chunks.pop();
+    }
   }
 
   for (const c of chunks) {

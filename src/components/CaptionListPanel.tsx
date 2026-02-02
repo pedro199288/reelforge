@@ -1,9 +1,10 @@
-import { useRef, useEffect, useMemo } from "react";
+import { useRef, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Subtitles, Play } from "lucide-react";
+import { toast } from "sonner";
 import type { SubtitlePage } from "@/core/captions/group-into-pages";
 import type { Caption } from "@/core/script/align";
 
@@ -15,6 +16,7 @@ interface CaptionListPanelProps {
   onSelectPage: (index: number) => void;
   onSeekTo: (ms: number) => void;
   onEditCaption: (captionIndex: number, newText: string) => void;
+  onEditCaptionTime: (captionIndex: number, startMs: number, endMs: number) => void;
 }
 
 function getConfidenceBadge(confidence: number | undefined) {
@@ -33,8 +35,127 @@ function getConfidenceBadge(confidence: number | undefined) {
   );
 }
 
-function copyToClipboard(text: string) {
-  navigator.clipboard.writeText(text).catch(() => {});
+function copyMs(value: number | string) {
+  const text = String(value);
+  navigator.clipboard.writeText(text).then(
+    () => toast.success(`Copiado: ${text}ms`),
+    () => toast.error("No se pudo copiar")
+  );
+}
+
+function MsField({
+  value,
+  onCommit,
+  onFocus,
+  title,
+}: {
+  value: number;
+  onCommit: (newValue: number) => void;
+  onFocus?: () => void;
+  title: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [localValue, setLocalValue] = useState(String(value));
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setLocalValue(String(value));
+  }, [value]);
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className="text-[9px] font-mono text-muted-foreground/50 hover:text-muted-foreground cursor-pointer"
+        onClick={(e) => {
+          e.stopPropagation();
+          copyMs(value);
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          onFocus?.();
+          setEditing(true);
+        }}
+        title={`${title} — click: copiar, doble click: editar`}
+      >
+        {value}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      type="number"
+      value={localValue}
+      onChange={(e) => setLocalValue(e.target.value)}
+      onBlur={() => {
+        setEditing(false);
+        const parsed = parseInt(localValue, 10);
+        if (isNaN(parsed)) {
+          setLocalValue(String(value));
+          return;
+        }
+        const clamped = Math.max(0, parsed);
+        setLocalValue(String(clamped));
+        onCommit(clamped);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") inputRef.current?.blur();
+        if (e.key === "Escape") {
+          setLocalValue(String(value));
+          setEditing(false);
+        }
+      }}
+      onClick={(e) => e.stopPropagation()}
+      className="w-[55px] text-[9px] font-mono text-muted-foreground bg-transparent border border-border rounded px-1 py-0.5 text-right [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+      title={title}
+    />
+  );
+}
+
+function WordTimeInputs({
+  startMs,
+  endMs,
+  globalIndex,
+  onEditCaptionTime,
+}: {
+  startMs: number;
+  endMs: number;
+  globalIndex: number;
+  onEditCaptionTime: (captionIndex: number, startMs: number, endMs: number) => void;
+}) {
+  const originalStartRef = useRef(startMs);
+
+  return (
+    <>
+      <MsField
+        value={startMs}
+        title="startMs"
+        onFocus={() => { originalStartRef.current = startMs; }}
+        onCommit={(newStart) => {
+          const delta = newStart - originalStartRef.current;
+          const newEnd = Math.max(0, endMs + delta);
+          onEditCaptionTime(globalIndex, newStart, newEnd);
+        }}
+      />
+      <span className="text-[9px] text-muted-foreground/30">-</span>
+      <MsField
+        value={endMs}
+        title="endMs"
+        onCommit={(newEnd) => {
+          onEditCaptionTime(globalIndex, startMs, newEnd);
+        }}
+      />
+    </>
+  );
 }
 
 function CaptionPageCard({
@@ -47,6 +168,7 @@ function CaptionPageCard({
   onSelect,
   onSeekTo,
   onEditCaption,
+  onEditCaptionTime,
 }: {
   page: SubtitlePage;
   pageIndex: number;
@@ -57,6 +179,7 @@ function CaptionPageCard({
   onSelect: () => void;
   onSeekTo: (ms: number) => void;
   onEditCaption: (captionIndex: number, newText: string) => void;
+  onEditCaptionTime: (captionIndex: number, startMs: number, endMs: number) => void;
 }) {
   const durationMs = page.endMs - page.startMs;
 
@@ -77,11 +200,14 @@ function CaptionPageCard({
           #{pageIndex + 1}
         </Badge>
         <span className="text-[10px] font-mono text-muted-foreground">
-          {page.startMs} - {page.endMs}ms
+          <button type="button" className="hover:text-foreground cursor-pointer" onClick={(e) => { e.stopPropagation(); copyMs(page.startMs); }} title="Copiar startMs">{page.startMs}</button>
+          {" - "}
+          <button type="button" className="hover:text-foreground cursor-pointer" onClick={(e) => { e.stopPropagation(); copyMs(page.endMs); }} title="Copiar endMs">{page.endMs}</button>
+          ms
         </span>
-        <span className="text-[10px] text-muted-foreground/60">
+        <button type="button" className="text-[10px] text-muted-foreground/60 hover:text-muted-foreground cursor-pointer" onClick={(e) => { e.stopPropagation(); copyMs(durationMs); }} title="Copiar duración">
           ({durationMs}ms)
-        </span>
+        </button>
         <Button
           variant="ghost"
           size="sm"
@@ -123,29 +249,12 @@ function CaptionPageCard({
                 }}
                 className="h-6 text-[11px] px-1.5 flex-1 border-transparent hover:border-border focus:border-border"
               />
-              <button
-                type="button"
-                className="text-[9px] font-mono text-muted-foreground/50 hover:text-muted-foreground cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  copyToClipboard(String(word.startMs));
-                }}
-                title="Copiar startMs"
-              >
-                {word.startMs}
-              </button>
-              <span className="text-[9px] text-muted-foreground/30">-</span>
-              <button
-                type="button"
-                className="text-[9px] font-mono text-muted-foreground/50 hover:text-muted-foreground cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  copyToClipboard(String(word.endMs));
-                }}
-                title="Copiar endMs"
-              >
-                {word.endMs}
-              </button>
+              <WordTimeInputs
+                startMs={word.startMs}
+                endMs={word.endMs}
+                globalIndex={globalIndex}
+                onEditCaptionTime={onEditCaptionTime}
+              />
               {getConfidenceBadge(word.confidence)}
             </div>
           );
@@ -163,6 +272,7 @@ export function CaptionListPanel({
   onSelectPage,
   onSeekTo,
   onEditCaption,
+  onEditCaptionTime,
 }: CaptionListPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastAutoScrollMs = useRef(0);
@@ -224,6 +334,7 @@ export function CaptionListPanel({
             onSelect={() => onSelectPage(index)}
             onSeekTo={onSeekTo}
             onEditCaption={onEditCaption}
+            onEditCaptionTime={onEditCaptionTime}
           />
         ))}
         {pages.length === 0 && (

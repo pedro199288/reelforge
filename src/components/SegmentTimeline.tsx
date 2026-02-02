@@ -680,6 +680,7 @@ export function SegmentTimeline({
           zoomLevel={zoomLevel}
           viewportStartMs={viewportStartMs}
           enableTransition={enablePlayheadTransition}
+          viewportWidthPx={viewportWidthPx}
         />
       </div>
 

@@ -109,15 +109,17 @@ export interface EffectsAnalysisResultMeta {
 
 // Step dependencies: step -> required preceding steps
 // Pipeline:
-// silences -> segments -> cut ─┐
-//                               ├─> captions -> effects-analysis -> rendered
-// full-captions ───────────────┘
+// silences ────────┐
+//                  ├─> segments -> cut ─┐
+// full-captions ──┘                     ├─> captions -> effects-analysis -> rendered
+// full-captions ───────────────────────┘
 // preselection-logs is a side-effect of segments, generated alongside it
+// segments uses full-captions for real preselection scoring
 // captions are derived from full-captions + cut-map (no second Whisper run)
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   silences: [],
   "full-captions": [],
-  segments: ["silences"],
+  segments: ["silences", "full-captions"],
   cut: ["segments"],
   captions: ["full-captions", "cut"],
   "effects-analysis": ["captions"],  // Now depends on post-cut captions
@@ -310,4 +312,40 @@ export function loadStepResult<T>(videoId: string, step: PipelineStep): T | null
  */
 export function hasStepResult(videoId: string, step: PipelineStep): boolean {
   return existsSync(getStepResultPath(videoId, step));
+}
+
+/**
+ * Reset a step's status to pending (full replace, no merge)
+ */
+export function resetStepStatus(videoId: string, step: PipelineStep): void {
+  const current = getPipelineStatus(videoId, "");
+  current.steps[step] = { status: "pending" };
+  current.updatedAt = new Date().toISOString();
+
+  const dir = ensurePipelineDir(videoId);
+  writeFileSync(join(dir, "status.json"), JSON.stringify(current, null, 2));
+}
+
+/**
+ * Get public file paths associated with a pipeline step.
+ * Returns absolute paths to files that should be deleted when resetting the step.
+ */
+export function getStepPublicFiles(videoId: string, step: PipelineStep, filename: string): string[] {
+  const ext = extname(filename);
+  const name = basename(filename, ext);
+  const videosDir = join(process.cwd(), "public", "videos");
+  const subsDir = join(process.cwd(), "public", "subs");
+
+  switch (step) {
+    case "full-captions":
+      return [join(subsDir, `${name}.json`)];
+    case "cut":
+      return [join(videosDir, `${name}-cut${ext}`)];
+    case "captions":
+      return [join(subsDir, `${name}-cut.json`)];
+    case "rendered":
+      return [join(videosDir, `${name}-rendered${ext}`)];
+    default:
+      return [];
+  }
 }

@@ -15,6 +15,8 @@ interface ZoomMarkerProps {
   snapPoints?: number[];
   /** Snap threshold in pixels (default: 10) */
   snapThreshold?: number;
+  /** Viewport width in pixels (for viewport-aware culling) */
+  viewportWidthPx?: number;
 }
 
 type DragMode = "move" | "resize-start" | "resize-end" | null;
@@ -30,6 +32,7 @@ export function ZoomMarker({
   onToggleType,
   snapPoints = [],
   snapThreshold = 10,
+  viewportWidthPx,
 }: ZoomMarkerProps) {
   const markerRef = useRef<HTMLDivElement>(null);
   const [dragMode, setDragMode] = useState<DragMode>(null);
@@ -153,7 +156,7 @@ export function ZoomMarker({
   );
 
   // Don't render if outside viewport (after hooks to follow React rules)
-  if (x + width < -50 || x > 2000) return null;
+  if (x + width < -50 || x > (viewportWidthPx || 2000) + 100) return null;
 
   const resizeHandleClass =
     "absolute top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/30 transition-colors";

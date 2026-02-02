@@ -99,6 +99,11 @@ export function PipelineStepCard({
           <StatusIcon status={status} isProcessing={isProcessing} />
           <span className="text-sm font-medium truncate">{label}</span>
           <StatusBadge status={status} isProcessing={isProcessing} />
+          {isProcessing && progress && (
+            <span className="text-xs tabular-nums text-blue-600 dark:text-blue-400">
+              {progress.progress}%
+            </span>
+          )}
         </div>
       </AccordionTrigger>
       <AccordionContent className="px-1">

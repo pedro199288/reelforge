@@ -1,31 +1,46 @@
 /**
- * Caption cleanup utilities for Whisper output
+ * Caption cleanup utilities for Whisper output (TypeScript port of cleanup.mjs)
  * Fixes common issues: long durations, low confidence words, false starts, repeated phrases
  */
 
-/**
- * @typedef {Object} Caption
- * @property {string} text
- * @property {number} startMs
- * @property {number} endMs
- * @property {number|null} timestampMs
- * @property {number} confidence
- */
+import type { Caption } from "@/core/script/align";
+import {
+  splitAtSilenceGaps,
+  DEFAULT_SILENCE_GAP_MS,
+} from "./split-at-silence";
+
+export interface CleanupLogEntry {
+  reason:
+    | "low_confidence"
+    | "sound_effect"
+    | "repeated_phrase"
+    | "false_start"
+    | "phantom_echo";
+  text: string;
+  startMs: number;
+  confidence?: number;
+  skippedUntilMs?: number;
+}
+
+export interface CleanupOptions {
+  minConfidence?: number;
+  maxWordDurationMs?: number;
+  _log?: CleanupLogEntry[];
+}
 
 /**
  * Applies timing-only fixes: caps word durations and prevents overlaps.
  * Does NOT remove any words — useful for raw mode where all words must be preserved.
- * @param {Caption[]} captions - Captions to fix
- * @param {Object} options - Fix options
- * @param {number} [options.maxWordDurationMs=800] - Maximum duration for a single word
- * @returns {Caption[]} Timing-fixed captions (same count as input)
  */
-export function fixTimingOnly(captions, options = {}) {
+export function fixTimingOnly(
+  captions: Caption[],
+  options: { maxWordDurationMs?: number } = {},
+): Caption[] {
   const { maxWordDurationMs = 800 } = options;
 
   if (captions.length === 0) return [];
 
-  const fixed = [];
+  const fixed: Caption[] = [];
 
   for (let i = 0; i < captions.length; i++) {
     const caption = captions[i];
@@ -56,30 +71,23 @@ export function fixTimingOnly(captions, options = {}) {
 
 /**
  * Cleans up captions by filtering low confidence words and fixing timing issues
- * @param {Caption[]} captions - Raw captions from Whisper
- * @param {Object} options - Cleanup options
- * @param {number} [options.minConfidence=0.15] - Minimum confidence threshold
- * @param {number} [options.maxWordDurationMs=800] - Maximum duration for a single word
- * @param {Array} [options._log] - Internal log array for tracking removed words
- * @returns {Caption[]} Cleaned captions
  */
-export function cleanupCaptions(captions, options = {}) {
-  const {
-    minConfidence = 0.15,
-    maxWordDurationMs = 800,
-    _log,
-  } = options;
+export function cleanupCaptions(
+  captions: Caption[],
+  options: CleanupOptions = {},
+): Caption[] {
+  const { minConfidence = 0.15, maxWordDurationMs = 800, _log } = options;
 
   if (captions.length === 0) return [];
 
   // First pass: filter out unwanted words
-  const filtered = [];
+  const filtered: Caption[] = [];
 
   for (let i = 0; i < captions.length; i++) {
     const caption = captions[i];
 
     // 1. Skip very low confidence words (likely hallucinations)
-    if (caption.confidence < minConfidence) {
+    if (caption.confidence != null && caption.confidence < minConfidence) {
       if (_log) {
         _log.push({
           reason: "low_confidence",
@@ -112,14 +120,14 @@ export function cleanupCaptions(captions, options = {}) {
 
 /**
  * Removes repeated phrase patterns (e.g., when someone records multiple takes)
- * @param {Caption[]} captions
- * @param {Array} [log] - Optional log array for tracking removed phrases
- * @returns {Caption[]}
  */
-export function removeRepeatedPhrases(captions, log) {
+export function removeRepeatedPhrases(
+  captions: Caption[],
+  log?: CleanupLogEntry[],
+): Caption[] {
   if (captions.length < 5) return captions;
 
-  const result = [];
+  const result: Caption[] = [];
   let i = 0;
 
   while (i < captions.length) {
@@ -160,14 +168,14 @@ export function removeRepeatedPhrases(captions, log) {
  * Removes false starts and stutters (e.g., "Si estás... Si estás empezando")
  * Detects patterns like: word1 word2... word1 word2 word3
  * Requires at least 2 words before the "..." to consider it a false start.
- * @param {Caption[]} captions
- * @param {Array} [log] - Optional log array for tracking removed false starts
- * @returns {Caption[]}
  */
-export function removeFalseStarts(captions, log) {
+export function removeFalseStarts(
+  captions: Caption[],
+  log?: CleanupLogEntry[],
+): Caption[] {
   if (captions.length < 3) return captions;
 
-  const result = [];
+  const result: Caption[] = [];
   let skipUntil = -1;
 
   for (let i = 0; i < captions.length; i++) {
@@ -188,7 +196,7 @@ export function removeFalseStarts(captions, log) {
 
     if (falseStartEnd > -1) {
       // Get the false start phrase (from i to falseStartEnd)
-      const falseStartWords = [];
+      const falseStartWords: string[] = [];
       for (let j = i; j <= falseStartEnd; j++) {
         const w = captions[j].text
           .trim()
@@ -206,7 +214,7 @@ export function removeFalseStarts(captions, log) {
       const falseStartPhrase = falseStartWords.join(" ");
 
       // Look at the next few words to see if they repeat this phrase
-      const nextWords = [];
+      const nextWords: string[] = [];
       for (
         let j = falseStartEnd + 1;
         j < Math.min(falseStartEnd + 8, captions.length);
@@ -250,12 +258,80 @@ export function removeFalseStarts(captions, log) {
 }
 
 /**
- * Find if there's a repeated phrase starting at index
- * @param {Caption[]} captions
- * @param {number} startIndex
- * @returns {number} Length of repeated phrase (0 if none)
+ * Removes phantom echo words — single words isolated between silence gaps
+ * that match the start of the following speech chunk.
+ *
+ * Pattern: [silence] "si" [940ms gap] "si estás empezando..."
+ * Whisper sometimes detects a breath or pre-articulation as the upcoming word.
  */
-function findRepeatedPhraseLength(captions, startIndex) {
+export function removePhantomEchoes(
+  captions: Caption[],
+  options?: { silenceGapMs?: number; log?: CleanupLogEntry[] },
+): Caption[] {
+  if (captions.length < 2) return captions;
+
+  const silenceGapMs = options?.silenceGapMs ?? DEFAULT_SILENCE_GAP_MS;
+  const chunks = splitAtSilenceGaps(captions, silenceGapMs);
+
+  const result: Caption[] = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+
+    if (chunk.length === 1) {
+      const word = normalize(chunk[0].text);
+      const nextChunk = chunks[i + 1];
+
+      if (word.length > 0 && nextChunk && nextChunk.length > 0) {
+        const nextWord = normalize(nextChunk[0].text);
+
+        if (word === nextWord) {
+          options?.log?.push({
+            reason: "phantom_echo",
+            text: chunk[0].text.trim(),
+            startMs: chunk[0].startMs,
+            confidence: chunk[0].confidence,
+          });
+          continue; // skip this phantom word
+        }
+      }
+    }
+
+    result.push(...chunk);
+  }
+
+  return result;
+}
+
+/**
+ * Full cleanup pipeline — applies all cleanup steps in order:
+ * 1. cleanupCaptions (confidence filter + sound effects + timing)
+ * 2. removePhantomEchoes
+ * 3. removeFalseStarts
+ * 4. removeRepeatedPhrases
+ */
+export function fullCleanup(
+  captions: Caption[],
+  options: { log?: CleanupLogEntry[]; silenceGapMs?: number } & CleanupOptions = {},
+): Caption[] {
+  const log = options.log ?? [];
+  let result = cleanupCaptions(captions, { ...options, _log: log });
+  result = removePhantomEchoes(result, {
+    silenceGapMs: options.silenceGapMs,
+    log,
+  });
+  result = removeFalseStarts(result, log);
+  result = removeRepeatedPhrases(result, log);
+  return result;
+}
+
+// --- Internal helpers ---
+
+/**
+ * Find if there's a repeated phrase starting at index
+ * Returns length of repeated phrase (0 if none)
+ */
+function findRepeatedPhraseLength(captions: Caption[], startIndex: number): number {
   // Try phrase lengths from 3 to 10 words
   for (let len = 3; len <= Math.min(10, captions.length - startIndex); len++) {
     if (startIndex + len * 2 > captions.length) continue;
@@ -281,12 +357,12 @@ function findRepeatedPhraseLength(captions, startIndex) {
 
 /**
  * Count how many times a phrase repeats
- * @param {Caption[]} captions
- * @param {number} startIndex
- * @param {number} phraseLength
- * @returns {number}
  */
-function countPhraseRepetitions(captions, startIndex, phraseLength) {
+function countPhraseRepetitions(
+  captions: Caption[],
+  startIndex: number,
+  phraseLength: number,
+): number {
   const basePhrase = captions
     .slice(startIndex, startIndex + phraseLength)
     .map((c) => c.text.trim().toLowerCase())
@@ -312,13 +388,17 @@ function countPhraseRepetitions(captions, startIndex, phraseLength) {
   return count;
 }
 
+function normalize(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[.,!?…\u2026]/g, "");
+}
+
 /**
  * Check if two phrases are similar (80% word match)
- * @param {string} phrase1
- * @param {string} phrase2
- * @returns {boolean}
  */
-function arePhrasesSimilar(phrase1, phrase2) {
+function arePhrasesSimilar(phrase1: string, phrase2: string): boolean {
   const words1 = phrase1.split(/\s+/);
   const words2 = phrase2.split(/\s+/);
 
@@ -330,99 +410,4 @@ function arePhrasesSimilar(phrase1, phrase2) {
   }
 
   return matches / words1.length >= 0.8;
-}
-
-const DEFAULT_SILENCE_GAP_MS = 700;
-
-/**
- * Split captions into chunks wherever the gap between consecutive words
- * exceeds silenceGapMs.
- * @param {Caption[]} captions
- * @param {number} [silenceGapMs]
- * @returns {Caption[][]}
- */
-function splitAtSilenceGaps(captions, silenceGapMs = DEFAULT_SILENCE_GAP_MS) {
-  if (captions.length === 0) return [];
-  const chunks = [];
-  let current = [captions[0]];
-  for (let i = 1; i < captions.length; i++) {
-    const gap = captions[i].startMs - captions[i - 1].endMs;
-    if (gap >= silenceGapMs) {
-      chunks.push(current);
-      current = [];
-    }
-    current.push(captions[i]);
-  }
-  if (current.length > 0) chunks.push(current);
-  return chunks;
-}
-
-/**
- * @param {string} text
- * @returns {string}
- */
-function normalize(text) {
-  return text.trim().toLowerCase().replace(/[.,!?…\u2026]/g, "");
-}
-
-/**
- * Removes phantom echo words — single words isolated between silence gaps
- * that match the start of the following speech chunk.
- * @param {Caption[]} captions
- * @param {Object} [options]
- * @param {number} [options.silenceGapMs]
- * @param {Array} [options.log]
- * @returns {Caption[]}
- */
-export function removePhantomEchoes(captions, options) {
-  if (captions.length < 2) return captions;
-
-  const silenceGapMs = options?.silenceGapMs ?? DEFAULT_SILENCE_GAP_MS;
-  const chunks = splitAtSilenceGaps(captions, silenceGapMs);
-
-  const result = [];
-
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-
-    if (chunk.length === 1) {
-      const word = normalize(chunk[0].text);
-      const nextChunk = chunks[i + 1];
-
-      if (word.length > 0 && nextChunk && nextChunk.length > 0) {
-        const nextWord = normalize(nextChunk[0].text);
-
-        if (word === nextWord) {
-          options?.log?.push({
-            reason: "phantom_echo",
-            text: chunk[0].text.trim(),
-            startMs: chunk[0].startMs,
-            confidence: chunk[0].confidence,
-          });
-          continue;
-        }
-      }
-    }
-
-    result.push(...chunk);
-  }
-
-  return result;
-}
-
-/**
- * Full cleanup pipeline
- * @param {Caption[]} captions
- * @param {Object} options
- * @param {Array} [options.log] - Optional array that will be filled with removal reasons
- * @param {number} [options.silenceGapMs] - Silence gap threshold for phantom echo detection
- * @returns {Caption[]}
- */
-export function fullCleanup(captions, options = {}) {
-  const log = options.log ?? [];
-  let result = cleanupCaptions(captions, { ...options, _log: log });
-  result = removePhantomEchoes(result, { silenceGapMs: options.silenceGapMs, log });
-  result = removeFalseStarts(result, log);
-  result = removeRepeatedPhrases(result, log);
-  return result;
 }

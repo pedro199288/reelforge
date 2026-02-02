@@ -540,6 +540,7 @@ export function Timeline({ videoId, videoPath, durationMs, captions }: TimelineP
             onResizeZoom={handleResizeZoom}
             onToggleZoomType={handleToggleZoomType}
             captions={captions}
+            viewportWidthPx={getViewportWidth()}
           />
 
           {/* Highlights track */}
@@ -555,6 +556,7 @@ export function Timeline({ videoId, videoPath, durationMs, captions }: TimelineP
                   selection.id === highlight.id
                 }
                 onSelect={() => select({ type: "highlight", id: highlight.id })}
+                viewportWidthPx={getViewportWidth()}
               />
             ))}
           </TimelineTrack>
@@ -576,6 +578,7 @@ export function Timeline({ videoId, videoPath, durationMs, captions }: TimelineP
                   viewportStartMs={viewportStartMs}
                   isHighlighted={hasHighlight}
                   onClick={() => handleCaptionClick(caption, index)}
+                  viewportWidthPx={getViewportWidth()}
                 />
               );
             })}
@@ -586,6 +589,7 @@ export function Timeline({ videoId, videoPath, durationMs, captions }: TimelineP
             playheadMs={playheadMs}
             zoomLevel={zoomLevel}
             viewportStartMs={viewportStartMs}
+            viewportWidthPx={getViewportWidth()}
           />
         </div>
       </div>

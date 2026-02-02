@@ -44,6 +44,7 @@ import {
   PanelRightClose,
   ScrollText,
   Subtitles,
+  Gauge,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip";
@@ -59,6 +60,7 @@ import { groupIntoPages } from "@/core/captions/group-into-pages";
 import { CaptionListPanel } from "@/components/CaptionListPanel";
 
 const API_URL = "http://localhost:3012";
+const PLAYBACK_RATES = [1, 1.25, 1.5, 2, 2.5, 3] as const;
 
 export const Route = createFileRoute("/edit/$videoId")({
   component: EditorPage,
@@ -183,6 +185,7 @@ function EditorPage() {
   const [showCaptions, setShowCaptions] = useState(() => {
     try { return localStorage.getItem("editor:showCaptions") === "true"; } catch { return false; }
   });
+  const [playbackRate, setPlaybackRate] = useState(1);
 
   // --- Persist footer toggle preferences ---
   useEffect(() => { try { localStorage.setItem("editor:continuousPlay", String(continuousPlay)); } catch {} }, [continuousPlay]);
@@ -228,6 +231,24 @@ function EditorPage() {
     setContinuousPlay(v => !v);
   }, []);
 
+  useHotkeys("r", () => {
+    if (isEditableElement()) return;
+    setPlaybackRate(prev => {
+      const idx = PLAYBACK_RATES.indexOf(prev as typeof PLAYBACK_RATES[number]);
+      return PLAYBACK_RATES[(idx + 1) % PLAYBACK_RATES.length];
+    });
+  }, []);
+
+  // Apply playback rate to video element
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.playbackRate = playbackRate;
+  }, [playbackRate]);
+
+  // Sync rate when video element mounts
+  useEffect(() => {
+    if (videoEl && playbackRate !== 1) videoEl.playbackRate = playbackRate;
+  }, [videoEl, playbackRate]);
+
   // --- Captions for overlay ---
   const captionsCompleted = pipelineStatus?.steps.captions?.status === "completed";
   const { captions: postCutCaptions } = useOriginalCaptions(videoId, captionsCompleted ?? false);
@@ -265,6 +286,22 @@ function EditorPage() {
       return updated;
     });
   }, []);
+
+  const handleEditCaptionTime = useCallback(
+    (captionIndex: number, newStartMs: number, newEndMs: number) => {
+      setEditedCaptions(prev => {
+        if (!prev) return prev;
+        const updated = [...prev];
+        updated[captionIndex] = {
+          ...updated[captionIndex],
+          startMs: newStartMs,
+          endMs: newEndMs,
+        };
+        return updated;
+      });
+    },
+    []
+  );
 
   // --- Derived data ---
   const totalDuration = segmentsResult?.totalDuration ?? nativeVideoDuration ?? 0;
@@ -524,6 +561,7 @@ function EditorPage() {
 
   useEffect(() => {
     if (!isPlaying || isJumpingRef.current || continuousPlay) return;
+    if (enabledSegments.length === 0) return;
     const v = videoRef.current;
     if (!v) return;
 
@@ -900,8 +938,21 @@ function EditorPage() {
               )}
 
               {/* Time indicator */}
-              <div className="absolute bottom-3 right-3 bg-black/70 px-2 py-1 rounded text-white text-sm font-mono">
-                {formatTime(currentTime)} / {formatTime(totalDuration)}
+              <div className="absolute bottom-3 right-3 bg-black/70 px-2 py-1 rounded text-white font-mono text-right">
+                <div className="text-sm">
+                  {formatTime(currentTime)} / {formatTime(totalDuration)}
+                </div>
+                <button
+                  type="button"
+                  className="text-[9px] text-white/50 hover:text-white cursor-pointer"
+                  onClick={() => {
+                    const ms = String(Math.round(currentTimeMs));
+                    navigator.clipboard.writeText(ms).then(() => toast.success(`Copiado: ${ms}ms`));
+                  }}
+                  title="Copiar ms"
+                >
+                  {Math.round(currentTimeMs)}ms
+                </button>
               </div>
             </>
           ) : (
@@ -950,6 +1001,7 @@ function EditorPage() {
                   onSelectPage={setSelectedCaptionPageIndex}
                   onSeekTo={handleSeekTo}
                   onEditCaption={handleEditCaption}
+                  onEditCaptionTime={handleEditCaptionTime}
                 />
               )}
             </div>
@@ -1047,6 +1099,25 @@ function EditorPage() {
                 </Button>
               </TooltipTrigger>
               <ShortcutTooltipContent shortcut="J">{continuousPlay ? "Reproducción continua activa" : "Saltar segmentos deshabilitados"}</ShortcutTooltipContent>
+            </Tooltip>
+          )}
+          {previewMode === "edit" && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={playbackRate !== 1 ? "default" : "ghost"}
+                  size="sm"
+                  className={cn("h-6 px-2 text-xs gap-1", playbackRate !== 1 && "bg-violet-600 hover:bg-violet-700 text-white")}
+                  onClick={() => setPlaybackRate(prev => {
+                    const idx = PLAYBACK_RATES.indexOf(prev as typeof PLAYBACK_RATES[number]);
+                    return PLAYBACK_RATES[(idx + 1) % PLAYBACK_RATES.length];
+                  })}
+                >
+                  <Gauge className="w-3.5 h-3.5" />
+                  {playbackRate}x
+                </Button>
+              </TooltipTrigger>
+              <ShortcutTooltipContent shortcut="R">Velocidad de reproducción</ShortcutTooltipContent>
             </Tooltip>
           )}
           <Tooltip>

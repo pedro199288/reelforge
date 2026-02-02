@@ -46,9 +46,9 @@ export interface TakeScoreConfig {
 
 export const DEFAULT_TAKE_SCORE_CONFIG: TakeScoreConfig = {
   weights: {
-    scriptCoverage: 0.35,
-    fluency: 0.25,
-    whisperConfidence: 0.20,
+    scriptCoverage: 0.45,
+    fluency: 0.20,
+    whisperConfidence: 0.15,
     completeness: 0.10,
     duration: 0.10,
   },
@@ -110,7 +110,13 @@ export function scoreTake(
   );
 
   // --- duration (0-100) ---
-  const duration = calculateDurationScore(take.durationMs, sentenceWordCount);
+  // Use max(sentenceWordCount, takeWordCount) so takes with extra words
+  // (e.g. speaker repetitions) aren't penalized for their natural duration
+  const takeWordCount = take.transcribedText.split(/\s+/).filter(Boolean).length;
+  const duration = calculateDurationScore(
+    take.durationMs,
+    Math.max(sentenceWordCount, takeWordCount)
+  );
 
   const breakdown: TakeScoreBreakdown = {
     scriptCoverage,
@@ -169,7 +175,7 @@ function calculateCompleteness(
   const firstSentenceWords = sentenceNormalizedWords.slice(0, 2);
   const firstTakeWords = takeWords.slice(0, 2);
   const startMatch = firstSentenceWords.some((sw) =>
-    firstTakeWords.some((tw) => similarity(sw, tw) > 0.6)
+    firstTakeWords.some((tw) => similarity(sw, tw) > 0.7)
   );
   if (startMatch) score += 25;
 
@@ -177,7 +183,7 @@ function calculateCompleteness(
   const lastSentenceWords = sentenceNormalizedWords.slice(-2);
   const lastTakeWords = takeWords.slice(-2);
   const endMatch = lastSentenceWords.some((sw) =>
-    lastTakeWords.some((tw) => similarity(sw, tw) > 0.6)
+    lastTakeWords.some((tw) => similarity(sw, tw) > 0.7)
   );
   if (endMatch) score += 25;
 

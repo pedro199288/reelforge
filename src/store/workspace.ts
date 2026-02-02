@@ -21,7 +21,7 @@ export const SILENCE_DEFAULTS = {
   method: "ffmpeg" as SilenceDetectionMethod,
   thresholdDb: -40,
   minDurationSec: 0.5,
-  paddingSec: 0.05,
+  paddingSec: 0.15,
   amplitudeThreshold: 0.05,
   envelopeSamplesPerSecond: 200,
 } as const;
@@ -150,7 +150,7 @@ const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   silence: {
     thresholdDb: -40,
     minDurationSec: 0.5,
-    paddingSec: 0.05,
+    paddingSec: 0.15,
   },
   takes: {
     minSimilarity: 80,
@@ -423,6 +423,18 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       }),
       {
         name: "reelforge-workspace",
+        version: 1,
+        migrate: (persisted: unknown, version: number) => {
+          const state = persisted as Record<string, unknown>;
+          if (version === 0) {
+            // Migrate paddingSec default 0.05 → 0.15
+            const pc = state.pipelineConfig as { silence?: { paddingSec?: number } } | undefined;
+            if (pc?.silence?.paddingSec === 0.05) {
+              pc.silence.paddingSec = 0.15;
+            }
+          }
+          return state;
+        },
       }
     ),
     {

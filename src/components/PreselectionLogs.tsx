@@ -32,6 +32,7 @@ import {
   XCircle,
   AlertCircle,
 } from "lucide-react";
+import { toast } from "sonner";
 import type {
   PreselectionLog,
   SegmentPreselectionLog,
@@ -157,7 +158,7 @@ function SegmentLogCard({
           <span className="text-sm font-mono text-muted-foreground flex-shrink-0">
             {formatTime(segment.timing.startMs)} - {formatTime(segment.timing.endMs)}
             <span className="text-[9px] text-muted-foreground/50 ml-1.5">
-              ({segment.timing.startMs}–{segment.timing.endMs}ms)
+              (<button type="button" className="hover:text-foreground cursor-pointer" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(String(segment.timing.startMs)).then(() => toast.success(`Copiado: ${segment.timing.startMs}ms`)); }} title="Copiar startMs">{segment.timing.startMs}</button>–<button type="button" className="hover:text-foreground cursor-pointer" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(String(segment.timing.endMs)).then(() => toast.success(`Copiado: ${segment.timing.endMs}ms`)); }} title="Copiar endMs">{segment.timing.endMs}</button>ms)
             </span>
           </span>
 

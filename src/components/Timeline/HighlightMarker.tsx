@@ -7,6 +7,8 @@ interface HighlightMarkerProps {
   viewportStartMs: number;
   isSelected: boolean;
   onSelect: () => void;
+  /** Viewport width in pixels (for viewport-aware culling) */
+  viewportWidthPx?: number;
 }
 
 export function HighlightMarker({
@@ -15,6 +17,7 @@ export function HighlightMarker({
   viewportStartMs,
   isSelected,
   onSelect,
+  viewportWidthPx,
 }: HighlightMarkerProps) {
   // Calculate pixels per millisecond based on zoom level
   const pxPerMs = (100 * zoomLevel) / 1000;
@@ -23,7 +26,7 @@ export function HighlightMarker({
   const width = Math.max((highlight.endMs - highlight.startMs) * pxPerMs, 24); // Minimum 24px width
 
   // Don't render if outside viewport
-  if (x + width < -50 || x > 2000) return null;
+  if (x + width < -50 || x > (viewportWidthPx || 2000) + 100) return null;
 
   return (
     <div

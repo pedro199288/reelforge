@@ -330,6 +330,7 @@ function PipelinePage() {
           videoId={selectedVideo.id}
           disabled={isProcessing}
           hasCaptions={selectedVideo.hasCaptions}
+          backendStatus={backendStatus}
           onReset={handleRefresh}
         />
         {isProcessing ? (

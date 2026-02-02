@@ -283,6 +283,7 @@ export function usePipelineExecution({
 
       const executableSteps: PipelineStep[] = [
         "silences",
+        "full-captions",
         "segments",
         "cut",
         "captions",

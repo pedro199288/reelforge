@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import { useWorkspaceStore } from "@/store/workspace";
+import { useEffectsStore } from "@/store/effects";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,42 +21,44 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Settings,
   ChevronDown,
   Trash2,
   RotateCcw,
   AlertTriangle,
-  FileVideo,
-  Subtitles,
-  FileText,
   Loader2,
+  CornerDownRight,
 } from "lucide-react";
+import {
+  STEPS,
+  getDownstreamSteps,
+  type PipelineStep,
+  type BackendPipelineStatus,
+} from "@/types/pipeline";
 
 const API_URL = "http://localhost:3012";
 
-type ResetPhase = "cut" | "captions" | "metadata" | "all";
+/** Steps that are costly to regenerate (Whisper, ffmpeg silence detection) */
+const COSTLY_STEPS: PipelineStep[] = ["full-captions", "silences"];
+
+/** Steps visible in the reset dialog (exclude "raw" — never resettable) */
+const RESETTABLE_STEPS = STEPS.filter((s) => s.key !== "raw");
 
 interface PipelineResetActionsProps {
   videoId: string;
   disabled?: boolean;
+  /** @deprecated No longer used — status is derived from backendStatus */
   hasCaptions?: boolean;
+  backendStatus: BackendPipelineStatus | null;
   onReset?: () => void;
-}
-
-interface ResetOptions {
-  selections: boolean;
-  takeSelections: boolean;
-  cutVideo: boolean;
-  captions: boolean;
-  metadata: boolean;
 }
 
 export function PipelineResetActions({
   videoId,
   disabled,
-  hasCaptions = false,
+  backendStatus,
   onReset,
 }: PipelineResetActionsProps) {
   const clearSelection = useWorkspaceStore((state) => state.clearSelection);
@@ -63,25 +66,81 @@ export function PipelineResetActions({
   const selections = useWorkspaceStore((state) => state.selections[videoId]);
   const takeSelections = useWorkspaceStore((state) => state.takeSelections[videoId]);
 
+  const clearAnalysisResult = useEffectsStore((state) => state.clearAnalysisResult);
+  const renderHistory = useWorkspaceStore((state) => state.renderHistory);
+  const setRenderHistory = useWorkspaceStore((state) => state.clearRenderHistory);
+
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
-  const [resetOptions, setResetOptions] = useState<ResetOptions>({
-    selections: true,
-    takeSelections: true,
-    cutVideo: false,
-    captions: false,
-    metadata: false,
-  });
+  const [selectedSteps, setSelectedSteps] = useState<Set<PipelineStep>>(new Set());
 
   const hasSelections = selections && selections.length > 0;
   const hasTakeSelections = takeSelections && Object.keys(takeSelections.selections || {}).length > 0;
 
-  // API call to reset phases
-  const resetPhases = async (phases: ResetPhase[]): Promise<{ deleted: string[] }> => {
-    const response = await fetch(`${API_URL}/api/reset`, {
+  /** Which steps are completed on the backend */
+  const completedSteps = useMemo(() => {
+    const set = new Set<PipelineStep>();
+    if (!backendStatus) return set;
+    for (const [step, state] of Object.entries(backendStatus.steps)) {
+      if (state.status === "completed") set.add(step as PipelineStep);
+    }
+    return set;
+  }, [backendStatus]);
+
+  /** Steps forced by cascade (downstream of user-selected steps) */
+  const cascadedSteps = useMemo(() => {
+    const cascaded = new Set<PipelineStep>();
+    for (const step of selectedSteps) {
+      for (const downstream of getDownstreamSteps(step)) {
+        if (downstream !== step) cascaded.add(downstream);
+      }
+    }
+    return cascaded;
+  }, [selectedSteps]);
+
+  /** All steps that will be reset (user-selected + cascaded) */
+  const allStepsToReset = useMemo(() => {
+    return new Set([...selectedSteps, ...cascadedSteps]);
+  }, [selectedSteps, cascadedSteps]);
+
+  const toggleStep = useCallback((step: PipelineStep) => {
+    setSelectedSteps((prev) => {
+      const next = new Set(prev);
+      if (next.has(step)) {
+        next.delete(step);
+      } else {
+        next.add(step);
+      }
+      return next;
+    });
+  }, []);
+
+  /** Clear local stores for affected steps.
+   * NOTE: Timeline (segments/silences) is NOT cleared here — the editor page's
+   * own useEffects handle that reactively when pipelineStatus changes to avoid
+   * race conditions between import and clear effects. */
+  const clearLocalState = useCallback((steps: Set<PipelineStep>) => {
+    if (steps.has("segments")) {
+      clearSelection(videoId);
+      clearTakeSelections(videoId);
+    }
+    if (steps.has("effects-analysis")) {
+      clearAnalysisResult(videoId);
+    }
+    if (steps.has("rendered")) {
+      const remaining = renderHistory.filter((r) => r.videoId !== videoId);
+      if (remaining.length !== renderHistory.length) {
+        setRenderHistory();
+      }
+    }
+  }, [videoId, clearSelection, clearTakeSelections, clearAnalysisResult, renderHistory, setRenderHistory]);
+
+  // API call to reset steps
+  const resetSteps = async (steps: PipelineStep[]): Promise<{ deleted: string[]; stepsReset: PipelineStep[] }> => {
+    const response = await fetch(`${API_URL}/api/pipeline/reset-steps`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ videoId, phases }),
+      body: JSON.stringify({ videoId, steps }),
     });
 
     if (!response.ok) {
@@ -95,151 +154,63 @@ export function PipelineResetActions({
   const handleClearSelections = () => {
     if (!hasSelections) {
       toast.info("Sin selecciones", {
-        description: "No hay selección de cortes para limpiar",
+        description: "No hay seleccion de cortes para limpiar",
       });
       return;
     }
 
     clearSelection(videoId);
-    toast.success("Selección limpiada", {
-      description: "Se ha limpiado la selección de cortes",
+    toast.success("Seleccion limpiada", {
+      description: "Se ha limpiado la seleccion de cortes",
     });
   };
 
   const handleClearTakeSelections = () => {
     if (!hasTakeSelections) {
       toast.info("Sin selecciones", {
-        description: "No hay selección de tomas para limpiar",
+        description: "No hay seleccion de tomas para limpiar",
       });
       return;
     }
 
     clearTakeSelections(videoId);
     toast.success("Tomas limpiadas", {
-      description: "Se ha limpiado la selección de tomas",
+      description: "Se ha limpiado la seleccion de tomas",
     });
   };
 
-  const handleDeleteCutVideo = async () => {
-    setIsResetting(true);
-    try {
-      const result = await resetPhases(["cut"]);
-      if (result.deleted.length > 0) {
-        toast.success("Video cortado eliminado", {
-          description: `Eliminado: ${result.deleted.join(", ")}`,
-        });
-        onReset?.();
-      } else {
-        toast.info("Sin archivos", {
-          description: "No se encontró el video cortado",
-        });
-      }
-    } catch (error) {
-      toast.error("Error", {
-        description: error instanceof Error ? error.message : "Error al eliminar",
-      });
-    } finally {
-      setIsResetting(false);
+  const handleOpenResetDialog = (preselectAll: boolean) => {
+    if (preselectAll) {
+      // Pre-select all completed steps
+      const completed = RESETTABLE_STEPS
+        .filter((s) => completedSteps.has(s.key))
+        .map((s) => s.key);
+      setSelectedSteps(new Set(completed));
+    } else {
+      setSelectedSteps(new Set());
     }
-  };
-
-  const handleDeleteCaptions = async () => {
-    setIsResetting(true);
-    try {
-      const result = await resetPhases(["captions"]);
-      if (result.deleted.length > 0) {
-        toast.success("Transcripciones eliminadas", {
-          description: `Eliminado: ${result.deleted.join(", ")}`,
-        });
-        onReset?.();
-      } else {
-        toast.info("Sin archivos", {
-          description: "No se encontraron transcripciones",
-        });
-      }
-    } catch (error) {
-      toast.error("Error", {
-        description: error instanceof Error ? error.message : "Error al eliminar",
-      });
-    } finally {
-      setIsResetting(false);
-    }
-  };
-
-  const handleDeleteMetadata = async () => {
-    setIsResetting(true);
-    try {
-      const result = await resetPhases(["metadata"]);
-      if (result.deleted.length > 0) {
-        toast.success("Metadata eliminada", {
-          description: `Eliminado: ${result.deleted.join(", ")}`,
-        });
-        onReset?.();
-      } else {
-        toast.info("Sin archivos", {
-          description: "No se encontró metadata",
-        });
-      }
-    } catch (error) {
-      toast.error("Error", {
-        description: error instanceof Error ? error.message : "Error al eliminar",
-      });
-    } finally {
-      setIsResetting(false);
-    }
-  };
-
-  const handleOpenResetDialog = () => {
-    // Pre-select only options that have data
-    setResetOptions({
-      selections: hasSelections,
-      takeSelections: hasTakeSelections,
-      cutVideo: true,
-      captions: true,
-      metadata: true,
-    });
     setResetDialogOpen(true);
   };
 
-  const handleResetAll = async () => {
+  const handleResetSelected = async () => {
+    if (allStepsToReset.size === 0) return;
+
     setIsResetting(true);
-    let resetCount = 0;
-    const phasesToReset: ResetPhase[] = [];
-
     try {
-      // Clear local state
-      if (resetOptions.selections && hasSelections) {
-        clearSelection(videoId);
-        resetCount++;
-      }
-      if (resetOptions.takeSelections && hasTakeSelections) {
-        clearTakeSelections(videoId);
-        resetCount++;
-      }
+      const stepsArray = Array.from(allStepsToReset).filter((s) => s !== "raw");
 
-      // Build phases to reset on server
-      if (resetOptions.cutVideo) phasesToReset.push("cut");
-      if (resetOptions.captions) phasesToReset.push("captions");
-      if (resetOptions.metadata) phasesToReset.push("metadata");
+      const result = await resetSteps(stepsArray);
 
-      // Call API if we have phases to reset
-      let serverDeleted: string[] = [];
-      if (phasesToReset.length > 0) {
-        const result = await resetPhases(phasesToReset);
-        serverDeleted = result.deleted;
-        resetCount += serverDeleted.length;
-      }
+      // Clear local state for the reset steps
+      clearLocalState(allStepsToReset);
 
       setResetDialogOpen(false);
+      setSelectedSteps(new Set());
 
-      if (resetCount > 0) {
-        toast.success("Reset completado", {
-          description: `Se han limpiado ${resetCount} elemento${resetCount > 1 ? "s" : ""}`,
-        });
-        if (phasesToReset.length > 0) {
-          onReset?.();
-        }
-      }
+      toast.success("Reset completado", {
+        description: `${result.stepsReset.length} paso${result.stepsReset.length > 1 ? "s" : ""} reseteado${result.stepsReset.length > 1 ? "s" : ""}`,
+      });
+      onReset?.();
     } catch (error) {
       toast.error("Error en reset", {
         description: error instanceof Error ? error.message : "Error desconocido",
@@ -248,13 +219,6 @@ export function PipelineResetActions({
       setIsResetting(false);
     }
   };
-
-  const canReset =
-    (resetOptions.selections && hasSelections) ||
-    (resetOptions.takeSelections && hasTakeSelections) ||
-    resetOptions.cutVideo ||
-    resetOptions.captions ||
-    resetOptions.metadata;
 
   return (
     <>
@@ -274,7 +238,7 @@ export function PipelineResetActions({
           {/* Local state actions */}
           <DropdownMenuItem onClick={handleClearSelections} disabled={!hasSelections}>
             <Trash2 className="w-4 h-4 mr-2" />
-            Limpiar selección de cortes
+            Limpiar seleccion de cortes
             {hasSelections && (
               <span className="ml-auto text-xs text-muted-foreground">
                 ({selections.length})
@@ -283,7 +247,7 @@ export function PipelineResetActions({
           </DropdownMenuItem>
           <DropdownMenuItem onClick={handleClearTakeSelections} disabled={!hasTakeSelections}>
             <Trash2 className="w-4 h-4 mr-2" />
-            Limpiar selección de tomas
+            Limpiar seleccion de tomas
             {hasTakeSelections && (
               <span className="ml-auto text-xs text-muted-foreground">
                 ({Object.keys(takeSelections.selections).length})
@@ -293,181 +257,102 @@ export function PipelineResetActions({
 
           <DropdownMenuSeparator />
 
-          {/* File actions */}
-          <DropdownMenuItem onClick={handleDeleteCutVideo} disabled={isResetting}>
-            <FileVideo className="w-4 h-4 mr-2" />
-            Borrar video cortado
+          {/* Granular reset actions */}
+          <DropdownMenuItem onClick={() => handleOpenResetDialog(false)}>
+            <RotateCcw className="w-4 h-4 mr-2" />
+            Reset por paso...
           </DropdownMenuItem>
           <DropdownMenuItem
-            onClick={handleDeleteCaptions}
-            disabled={!hasCaptions || isResetting}
-          >
-            <Subtitles className="w-4 h-4 mr-2" />
-            Borrar transcripciones
-            {hasCaptions && (
-              <span className="ml-auto text-xs text-green-600">●</span>
-            )}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={handleDeleteMetadata} disabled={isResetting}>
-            <FileText className="w-4 h-4 mr-2" />
-            Borrar metadata
-          </DropdownMenuItem>
-
-          <DropdownMenuSeparator />
-
-          <DropdownMenuItem
-            onClick={handleOpenResetDialog}
+            onClick={() => handleOpenResetDialog(true)}
             className="text-destructive focus:text-destructive"
           >
-            <RotateCcw className="w-4 h-4 mr-2" />
+            <AlertTriangle className="w-4 h-4 mr-2" />
             Reset completo...
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* Reset All Dialog */}
+      {/* Granular Reset Dialog */}
       <AlertDialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
             <div className="flex items-center gap-3 mb-2">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
                 <AlertTriangle className="h-5 w-5 text-destructive" />
               </div>
-              <AlertDialogTitle>Reset completo del pipeline</AlertDialogTitle>
+              <AlertDialogTitle>Reset del pipeline</AlertDialogTitle>
             </div>
             <AlertDialogDescription>
-              Selecciona qué datos deseas eliminar. Los datos locales se pueden deshacer con Ctrl+Z,
-              pero los archivos en disco se eliminarán permanentemente.
+              Selecciona que pasos resetear. Los pasos dependientes se marcan automaticamente.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          <div className="py-4 space-y-4">
-            {/* Local data section */}
-            <div className="space-y-3">
-              <div className="text-sm font-medium text-muted-foreground">Datos locales</div>
-              <div className="flex items-center space-x-3">
-                <Checkbox
-                  id="reset-selections"
-                  checked={resetOptions.selections}
-                  onCheckedChange={(checked) =>
-                    setResetOptions((prev) => ({ ...prev, selections: checked === true }))
-                  }
-                  disabled={!hasSelections}
-                />
-                <Label
-                  htmlFor="reset-selections"
-                  className={`flex-1 ${!hasSelections ? "text-muted-foreground" : ""}`}
+          <div className="py-3 space-y-1.5">
+            {RESETTABLE_STEPS.map((stepInfo) => {
+              const step = stepInfo.key;
+              const isCompleted = completedSteps.has(step);
+              const isCascaded = cascadedSteps.has(step) && !selectedSteps.has(step);
+              const isSelected = selectedSteps.has(step) || isCascaded;
+              const isCostly = COSTLY_STEPS.includes(step);
+              // Disable checkbox if: not completed (nothing to reset) or forced by cascade
+              const isDisabled = !isCompleted || isCascaded;
+
+              return (
+                <div
+                  key={step}
+                  className={`flex items-center gap-3 rounded-md px-3 py-2 ${
+                    isCascaded ? "pl-8 opacity-70" : ""
+                  } ${isSelected ? "bg-destructive/5" : ""}`}
                 >
-                  <div className="font-medium">Selección de cortes</div>
-                  <div className="text-sm text-muted-foreground">
-                    {hasSelections
-                      ? `${selections.length} segmentos seleccionados`
-                      : "Sin datos"}
+                  <Checkbox
+                    id={`reset-${step}`}
+                    checked={isSelected}
+                    onCheckedChange={() => toggleStep(step)}
+                    disabled={isDisabled || isResetting}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <label
+                      htmlFor={`reset-${step}`}
+                      className={`flex items-center gap-2 text-sm font-medium cursor-pointer ${
+                        !isCompleted ? "text-muted-foreground" : ""
+                      }`}
+                    >
+                      {isCascaded && <CornerDownRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
+                      <span className="truncate">{stepInfo.label}</span>
+                      {isCompleted ? (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-green-500/10 text-green-700 border-green-200">
+                          Completado
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground">
+                          Sin datos
+                        </Badge>
+                      )}
+                      {isCostly && isSelected && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-amber-500/10 text-amber-700 border-amber-200">
+                          Costoso
+                        </Badge>
+                      )}
+                    </label>
                   </div>
-                </Label>
-              </div>
-
-              <div className="flex items-center space-x-3">
-                <Checkbox
-                  id="reset-takes"
-                  checked={resetOptions.takeSelections}
-                  onCheckedChange={(checked) =>
-                    setResetOptions((prev) => ({ ...prev, takeSelections: checked === true }))
-                  }
-                  disabled={!hasTakeSelections}
-                />
-                <Label
-                  htmlFor="reset-takes"
-                  className={`flex-1 ${!hasTakeSelections ? "text-muted-foreground" : ""}`}
-                >
-                  <div className="font-medium">Selección de tomas</div>
-                  <div className="text-sm text-muted-foreground">
-                    {hasTakeSelections
-                      ? `${Object.keys(takeSelections.selections).length} tomas seleccionadas`
-                      : "Sin datos"}
-                  </div>
-                </Label>
-              </div>
-            </div>
-
-            {/* File data section */}
-            <div className="space-y-3">
-              <div className="text-sm font-medium text-muted-foreground">Archivos en disco</div>
-              <div className="flex items-center space-x-3">
-                <Checkbox
-                  id="reset-cut-video"
-                  checked={resetOptions.cutVideo}
-                  onCheckedChange={(checked) =>
-                    setResetOptions((prev) => ({ ...prev, cutVideo: checked === true }))
-                  }
-                />
-                <Label htmlFor="reset-cut-video" className="flex-1">
-                  <div className="font-medium flex items-center gap-2">
-                    <FileVideo className="w-4 h-4" />
-                    Video cortado
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    Archivo *-cut.mp4 en public/videos/
-                  </div>
-                </Label>
-              </div>
-
-              <div className="flex items-center space-x-3">
-                <Checkbox
-                  id="reset-captions"
-                  checked={resetOptions.captions}
-                  onCheckedChange={(checked) =>
-                    setResetOptions((prev) => ({ ...prev, captions: checked === true }))
-                  }
-                />
-                <Label htmlFor="reset-captions" className="flex-1">
-                  <div className="font-medium flex items-center gap-2">
-                    <Subtitles className="w-4 h-4" />
-                    Transcripciones
-                    {hasCaptions && (
-                      <span className="text-xs text-green-600">● Existe</span>
-                    )}
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    Archivo *-cut.json en public/subs/
-                  </div>
-                </Label>
-              </div>
-
-              <div className="flex items-center space-x-3">
-                <Checkbox
-                  id="reset-metadata"
-                  checked={resetOptions.metadata}
-                  onCheckedChange={(checked) =>
-                    setResetOptions((prev) => ({ ...prev, metadata: checked === true }))
-                  }
-                />
-                <Label htmlFor="reset-metadata" className="flex-1">
-                  <div className="font-medium flex items-center gap-2">
-                    <FileText className="w-4 h-4" />
-                    Metadata
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    Archivo *-cut.json en public/metadata/
-                  </div>
-                </Label>
-              </div>
-            </div>
-
-            {/* Warning about permanent deletion */}
-            {(resetOptions.cutVideo || resetOptions.captions || resetOptions.metadata) && (
-              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-                <strong>Advertencia:</strong> Los archivos seleccionados se eliminarán permanentemente
-                y no se pueden recuperar.
-              </div>
-            )}
+                </div>
+              );
+            })}
           </div>
+
+          {/* Warning about permanent deletion */}
+          {allStepsToReset.size > 0 && (
+            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+              <strong>Advertencia:</strong> Los archivos de los pasos seleccionados se eliminaran
+              permanentemente y no se pueden recuperar.
+            </div>
+          )}
 
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isResetting}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleResetAll}
-              disabled={!canReset || isResetting}
+              onClick={handleResetSelected}
+              disabled={allStepsToReset.size === 0 || isResetting}
               className="bg-destructive hover:bg-destructive/90"
             >
               {isResetting ? (
@@ -475,7 +360,9 @@ export function PipelineResetActions({
               ) : (
                 <RotateCcw className="w-4 h-4 mr-2" />
               )}
-              {isResetting ? "Reseteando..." : "Resetear seleccionado"}
+              {isResetting
+                ? "Reseteando..."
+                : `Resetear ${allStepsToReset.size} paso${allStepsToReset.size > 1 ? "s" : ""}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

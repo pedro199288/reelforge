@@ -138,7 +138,7 @@ export const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   raw: [],
   "full-captions": [],
   silences: [],
-  segments: ["silences"],
+  segments: ["silences", "full-captions"],
   cut: ["segments"],
   captions: ["full-captions", "cut"],
   "effects-analysis": ["captions"],
@@ -187,6 +187,27 @@ export const STEPS: {
 ];
 
 // --- Helpers ---
+
+/**
+ * Get all steps that transitively depend on the given step (BFS).
+ * E.g. getDownstreamSteps("segments") → ["cut", "captions", "effects-analysis", "rendered"]
+ */
+export function getDownstreamSteps(step: PipelineStep): PipelineStep[] {
+  const downstream = new Set<PipelineStep>();
+  const queue: PipelineStep[] = [step];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const [s, deps] of Object.entries(STEP_DEPENDENCIES) as [PipelineStep, PipelineStep[]][]) {
+      if (deps.includes(current) && !downstream.has(s) && s !== step) {
+        downstream.add(s);
+        queue.push(s);
+      }
+    }
+  }
+
+  return Array.from(downstream);
+}
 
 export function getVideoPipelineState(
   video: Video,
