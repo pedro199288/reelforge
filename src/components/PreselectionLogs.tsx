@@ -178,7 +178,7 @@ function SegmentLogCard({
           {/* Score Breakdown */}
           <div className="grid grid-cols-2 gap-4">
             <ScoreBar
-              label="Script Match"
+              label="Cobertura del Guion"
               score={segment.scores.breakdown.scriptMatch}
               weighted={segment.scores.weighted.scriptMatch}
               weight={weights.scriptMatch}
@@ -190,7 +190,7 @@ function SegmentLogCard({
               weight={weights.whisperConfidence}
             />
             <ScoreBar
-              label="Recencia de Toma"
+              label="Fluidez"
               score={segment.scores.breakdown.takeOrder}
               weighted={segment.scores.weighted.takeOrder}
               weight={weights.takeOrder}
@@ -308,7 +308,7 @@ function SegmentLogCard({
               )}
               {segment.decision.criterionReasons.takeOrder && (
                 <div className="text-muted-foreground">
-                  <span className="font-medium">Toma:</span>{" "}
+                  <span className="font-medium">Fluidez:</span>{" "}
                   {segment.decision.criterionReasons.takeOrder}
                 </div>
               )}

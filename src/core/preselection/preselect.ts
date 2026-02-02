@@ -35,10 +35,21 @@ import {
   logSegmentDecision,
   finalizeLog,
   type LogCollector,
+  type ScoringLogData,
 } from "./logger";
-import { extractAndClassifyTakes, mapTakesToSegments } from "./take-extractor";
-import { selectBestTakes, DEFAULT_TAKE_SCORE_CONFIG } from "./take-scorer";
-import type { TakeScoreConfig } from "./take-scorer";
+import {
+  extractAndClassifyTakes,
+  mapTakesToSegments,
+  type ClassifiedTake,
+} from "./take-extractor";
+import {
+  selectBestTakes,
+  DEFAULT_TAKE_SCORE_CONFIG,
+  type TakeScoreConfig,
+  type SelectionResult,
+  type TakeScore,
+} from "./take-scorer";
+import type { TakeExtractionResult } from "./take-extractor";
 
 /**
  * Builds maps of segment ID → take number and segment ID → total takes from phrase groups
@@ -90,6 +101,190 @@ function buildTakeGroupsFromPhrases(
   }
 
   return { takeNumbers, totalTakes };
+}
+
+/**
+ * Logs scoring + decision data for take-based preselection segments.
+ * Maps take-level scores to the existing SegmentPreselectionLog format
+ * so the UI panel works correctly.
+ */
+function logTakeBasedSegments(
+  collector: LogCollector,
+  preselected: PreselectedSegment[],
+  selection: SelectionResult,
+  takeResult: TakeExtractionResult,
+  captions: Caption[],
+  takeScoreConfig: TakeScoreConfig,
+  config: PreselectionConfig
+): void {
+  // Build lookup: takeId → TakeScore
+  const scoreByTakeId = new Map<string, TakeScore>();
+  for (const s of selection.scores) {
+    scoreByTakeId.set(s.takeId, s);
+  }
+
+  // Build lookup of all takes (selected + rejected)
+  const allTakes = [
+    ...selection.selected,
+    ...selection.rejected,
+  ];
+
+  for (const seg of preselected) {
+    // Find the take(s) that overlap with this segment
+    const overlapping = allTakes.filter(
+      (t) => t.startMs < seg.endMs && t.endMs > seg.startMs
+    );
+    const primaryTake = overlapping[0] as ClassifiedTake | undefined;
+    const takeScore = primaryTake
+      ? scoreByTakeId.get(primaryTake.id)
+      : undefined;
+
+    const durationMs = seg.endMs - seg.startMs;
+
+    // Map take-based breakdown to the existing SegmentScoreBreakdown format:
+    // scriptCoverage → scriptMatch, fluency → takeOrder
+    const breakdown = takeScore
+      ? {
+          scriptMatch: takeScore.breakdown.scriptCoverage,
+          whisperConfidence: takeScore.breakdown.whisperConfidence,
+          takeOrder: takeScore.breakdown.fluency,
+          completeness: takeScore.breakdown.completeness,
+          duration: takeScore.breakdown.duration,
+        }
+      : {
+          scriptMatch: 0,
+          whisperConfidence: 50,
+          takeOrder: 50,
+          completeness: 50,
+          duration: 50,
+        };
+
+    // Calculate weighted scores using take-based weights mapped to old field names
+    const w = takeScoreConfig.weights;
+    const weighted = {
+      scriptMatch: breakdown.scriptMatch * w.scriptCoverage,
+      whisperConfidence: breakdown.whisperConfidence * w.whisperConfidence,
+      takeOrder: breakdown.takeOrder * w.fluency,
+      completeness: breakdown.completeness * w.completeness,
+      duration: breakdown.duration * w.duration,
+    };
+
+    // Determine take number within its group
+    let takeNumber = 1;
+    if (primaryTake) {
+      const group = takeResult.groups.find(
+        (g) => g.sentence.index === primaryTake.sentenceIndex
+      );
+      if (group) {
+        const sorted = [...group.takes].sort((a, b) => a.startMs - b.startMs);
+        const idx = sorted.findIndex((t) => t.id === primaryTake.id);
+        takeNumber = idx >= 0 ? idx + 1 : 1;
+      }
+    }
+
+    // Determine duration status
+    let durationStatus: "too_short" | "ideal" | "too_long" = "ideal";
+    if (durationMs < config.idealDuration.minMs) durationStatus = "too_short";
+    else if (durationMs > config.idealDuration.maxMs) durationStatus = "too_long";
+
+    // Build criterion reasons
+    const criterionReasons: ScoringLogData["criterionReasons"] = {};
+    if (breakdown.scriptMatch >= 80) {
+      criterionReasons.scriptMatch = `Alta cobertura del guion (${breakdown.scriptMatch.toFixed(0)}%)`;
+    } else if (breakdown.scriptMatch >= 50) {
+      criterionReasons.scriptMatch = `Cobertura parcial del guion (${breakdown.scriptMatch.toFixed(0)}%)`;
+    } else if (breakdown.scriptMatch > 0) {
+      criterionReasons.scriptMatch = `Baja cobertura del guion (${breakdown.scriptMatch.toFixed(0)}%)`;
+    } else {
+      criterionReasons.scriptMatch = "Sin coincidencia con el guion";
+    }
+
+    if (breakdown.whisperConfidence >= 80) {
+      criterionReasons.whisperConfidence = `Alta confianza (${breakdown.whisperConfidence.toFixed(0)}%)`;
+    } else if (breakdown.whisperConfidence >= 50) {
+      criterionReasons.whisperConfidence = `Confianza media (${breakdown.whisperConfidence.toFixed(0)}%)`;
+    } else {
+      criterionReasons.whisperConfidence = `Baja confianza (${breakdown.whisperConfidence.toFixed(0)}%)`;
+    }
+
+    if (primaryTake?.isFalseStart) {
+      criterionReasons.takeOrder = `Falso comienzo (fluidez: ${breakdown.takeOrder.toFixed(0)}%)`;
+    } else if (breakdown.takeOrder >= 80) {
+      criterionReasons.takeOrder = `Alta fluidez (${breakdown.takeOrder.toFixed(0)}%)`;
+    } else if (breakdown.takeOrder >= 50) {
+      criterionReasons.takeOrder = `Fluidez media (${breakdown.takeOrder.toFixed(0)}%)`;
+    } else {
+      criterionReasons.takeOrder = `Baja fluidez (${breakdown.takeOrder.toFixed(0)}%)`;
+    }
+
+    criterionReasons.completeness =
+      breakdown.completeness >= 100
+        ? "Cubre inicio y fin de la frase"
+        : breakdown.completeness >= 75
+          ? `Buena cobertura (${breakdown.completeness.toFixed(0)}%)`
+          : `Cobertura parcial (${breakdown.completeness.toFixed(0)}%)`;
+
+    if (durationStatus === "ideal") {
+      criterionReasons.duration = "Duracion ideal";
+    } else if (durationStatus === "too_short") {
+      criterionReasons.duration = `Demasiado corto (${breakdown.duration.toFixed(0)}%)`;
+    } else {
+      criterionReasons.duration = `Demasiado largo (${breakdown.duration.toFixed(0)}%)`;
+    }
+
+    const data: ScoringLogData = {
+      segmentId: seg.id,
+      timing: { startMs: seg.startMs, endMs: seg.endMs, durationMs },
+      scores: {
+        total: takeScore?.totalScore ?? seg.score,
+        breakdown,
+        weighted,
+      },
+      scriptMatch: primaryTake
+        ? {
+            matchedSentenceIndices: [primaryTake.sentenceIndex],
+            coverageScore: takeScore?.breakdown.scriptCoverage ?? 0,
+            isRepetition: !selection.selected.some(
+              (t) => t.id === primaryTake.id
+            ),
+            transcribedText: primaryTake.transcribedText,
+          }
+        : undefined,
+      takeInfo: {
+        takeNumber,
+        detectionMethod: "script" as const,
+        groupId: primaryTake
+          ? `take-s${primaryTake.sentenceIndex}`
+          : undefined,
+      },
+      completeness: {
+        score: breakdown.completeness,
+        isCompleteSentence: breakdown.completeness >= 100,
+        boundaries: {
+          startScore: breakdown.completeness >= 75 ? 100 : 50,
+          endScore: breakdown.completeness >= 75 ? 100 : 50,
+          startAlignedWithCaption: true,
+          endHasPunctuation: breakdown.completeness >= 100,
+        },
+      },
+      durationAnalysis: {
+        score: breakdown.duration,
+        status: durationStatus,
+        idealRange: config.idealDuration,
+      },
+      criterionReasons,
+    };
+
+    logSegmentScoring(collector, data);
+    logSegmentDecision(
+      collector,
+      seg.id,
+      seg.enabled,
+      seg.reason,
+      seg.score >= 40 && seg.score <= 60,
+      seg.score
+    );
+  }
 }
 
 /**
@@ -419,19 +614,29 @@ export async function preselectSegments(
       missingScriptLines: selection.missingScripts.map((i) => i + 1),
     };
 
-    // Log decisions if collector is active
+    // Log scoring + decisions if collector is active
     if (collector) {
-      for (const seg of preselected) {
-        logSegmentDecision(
-          collector,
-          seg.id,
-          seg.enabled,
-          seg.reason,
-          seg.score >= 40 && seg.score <= 60,
-          seg.score
-        );
-      }
-      const log = finalizeLog(collector, videoId, config, stats, "traditional");
+      logTakeBasedSegments(
+        collector,
+        preselected,
+        selection,
+        takeResult,
+        captions,
+        takeScoreConfig,
+        config
+      );
+      // Override config weights to reflect take-based scoring for the log UI
+      const takeLogConfig: PreselectionConfig = {
+        ...config,
+        weights: {
+          scriptMatch: takeScoreConfig.weights.scriptCoverage,
+          whisperConfidence: takeScoreConfig.weights.whisperConfidence,
+          takeOrder: takeScoreConfig.weights.fluency,
+          completeness: takeScoreConfig.weights.completeness,
+          duration: takeScoreConfig.weights.duration,
+        },
+      };
+      const log = finalizeLog(collector, videoId, takeLogConfig, stats, "traditional");
       return { segments: preselected, stats, log };
     }
 
