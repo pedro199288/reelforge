@@ -140,7 +140,7 @@ export const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   silences: [],
   segments: ["silences", "full-captions"],
   cut: ["segments"],
-  captions: ["full-captions", "cut"],
+  captions: ["cut"],
   "effects-analysis": ["captions"],
   rendered: ["effects-analysis"],
 };
@@ -170,8 +170,8 @@ export const STEPS: {
   { key: "cut", label: "Cortado", description: "Cortar video sin silencios (genera cut-map)" },
   {
     key: "captions",
-    label: "Captions Post-Cuts",
-    description: "Captions derivados de full-captions + cut-map (sin segundo Whisper)",
+    label: "Captions (Whisper)",
+    description: "Transcripcion del video cortado con Whisper",
   },
   {
     key: "effects-analysis",

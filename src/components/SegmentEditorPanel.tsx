@@ -27,7 +27,7 @@ import {
   type TimelineSegment,
 } from "@/store/timeline";
 import { SegmentTimeline } from "./SegmentTimeline";
-import { usePlayheadSync } from "@/hooks/usePlayheadSync";
+import { useDoubleBufferedPlayback } from "@/hooks/useDoubleBufferedPlayback";
 import { useSegmentEditorShortcuts } from "@/hooks/useSegmentEditorShortcuts";
 import { FullscreenWrapper } from "./FullscreenWrapper";
 
@@ -81,36 +81,16 @@ export function SegmentEditorPanel({
   script,
   hasCaptions = false,
 }: SegmentEditorPanelProps) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [showAIPanel, setShowAIPanel] = useState(true);
 
-  // Smooth playhead sync using RAF during playback
-  const { currentTimeMs, isTransitioning } = usePlayheadSync({
-    videoElement: videoEl,
-    isPlaying,
-  });
-  const currentTime = currentTimeMs / 1000;
-
-  // State and refs for jump control (prevents race conditions in preview mode)
-  const [isJumping, setIsJumping] = useState(false);
-  const lastJumpTargetRef = useRef<number | null>(null);
-
   // Get segments from timeline store (these are the editable ones with enabled state)
   const timelineSegments = useVideoSegments(videoId);
   const { importSemanticSegments, importPreselectedSegments, toggleSegment, clearSelection } = useTimelineActions();
   const selection = useTimelineSelection();
-
-  // Keyboard shortcuts (CapCut-style)
-  useSegmentEditorShortcuts({
-    videoId,
-    videoRef,
-    totalDurationMs: totalDuration * 1000,
-  });
 
   // Find the selected segment
   const selectedSegment = useMemo(() => {
@@ -180,6 +160,31 @@ export function SegmentEditorPanel({
     [timelineSegments]
   );
 
+  // Double-buffered playback for seamless transitions
+  const {
+    activeVideo,
+    activeVideoRef,
+    currentTimeMs,
+    isTransitioning,
+    togglePlayback,
+    seekTo: hookSeekTo,
+    setVideoElA,
+    setVideoElB,
+  } = useDoubleBufferedPlayback({
+    videoPath,
+    enabledSegments,
+    isPlaying,
+  });
+
+  const currentTime = currentTimeMs / 1000;
+
+  // Keyboard shortcuts (CapCut-style)
+  useSegmentEditorShortcuts({
+    videoId,
+    videoRef: activeVideoRef,
+    totalDurationMs: totalDuration * 1000,
+  });
+
   // Calculate statistics
   const stats = useMemo(() => {
     const selectedDuration = enabledSegments.reduce(
@@ -199,131 +204,9 @@ export function SegmentEditorPanel({
     };
   }, [timelineSegments, enabledSegments, totalDuration]);
 
-  // Map original time to edited time (for preview mode)
-  const mapTimeToEdited = useCallback(
-    (originalMs: number): number | null => {
-      let editedMs = 0;
-
-      for (const segment of enabledSegments) {
-        if (originalMs >= segment.startMs && originalMs <= segment.endMs) {
-          return editedMs + (originalMs - segment.startMs);
-        }
-        if (originalMs > segment.endMs) {
-          editedMs += segment.endMs - segment.startMs;
-        }
-      }
-
-      // Time is in a silence/cut region
-      return null;
-    },
-    [enabledSegments]
-  );
-
-  // Ref for jump debounce (needs stable reference across renders)
-  const isJumpingRef = useRef(isJumping);
-  useEffect(() => {
-    isJumpingRef.current = isJumping;
-  }, [isJumping]);
-
-  // Perform jump with position-based deduplication and seeked event handling
-  const performJump = useCallback((targetTime: number) => {
-    const video = videoRef.current;
-    if (!video || isJumpingRef.current) return;
-
-    // Avoid redundant jump to the SAME destination (within 50ms tolerance)
-    if (
-      lastJumpTargetRef.current !== null &&
-      Math.abs(targetTime - lastJumpTargetRef.current) < 0.05
-    ) {
-      return;
-    }
-
-    setIsJumping(true);
-    lastJumpTargetRef.current = targetTime;
-
-    video.currentTime = targetTime;
-
-    // Wait for the video to confirm the seek
-    const handleSeeked = () => {
-      setIsJumping(false);
-      video.removeEventListener("seeked", handleSeeked);
-    };
-    video.addEventListener("seeked", handleSeeked, { once: true });
-
-    // Safety timeout in case seeked event doesn't fire
-    setTimeout(() => setIsJumping(false), 200);
-  }, []);
-
-  // Preview playback: proactive edge detection with lookahead
-  // Always skips disabled segments during playback
-  useEffect(() => {
-    if (!isPlaying || isJumping) return;
-
-    const video = videoRef.current;
-    if (!video) return;
-
-    // Find the current segment we're in
-    const currentSegment = enabledSegments.find(
-      (s) => currentTimeMs >= s.startMs && currentTimeMs <= s.endMs
-    );
-
-    if (currentSegment) {
-      // We're inside a segment - check if we're approaching the end
-      const msToEnd = currentSegment.endMs - currentTimeMs;
-      const LOOKAHEAD_MS = 17; // ~1 frame at 60fps - jump just before hitting the gap
-
-      if (msToEnd <= LOOKAHEAD_MS && msToEnd > 0) {
-        // About to exit this segment - find and jump to next
-        const nextSegment = enabledSegments.find(
-          (s) => s.startMs > currentSegment.endMs
-        );
-        if (nextSegment) {
-          performJump(nextSegment.startMs / 1000);
-        } else {
-          // No more segments - pause at end
-          video.pause();
-        }
-      }
-      return;
-    }
-
-    // Fallback: we're already in a gap (shouldn't happen often with lookahead)
-    const nextSegment = enabledSegments.find((s) => s.startMs > currentTimeMs);
-    if (nextSegment) {
-      performJump(nextSegment.startMs / 1000);
-    } else {
-      // No more segments - end of video
-      video.pause();
-    }
-  }, [currentTimeMs, isPlaying, isJumping, enabledSegments, performJump]);
-
-  const togglePlayback = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (isPlaying) {
-      video.pause();
-    } else {
-      // If starting from a cut/disabled region, jump to next enabled segment
-      const currentMs = video.currentTime * 1000;
-      const editedMs = mapTimeToEdited(currentMs);
-      if (editedMs === null) {
-        const nextSegment = enabledSegments.find((s) => s.startMs > currentMs);
-        if (nextSegment) {
-          video.currentTime = nextSegment.startMs / 1000;
-        } else if (enabledSegments.length > 0) {
-          video.currentTime = enabledSegments[0].startMs / 1000;
-        }
-      }
-      video.play();
-    }
-  }, [isPlaying, enabledSegments, mapTimeToEdited]);
-
   const handleSeekTo = useCallback((seconds: number) => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.currentTime = seconds;
-  }, []);
+    hookSeekTo(seconds * 1000);
+  }, [hookSeekTo]);
 
   const handleSelectAll = useCallback(() => {
     // Enable all segments
@@ -377,16 +260,29 @@ export function SegmentEditorPanel({
             "relative bg-black",
             isFullscreen ? "flex-1 min-h-0" : "aspect-video"
           )}>
-            {/* eslint-disable-next-line @remotion/warn-native-media-tag -- Not a Remotion composition */}
+            {/* Double-buffered video: two overlapping <video> elements for seamless transitions */}
+            {/* eslint-disable @remotion/warn-native-media-tag -- Not a Remotion composition */}
             <video
-              ref={(el) => { videoRef.current = el; setVideoEl(el); }}
+              ref={setVideoElA}
               src={videoPath}
-              className="w-full h-full object-contain"
+              className={cn("absolute inset-0 w-full h-full object-contain", activeVideo !== "A" && "invisible")}
+              muted={activeVideo !== "A"}
               onClick={togglePlayback}
               onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-              onEnded={() => setIsPlaying(false)}
+              onPause={() => { if (activeVideo === "A") setIsPlaying(false); }}
+              onEnded={() => { if (activeVideo === "A") setIsPlaying(false); }}
             />
+            <video
+              ref={setVideoElB}
+              src={videoPath}
+              className={cn("absolute inset-0 w-full h-full object-contain", activeVideo !== "B" && "invisible")}
+              muted={activeVideo !== "B"}
+              onClick={togglePlayback}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => { if (activeVideo === "B") setIsPlaying(false); }}
+              onEnded={() => { if (activeVideo === "B") setIsPlaying(false); }}
+            />
+            {/* eslint-enable @remotion/warn-native-media-tag */}
 
             {/* Play/Pause overlay */}
             {!isPlaying && (
@@ -475,9 +371,7 @@ export function SegmentEditorPanel({
               durationMs={totalDuration * 1000}
               currentTimeMs={currentTimeMs}
               onSeek={(ms) => {
-                if (videoRef.current) {
-                  videoRef.current.currentTime = ms / 1000;
-                }
+                hookSeekTo(ms);
               }}
               enablePlayheadTransition={isTransitioning}
             />

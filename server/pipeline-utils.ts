@@ -110,18 +110,17 @@ export interface EffectsAnalysisResultMeta {
 // Step dependencies: step -> required preceding steps
 // Pipeline:
 // silences ────────┐
-//                  ├─> segments -> cut ─┐
-// full-captions ──┘                     ├─> captions -> effects-analysis -> rendered
-// full-captions ───────────────────────┘
+//                  ├─> segments -> cut -> captions -> effects-analysis -> rendered
+// full-captions ──┘
 // preselection-logs is a side-effect of segments, generated alongside it
 // segments uses full-captions for real preselection scoring
-// captions are derived from full-captions + cut-map (no second Whisper run)
+// captions runs Whisper on the cut video (not derived from full-captions)
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   silences: [],
   "full-captions": [],
   segments: ["silences", "full-captions"],
   cut: ["segments"],
-  captions: ["full-captions", "cut"],
+  captions: ["cut"],
   "effects-analysis": ["captions"],  // Now depends on post-cut captions
   rendered: ["effects-analysis"],
   "preselection-logs": ["segments"],  // Generated alongside segments

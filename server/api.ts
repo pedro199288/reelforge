@@ -28,7 +28,6 @@ import {
   type CutMapEntry,
 } from "./pipeline-utils";
 import type { Caption } from "../src/core/script/align";
-import type { CleanupLogEntry } from "../src/core/captions/cleanup";
 import {
   detectSilences,
   detectSilencesEnvelope,
@@ -1912,72 +1911,99 @@ async function handleRequest(req: Request): Promise<Response> {
           }
 
           case "captions": {
-            sendEvent("progress", { step, progress: 10, message: "Cargando full captions y cut-map..." });
+            // Run Whisper directly on the cut video (clean mode for final subtitles)
+            sendEvent("progress", { step, progress: 10, message: "Cargando resultado del corte..." });
 
-            // Load full captions result
-            const fullCaptionsResult = loadStepResult<CaptionsResult>(videoId, "full-captions");
-            if (!fullCaptionsResult) {
-              throw new Error("Full captions not found. Run full-captions step first.");
-            }
-
-            const fullCaptionsPath = join(process.cwd(), fullCaptionsResult.captionsPath);
-            if (!existsSync(fullCaptionsPath)) {
-              throw new Error(`Full captions file not found: ${fullCaptionsResult.captionsPath}`);
-            }
-
-            // Load cut result for cut-map
             const cutResult = loadStepResult<CutResult>(videoId, "cut");
-            if (!cutResult?.cutMap) {
+            if (!cutResult?.outputPath) {
               throw new Error("Cut result not found. Run cut step first.");
             }
 
-            sendEvent("progress", { step, progress: 30, message: "Derivando captions del video cortado..." });
-
-            const fullCaptions: Caption[] = JSON.parse(await Bun.file(fullCaptionsPath).text());
-
-            // Derive cut captions via forward remapping (no Whisper needed)
-            // Cleanup pipeline: confidence filter → false starts → repeated phrases → timing fix
-            const { deriveCutCaptions } = await import("../src/core/captions/derive-cut-captions");
-            const cleanupLog: CleanupLogEntry[] = [];
-            const cutCaptions = deriveCutCaptions(fullCaptions, cutResult.cutMap, {
-              cleanup: true,
-              cleanupLog,
-            });
-            if (cleanupLog.length > 0) {
-              console.log(`[captions] Cleanup: ${cleanupLog.length} items removed for ${videoId}`);
+            const cutVideoPath = join(process.cwd(), cutResult.outputPath);
+            if (!existsSync(cutVideoPath)) {
+              throw new Error(`Cut video not found: ${cutResult.outputPath}`);
             }
 
-            // Save derived captions to subs directory
-            const ext = extname(filename);
-            const name = basename(filename, ext);
-            const subsPath = join("public", "subs", `${name}-cut.json`);
-            const fullSubsPath = join(process.cwd(), subsPath);
+            sendEvent("progress", { step, progress: 20, message: "Generando subtitulos del video cortado con Whisper..." });
 
-            // Ensure subs directory exists
-            const subsDir = join(process.cwd(), "public", "subs");
-            if (!existsSync(subsDir)) {
-              mkdirSync(subsDir, { recursive: true });
+            // Build sub.mjs args — clean mode (no --raw) for final subtitles
+            const captionsSubArgs = ["node", "sub.mjs"];
+            if (script) {
+              const captionsScriptDir = join(process.cwd(), "public", "pipeline", videoId);
+              if (!existsSync(captionsScriptDir)) {
+                mkdirSync(captionsScriptDir, { recursive: true });
+              }
+              const captionsScriptFile = join(captionsScriptDir, "script-prompt.txt");
+              const { writeFileSync: writeSyncCaptions } = await import("node:fs");
+              writeSyncCaptions(captionsScriptFile, script);
+              captionsSubArgs.push("--script", captionsScriptFile);
+            }
+            captionsSubArgs.push(cutVideoPath);
+
+            const captionsProc = spawn(captionsSubArgs, { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+
+            const capStderrChunks: string[] = [];
+            const capStderrReader = captionsProc.stderr.getReader();
+            const capDecoder = new TextDecoder();
+            (async () => {
+              try {
+                while (true) {
+                  const { done, value } = await capStderrReader.read();
+                  if (done) break;
+                  capStderrChunks.push(capDecoder.decode(value, { stream: true }));
+                }
+              } catch { }
+            })();
+
+            // Pipe stdout to server console
+            const capStdoutReader = captionsProc.stdout.getReader();
+            const capStdoutDecoder = new TextDecoder();
+            (async () => {
+              try {
+                while (true) {
+                  const { done, value } = await capStdoutReader.read();
+                  if (done) break;
+                  process.stdout.write(capStdoutDecoder.decode(value, { stream: true }));
+                }
+              } catch { }
+            })();
+
+            const capExitCode = await captionsProc.exited;
+            if (capExitCode !== 0) {
+              const capStderrOutput = capStderrChunks.join("").trim();
+              throw new Error(`Captions generation failed (code ${capExitCode})${capStderrOutput ? `: ${capStderrOutput}` : ""}`);
             }
 
-            await Bun.write(fullSubsPath, JSON.stringify(cutCaptions, null, 2));
+            // Determine subs path — cut video name
+            const capExt = extname(filename);
+            const capName = basename(filename, capExt);
+            const capSubsPath = join("public", "subs", `${capName}-cut.json`);
 
             sendEvent("progress", { step, progress: 90, message: "Guardando resultados..." });
 
-            const captionsCount = cutCaptions.length;
-            const result: CaptionsResult = {
-              captionsPath: subsPath,
-              captionsCount,
+            let capCaptionsCount = 0;
+            const capFullSubsPath = join(process.cwd(), capSubsPath);
+            if (existsSync(capFullSubsPath)) {
+              try {
+                const capCaptions = JSON.parse(await Bun.file(capFullSubsPath).text());
+                capCaptionsCount = Array.isArray(capCaptions) ? capCaptions.length : 0;
+              } catch { }
+            }
+
+            const capResult: CaptionsResult = {
+              captionsPath: capSubsPath,
+              captionsCount: capCaptionsCount,
               createdAt: new Date().toISOString(),
             };
 
-            const resultPath = saveStepResult(videoId, step, result);
+            const capResultPath = saveStepResult(videoId, step, capResult);
             updateStepStatus(videoId, step, {
               status: "completed",
               completedAt: new Date().toISOString(),
-              resultFile: resultPath,
+              resultFile: capResultPath,
             });
 
-            sendEvent("complete", { step, result });
+            sendEvent("complete", { step, result: capResult });
             break;
           }
 
