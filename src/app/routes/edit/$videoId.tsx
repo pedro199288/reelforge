@@ -271,7 +271,8 @@ function EditorPage() {
   // --- Cut mode ---
   const cutCompleted = pipelineStatus?.steps.cut?.status === "completed";
   const canViewCut = cutCompleted === true;
-  const cutVideoStreamUrl = `${API_URL}/api/stream/videos/${videoId}-cut.mp4`;
+  const cutFilename = video ? video.filename.replace(/(\.[^.]+)$/, "-cut$1") : "";
+  const cutVideoStreamUrl = cutFilename ? `${API_URL}/api/stream/videos/${cutFilename}` : "";
 
   // --- Captions for overlay ---
   const captionsCompleted = pipelineStatus?.steps.captions?.status === "completed";
@@ -343,7 +344,7 @@ function EditorPage() {
   }, [pipelineStatus]);
 
   const FPS = 30;
-  const cutVideoSrc = `/videos/${videoId}-cut.mp4`;
+  const cutVideoSrc = cutFilename ? `/videos/${cutFilename}` : "";
   const durationInFrames = cutVideoDuration ? Math.floor(cutVideoDuration * FPS) : 0;
 
   const completedSteps = useMemo(() => {
