@@ -51,8 +51,12 @@ import { ShortcutTooltipContent } from "@/components/ui/shortcut-tooltip";
 import { useHotkeys } from "react-hotkeys-hook";
 import { Textarea } from "@/components/ui/textarea";
 import { EditorPipelinePanel } from "@/components/EditorPipelinePanel";
+import type { Caption } from "@/core/script/align";
 import { useOriginalCaptions } from "@/hooks/useOriginalCaptions";
+import { useFullCaptions } from "@/hooks/useFullCaptions";
 import { VideoSubtitleOverlay } from "@/components/VideoSubtitleOverlay";
+import { groupIntoPages } from "@/core/captions/group-into-pages";
+import { CaptionListPanel } from "@/components/CaptionListPanel";
 
 const API_URL = "http://localhost:3012";
 
@@ -68,6 +72,7 @@ interface VideoManifest {
 
 type PipelineStep =
   | "raw"
+  | "full-captions"
   | "silences"
   | "segments"
   | "cut"
@@ -164,11 +169,24 @@ function EditorPage() {
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>("pipeline");
   const [isPlaying, setIsPlaying] = useState(false);
   const [previewMode, setPreviewMode] = useState<"edit" | "preview">("edit");
-  const [continuousPlay, setContinuousPlay] = useState(false);
+  const [continuousPlay, setContinuousPlay] = useState(() => {
+    try { return localStorage.getItem("editor:continuousPlay") === "true"; } catch { return false; }
+  });
   const [cutVideoDuration, setCutVideoDuration] = useState<number | null>(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  type RightPanelTab = "logs" | "subtitles";
+  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>("logs");
+  const [selectedCaptionPageIndex, setSelectedCaptionPageIndex] = useState<number | null>(null);
+  const [editedCaptions, setEditedCaptions] = useState<Caption[] | null>(null);
+  const [nativeVideoDuration, setNativeVideoDuration] = useState<number | null>(null);
   const [highlightedLogSegmentId, setHighlightedLogSegmentId] = useState<string | null>(null);
-  const [showCaptions, setShowCaptions] = useState(false);
+  const [showCaptions, setShowCaptions] = useState(() => {
+    try { return localStorage.getItem("editor:showCaptions") === "true"; } catch { return false; }
+  });
+
+  // --- Persist footer toggle preferences ---
+  useEffect(() => { try { localStorage.setItem("editor:continuousPlay", String(continuousPlay)); } catch {} }, [continuousPlay]);
+  useEffect(() => { try { localStorage.setItem("editor:showCaptions", String(showCaptions)); } catch {} }, [showCaptions]);
 
   // --- Video ref ---
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -180,7 +198,7 @@ function EditorPage() {
   const setScript = useWorkspaceStore((state) => state.setScript);
   const clearScript = useWorkspaceStore((state) => state.clearScript);
   const timelineSegments = useVideoSegments(videoId);
-  const { importSemanticSegments, importPreselectedSegments } =
+  const { importSemanticSegments, importPreselectedSegments, clearTimeline } =
     useTimelineActions();
   const selection = useTimelineSelection();
   const { highlightColor, fontFamily } = useSubtitleStore();
@@ -210,12 +228,46 @@ function EditorPage() {
     setContinuousPlay(v => !v);
   }, []);
 
-  // --- Original captions for overlay ---
+  // --- Captions for overlay ---
   const captionsCompleted = pipelineStatus?.steps.captions?.status === "completed";
-  const { captions: originalCaptions } = useOriginalCaptions(videoId, captionsCompleted ?? false);
+  const { captions: postCutCaptions } = useOriginalCaptions(videoId, captionsCompleted ?? false);
+
+  const fullCaptionsCompleted = pipelineStatus?.steps["full-captions"]?.status === "completed";
+  const { captions: fullCaptions } = useFullCaptions(videoId, fullCaptionsCompleted ?? false);
+
+  // Use post-cut captions if available, fallback to full captions
+  const activeCaptions = postCutCaptions ?? fullCaptions;
+  const captionSource: "post-cut" | "full" | null = postCutCaptions
+    ? "post-cut"
+    : fullCaptions
+      ? "full"
+      : null;
+
+  // --- Effective captions (with local edits) ---
+  const effectiveCaptions = editedCaptions ?? activeCaptions;
+  const captionPages = useMemo(
+    () => effectiveCaptions ? groupIntoPages(effectiveCaptions) : [],
+    [effectiveCaptions]
+  );
+
+  // Initialize edited captions when active captions first arrive
+  useEffect(() => {
+    if (activeCaptions && !editedCaptions) {
+      setEditedCaptions([...activeCaptions]);
+    }
+  }, [activeCaptions]);
+
+  const handleEditCaption = useCallback((captionIndex: number, newText: string) => {
+    setEditedCaptions(prev => {
+      if (!prev) return prev;
+      const updated = [...prev];
+      updated[captionIndex] = { ...updated[captionIndex], text: newText };
+      return updated;
+    });
+  }, []);
 
   // --- Derived data ---
-  const totalDuration = segmentsResult?.totalDuration ?? 0;
+  const totalDuration = segmentsResult?.totalDuration ?? nativeVideoDuration ?? 0;
   const videoPath = video
     ? `${API_URL}/api/stream/videos/${video.filename}`
     : "";
@@ -301,7 +353,7 @@ function EditorPage() {
           const status = (await res.json()) as BackendPipelineStatus;
           setPipelineStatus(status);
 
-          // Load segments result if completed
+          // Load segments result if completed, clear if not
           if (status.steps.segments?.status === "completed") {
             const segRes = await fetch(
               `${API_URL}/api/pipeline/result?videoId=${encodeURIComponent(vid.id)}&step=segments`
@@ -310,9 +362,11 @@ function EditorPage() {
               const result = (await segRes.json()) as SegmentsResult;
               setSegmentsResult(result);
             }
+          } else {
+            setSegmentsResult(null);
           }
 
-          // Load preselection logs
+          // Load preselection logs if segments completed, clear if not
           if (status.steps.segments?.status === "completed") {
             try {
               const logRes = await fetch(
@@ -325,6 +379,8 @@ function EditorPage() {
             } catch {
               // Logs are optional
             }
+          } else {
+            setPreselectionLog(null);
           }
         }
       } catch (err) {
@@ -364,15 +420,23 @@ function EditorPage() {
     }
   }, [canPreview, previewMode]);
 
-  // Close right panel if preselection logs disappear (e.g. video change)
+  // Close right panel if all content disappears (e.g. video change)
   useEffect(() => {
-    if (!preselectionLog) setRightPanelOpen(false);
-  }, [preselectionLog]);
+    if (!preselectionLog && !effectiveCaptions) setRightPanelOpen(false);
+  }, [preselectionLog, effectiveCaptions]);
 
   // Clear highlight when right panel closes
   useEffect(() => {
     if (!rightPanelOpen) setHighlightedLogSegmentId(null);
   }, [rightPanelOpen]);
+
+  // --- Clear stale persisted segments when pipeline hasn't produced them ---
+  useEffect(() => {
+    const segmentsCompleted = pipelineStatus?.steps.segments?.status === "completed";
+    if (pipelineStatus && !segmentsCompleted && timelineSegments.length > 0) {
+      clearTimeline(videoId);
+    }
+  }, [pipelineStatus, videoId, timelineSegments.length, clearTimeline]);
 
   // --- Import segments to timeline store ---
   const lastImportRef = useRef<string | null>(null);
@@ -532,6 +596,7 @@ function EditorPage() {
   // --- Show preselection log for a segment ---
   const handleShowLog = useCallback((segmentId: string) => {
     setRightPanelOpen(true);
+    setRightPanelTab("logs");
     setHighlightedLogSegmentId(segmentId);
   }, []);
 
@@ -572,7 +637,7 @@ function EditorPage() {
     );
   }
 
-  const hasSegments = segmentsResult && segmentsResult.segments.length > 0;
+  const showTimeline = totalDuration > 0 && videoPath;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -608,13 +673,13 @@ function EditorPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          {preselectionLog && (
+          {(preselectionLog || effectiveCaptions) && (
             <Button
               variant={rightPanelOpen ? "default" : "ghost"}
               size="sm"
               className="h-7 px-2 gap-1.5 hidden md:inline-flex"
               onClick={() => setRightPanelOpen(!rightPanelOpen)}
-              title={rightPanelOpen ? "Cerrar logs" : "Ver logs de preseleccion"}
+              title={rightPanelOpen ? "Cerrar panel" : "Ver panel de debug"}
             >
               {rightPanelOpen ? (
                 <PanelRightClose className="w-4 h-4" />
@@ -810,6 +875,10 @@ function EditorPage() {
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => setIsPlaying(false)}
+                onLoadedMetadata={(e) => {
+                  const d = e.currentTarget.duration;
+                  if (d && isFinite(d)) setNativeVideoDuration(d);
+                }}
               />
 
               {/* Play overlay */}
@@ -826,8 +895,8 @@ function EditorPage() {
               )}
 
               {/* Subtitle overlay */}
-              {showCaptions && originalCaptions && (
-                <VideoSubtitleOverlay captions={originalCaptions} currentTimeMs={currentTimeMs} />
+              {showCaptions && effectiveCaptions && (
+                <VideoSubtitleOverlay captions={effectiveCaptions} currentTimeMs={currentTimeMs} />
               )}
 
               {/* Time indicator */}
@@ -840,32 +909,56 @@ function EditorPage() {
           )}
         </div>
 
-        {/* Right panel - Preselection Logs */}
-        {rightPanelOpen && preselectionLog && (
+        {/* Right panel - Logs / Subtitles */}
+        {rightPanelOpen && (preselectionLog || effectiveCaptions) && (
           <aside className="hidden md:flex md:flex-col md:w-[420px] md:flex-shrink-0 border-l bg-background min-h-0">
-            <div className="flex items-center justify-end px-2 py-1 border-b flex-shrink-0">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0"
-                onClick={() => setRightPanelOpen(false)}
-              >
+            {/* Tabs + close */}
+            <div className="flex items-center justify-between border-b flex-shrink-0">
+              <div className="flex bg-muted/20">
+                {preselectionLog && (
+                  <SidePanelTabButton active={rightPanelTab === "logs"} onClick={() => setRightPanelTab("logs")}>
+                    <ScrollText className="w-3.5 h-3.5" /> Logs
+                  </SidePanelTabButton>
+                )}
+                {effectiveCaptions && (
+                  <SidePanelTabButton active={rightPanelTab === "subtitles"} onClick={() => setRightPanelTab("subtitles")}>
+                    <Subtitles className="w-3.5 h-3.5" /> Subtítulos
+                  </SidePanelTabButton>
+                )}
+              </div>
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 mr-2" onClick={() => setRightPanelOpen(false)}>
                 <X className="w-3.5 h-3.5" />
               </Button>
             </div>
-            <div className="flex-1 min-h-0 p-3">
-              <PreselectionLogs
-                log={preselectionLog}
-                onSeekTo={(seconds) => handleSeekTo(seconds * 1000)}
-                highlightSegmentId={highlightedLogSegmentId}
-              />
+            {/* Tab content */}
+            <div className="flex-1 min-h-0">
+              {rightPanelTab === "logs" && preselectionLog && (
+                <div className="p-3 h-full">
+                  <PreselectionLogs
+                    log={preselectionLog}
+                    onSeekTo={(seconds) => handleSeekTo(seconds * 1000)}
+                    highlightSegmentId={highlightedLogSegmentId}
+                  />
+                </div>
+              )}
+              {rightPanelTab === "subtitles" && effectiveCaptions && (
+                <CaptionListPanel
+                  pages={captionPages}
+                  captions={effectiveCaptions}
+                  currentTimeMs={currentTimeMs}
+                  selectedPageIndex={selectedCaptionPageIndex}
+                  onSelectPage={setSelectedCaptionPageIndex}
+                  onSeekTo={handleSeekTo}
+                  onEditCaption={handleEditCaption}
+                />
+              )}
             </div>
           </aside>
         )}
       </div>
 
       {/* Timeline - FULL WIDTH */}
-      {hasSegments && (
+      {showTimeline && (
         <div className="flex-shrink-0 border-t">
           <SegmentTimeline
             videoId={videoId}
@@ -880,6 +973,13 @@ function EditorPage() {
             enablePlayheadTransition={isTransitioning}
             continuousPlay={continuousPlay}
             onShowLog={preselectionLog ? handleShowLog : undefined}
+            captionPages={captionPages}
+            selectedCaptionPageIndex={selectedCaptionPageIndex}
+            onSelectCaptionPage={(idx) => {
+              setSelectedCaptionPageIndex(idx);
+              setRightPanelOpen(true);
+              setRightPanelTab("subtitles");
+            }}
           />
         </div>
       )}
@@ -907,7 +1007,7 @@ function EditorPage() {
           )}
         </div>
         <div className="flex items-center gap-1">
-          {previewMode === "edit" && originalCaptions && (
+          {previewMode === "edit" && activeCaptions && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -922,6 +1022,16 @@ function EditorPage() {
               </TooltipTrigger>
               <ShortcutTooltipContent shortcut="C">{showCaptions ? "Ocultar subtítulos" : "Mostrar subtítulos"}</ShortcutTooltipContent>
             </Tooltip>
+          )}
+          {showCaptions && captionSource && (
+            <span className={cn(
+              "text-[10px] px-1.5 py-0.5 rounded",
+              captionSource === "post-cut"
+                ? "bg-emerald-600/20 text-emerald-400"
+                : "bg-amber-600/20 text-amber-400"
+            )}>
+              {captionSource === "post-cut" ? "Post-Cuts" : "Full"}
+            </span>
           )}
           {previewMode === "edit" && (
             <Tooltip>

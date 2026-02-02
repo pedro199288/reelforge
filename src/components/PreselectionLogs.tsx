@@ -156,6 +156,9 @@ function SegmentLogCard({
 
           <span className="text-sm font-mono text-muted-foreground flex-shrink-0">
             {formatTime(segment.timing.startMs)} - {formatTime(segment.timing.endMs)}
+            <span className="text-[9px] text-muted-foreground/50 ml-1.5">
+              ({segment.timing.startMs}–{segment.timing.endMs}ms)
+            </span>
           </span>
 
           <Badge

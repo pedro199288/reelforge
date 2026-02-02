@@ -10,7 +10,9 @@ import { cn } from "@/lib/utils";
 import { TimelineRuler } from "@/components/Timeline/TimelineRuler";
 import { TimelinePlayhead } from "@/components/Timeline/TimelinePlayhead";
 import { SegmentTrack } from "@/components/Timeline/SegmentTrack";
+import { CaptionTrack } from "@/components/Timeline/CaptionTrack";
 import { LABEL_COLUMN_WIDTH, getPxPerMs } from "@/components/Timeline/constants";
+import type { SubtitlePage } from "@/core/captions/group-into-pages";
 import { useWaveform } from "@/hooks/useWaveform";
 import {
   useVideoSegments,
@@ -37,6 +39,12 @@ interface SegmentTimelineProps {
   continuousPlay?: boolean;
   /** Callback when user clicks the "show log" button on a segment */
   onShowLog?: (segmentId: string) => void;
+  /** Caption pages for subtitle debug track */
+  captionPages?: SubtitlePage[];
+  /** Currently selected caption page index */
+  selectedCaptionPageIndex?: number | null;
+  /** Callback when user selects a caption page */
+  onSelectCaptionPage?: (index: number) => void;
 }
 
 export function SegmentTimeline({
@@ -49,6 +57,9 @@ export function SegmentTimeline({
   enablePlayheadTransition = false,
   continuousPlay = false,
   onShowLog,
+  captionPages,
+  selectedCaptionPageIndex,
+  onSelectCaptionPage,
 }: SegmentTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -648,6 +659,20 @@ export function SegmentTimeline({
           expanded={trackExpanded}
           onShowLog={onShowLog}
         />
+
+        {/* Caption track - only in full timeline mode */}
+        {showFullTimeline && captionPages && captionPages.length > 0 && (
+          <CaptionTrack
+            pages={captionPages}
+            zoomLevel={zoomLevel}
+            viewportStartMs={viewportStartMs}
+            viewportWidthPx={viewportWidthPx}
+            currentTimeMs={currentTimeMs}
+            selectedPageIndex={selectedCaptionPageIndex ?? null}
+            onSelectPage={onSelectCaptionPage ?? (() => {})}
+            onSeek={handleRulerSeek}
+          />
+        )}
 
         {/* Playhead */}
         <TimelinePlayhead
