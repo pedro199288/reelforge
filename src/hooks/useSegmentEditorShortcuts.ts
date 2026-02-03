@@ -287,7 +287,7 @@ export function useSegmentEditorShortcuts({
       }
     },
     { enabled, preventDefault: true },
-    [],
+    [videoRef],
   );
 
   // Undo/Redo: Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y (capture phase to intercept before workspace handler)
