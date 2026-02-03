@@ -81,6 +81,8 @@ type PipelineStep =
   | "effects-analysis"
   | "rendered";
 
+type PlaybackMode = "selected" | "no-silences" | "continuous";
+
 interface StepState {
   status: "pending" | "running" | "completed" | "error";
 }
@@ -170,8 +172,12 @@ function EditorPage() {
 
   // --- Local UI state ---
   const [isPlaying, setIsPlaying] = useState(false);
-  const [continuousPlay, setContinuousPlay] = useState(() => {
-    try { return localStorage.getItem("editor:continuousPlay") === "true"; } catch { return false; }
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(() => {
+    try {
+      const stored = localStorage.getItem("editor:playbackMode");
+      if (stored === "selected" || stored === "no-silences" || stored === "continuous") return stored;
+      return localStorage.getItem("editor:continuousPlay") === "true" ? "continuous" : "selected";
+    } catch { return "selected"; }
   });
   const [cutVideoDuration, setCutVideoDuration] = useState<number | null>(null);
   const [selectedCaptionPageIndex, setSelectedCaptionPageIndex] = useState<number | null>(null);
@@ -186,7 +192,7 @@ function EditorPage() {
   const [playbackRate, setPlaybackRate] = useState(1);
 
   // --- Persist footer toggle preferences ---
-  useEffect(() => { try { localStorage.setItem("editor:continuousPlay", String(continuousPlay)); } catch {} }, [continuousPlay]);
+  useEffect(() => { try { localStorage.setItem("editor:playbackMode", playbackMode); } catch {} }, [playbackMode]);
   useEffect(() => { try { localStorage.setItem("editor:showCaptions", String(showCaptions)); } catch {} }, [showCaptions]);
 
   // --- Video refs ---
@@ -236,7 +242,9 @@ function EditorPage() {
   useHotkeys("j", () => {
     if (isEditableElement()) return;
     if (videoSource !== "original") return;
-    setContinuousPlay(v => !v);
+    setPlaybackMode(prev =>
+      prev === "selected" ? "no-silences" : prev === "no-silences" ? "continuous" : "selected"
+    );
   }, [videoSource]);
 
   useHotkeys("r", () => {
@@ -422,6 +430,11 @@ function EditorPage() {
       timelineSegments
         .filter((s) => s.enabled)
         .sort((a, b) => a.startMs - b.startMs),
+    [timelineSegments]
+  );
+
+  const allSegmentsSorted = useMemo(
+    () => [...timelineSegments].sort((a, b) => a.startMs - b.startMs),
     [timelineSegments]
   );
 
@@ -617,22 +630,6 @@ function EditorPage() {
   ]);
 
   // --- Skip disabled segments (original mode only) ---
-  const mapTimeToEdited = useCallback(
-    (originalMs: number): number | null => {
-      let editedMs = 0;
-      for (const segment of enabledSegments) {
-        if (originalMs >= segment.startMs && originalMs <= segment.endMs) {
-          return editedMs + (originalMs - segment.startMs);
-        }
-        if (originalMs > segment.endMs) {
-          editedMs += segment.endMs - segment.startMs;
-        }
-      }
-      return null;
-    },
-    [enabledSegments]
-  );
-
   const isJumpingRef = useRef(false);
   const lastJumpTargetRef = useRef<number | null>(null);
 
@@ -662,12 +659,14 @@ function EditorPage() {
 
   useEffect(() => {
     if (videoSource !== "original") return;
-    if (!isPlaying || isJumpingRef.current || continuousPlay) return;
-    if (enabledSegments.length === 0) return;
+    if (!isPlaying || isJumpingRef.current || playbackMode === "continuous") return;
+
+    const activeSegments = playbackMode === "selected" ? enabledSegments : allSegmentsSorted;
+    if (activeSegments.length === 0) return;
     const v = videoRef.current;
     if (!v) return;
 
-    const currentSegment = enabledSegments.find(
+    const currentSegment = activeSegments.find(
       (s) => currentTimeMs >= s.startMs && currentTimeMs <= s.endMs
     );
 
@@ -676,7 +675,7 @@ function EditorPage() {
       const LOOKAHEAD_MS = 17;
 
       if (msToEnd <= LOOKAHEAD_MS && msToEnd > 0) {
-        const nextSegment = enabledSegments.find(
+        const nextSegment = activeSegments.find(
           (s) => s.startMs > currentSegment.endMs
         );
         if (nextSegment) {
@@ -688,13 +687,13 @@ function EditorPage() {
       return;
     }
 
-    const nextSegment = enabledSegments.find((s) => s.startMs > currentTimeMs);
+    const nextSegment = activeSegments.find((s) => s.startMs > currentTimeMs);
     if (nextSegment) {
       performJump(nextSegment.startMs / 1000);
     } else {
       v.pause();
     }
-  }, [currentTimeMs, isPlaying, enabledSegments, performJump, continuousPlay, videoSource]);
+  }, [currentTimeMs, isPlaying, enabledSegments, allSegmentsSorted, performJump, playbackMode, videoSource]);
 
   const togglePlayback = useCallback(() => {
     const v = activeVideoRef.current;
@@ -703,23 +702,24 @@ function EditorPage() {
     if (isPlaying) {
       v.pause();
     } else {
-      if (videoSource === "original" && !continuousPlay) {
+      if (videoSource === "original" && playbackMode !== "continuous") {
         const currentMs = v.currentTime * 1000;
-        const editedMs = mapTimeToEdited(currentMs);
-        if (editedMs === null) {
-          const nextSegment = enabledSegments.find(
-            (s) => s.startMs > currentMs
-          );
+        const activeSegments = playbackMode === "selected" ? enabledSegments : allSegmentsSorted;
+        const isInSegment = activeSegments.some(
+          (s) => currentMs >= s.startMs && currentMs <= s.endMs
+        );
+        if (!isInSegment) {
+          const nextSegment = activeSegments.find((s) => s.startMs > currentMs);
           if (nextSegment) {
             v.currentTime = nextSegment.startMs / 1000;
-          } else if (enabledSegments.length > 0) {
-            v.currentTime = enabledSegments[0].startMs / 1000;
+          } else if (activeSegments.length > 0) {
+            v.currentTime = activeSegments[0].startMs / 1000;
           }
         }
       }
       v.play();
     }
-  }, [isPlaying, enabledSegments, mapTimeToEdited, continuousPlay, videoSource, activeVideoRef]);
+  }, [isPlaying, enabledSegments, allSegmentsSorted, playbackMode, videoSource, activeVideoRef]);
 
   const handleSeekTo = useCallback((ms: number) => {
     if (activeVideoRef.current) {
@@ -1031,7 +1031,7 @@ function EditorPage() {
               }
             }}
             enablePlayheadTransition={isTransitioning}
-            continuousPlay={videoSource === "cut" ? false : continuousPlay}
+            continuousPlay={videoSource === "cut" ? false : playbackMode === "continuous"}
             onShowLog={preselectionLog ? handleShowLog : undefined}
             captionPages={videoSource === "cut" ? cutCaptionPages : captionPages}
             selectedCaptionPageIndex={selectedCaptionPageIndex}
@@ -1111,16 +1111,26 @@ function EditorPage() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  variant={continuousPlay ? "default" : "ghost"}
+                  variant={playbackMode !== "selected" ? "default" : "ghost"}
                   size="sm"
-                  className={cn("h-6 px-2 text-xs gap-1", continuousPlay && "bg-amber-600 hover:bg-amber-700 text-white")}
-                  onClick={() => setContinuousPlay(!continuousPlay)}
+                  className={cn("h-6 px-2 text-xs gap-1",
+                    playbackMode === "no-silences" && "bg-blue-600 hover:bg-blue-700 text-white",
+                    playbackMode === "continuous" && "bg-amber-600 hover:bg-amber-700 text-white"
+                  )}
+                  onClick={() => setPlaybackMode(prev =>
+                    prev === "selected" ? "no-silences" : prev === "no-silences" ? "continuous" : "selected"
+                  )}
                 >
                   <SkipForward className="w-3.5 h-3.5" />
-                  {continuousPlay ? "Continuo" : "Skip"}
+                  {playbackMode === "selected" ? "Selected" :
+                   playbackMode === "no-silences" ? "No Silences" : "Continuo"}
                 </Button>
               </TooltipTrigger>
-              <ShortcutTooltipContent shortcut="J">{continuousPlay ? "Reproduccion continua activa" : "Saltar segmentos deshabilitados"}</ShortcutTooltipContent>
+              <ShortcutTooltipContent shortcut="J">
+                {playbackMode === "selected" ? "Solo segmentos seleccionados" :
+                 playbackMode === "no-silences" ? "Todos los segmentos (sin silencios)" :
+                 "Reproduccion continua"}
+              </ShortcutTooltipContent>
             </Tooltip>
           )}
           {videoSource !== "preview" && (

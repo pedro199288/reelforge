@@ -66,6 +66,9 @@ export function useWaveform(
       return;
     }
 
+    // Clear stale data immediately so we don't show the old video's waveform
+    setRawData(null);
+
     let cancelled = false;
     setLoading(true);
     setError(null);

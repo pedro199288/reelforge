@@ -155,11 +155,8 @@ function SegmentLogCard({
             #{index + 1}
           </Badge>
 
-          <span className="text-sm font-mono text-muted-foreground flex-shrink-0">
-            {formatTime(segment.timing.startMs)} - {formatTime(segment.timing.endMs)}
-            <span className="text-[9px] text-muted-foreground/50 ml-1.5">
-              (<button type="button" className="hover:text-foreground cursor-pointer" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(String(segment.timing.startMs)).then(() => toast.success(`Copiado: ${segment.timing.startMs}ms`)); }} title="Copiar startMs">{segment.timing.startMs}</button>–<button type="button" className="hover:text-foreground cursor-pointer" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(String(segment.timing.endMs)).then(() => toast.success(`Copiado: ${segment.timing.endMs}ms`)); }} title="Copiar endMs">{segment.timing.endMs}</button>ms)
-            </span>
+          <span className="text-xs font-mono text-muted-foreground flex-shrink-0">
+            {formatTime(segment.timing.startMs)} – {formatTime(segment.timing.endMs)}
           </span>
 
           <Badge
@@ -179,6 +176,15 @@ function SegmentLogCard({
 
       <CollapsibleContent>
         <div className="ml-8 mt-2 p-4 bg-muted/30 rounded-lg space-y-4">
+          {/* Timing (ms values, copiables) */}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+            <Clock className="w-3 h-3" />
+            <button type="button" className="hover:text-foreground cursor-pointer" onClick={() => { navigator.clipboard.writeText(String(segment.timing.startMs)).then(() => toast.success(`Copiado: ${segment.timing.startMs}ms`)); }} title="Copiar startMs">{segment.timing.startMs}ms</button>
+            <span>–</span>
+            <button type="button" className="hover:text-foreground cursor-pointer" onClick={() => { navigator.clipboard.writeText(String(segment.timing.endMs)).then(() => toast.success(`Copiado: ${segment.timing.endMs}ms`)); }} title="Copiar endMs">{segment.timing.endMs}ms</button>
+            <span className="text-muted-foreground/50">({formatDuration(segment.timing.durationMs)})</span>
+          </div>
+
           {/* Score Breakdown */}
           <div className="grid grid-cols-2 gap-4">
             <ScoreBar

@@ -125,9 +125,36 @@ export function CaptionProperties({
                 }}
                 className="h-6 text-[11px] px-1.5 flex-1 border-transparent hover:border-border focus:border-border"
               />
-              <span className="text-[9px] font-mono text-muted-foreground/50 w-[40px] text-right">
-                {word.startMs}
-              </span>
+              <Input
+                type="number"
+                step={10}
+                value={word.startMs}
+                onChange={(e) => {
+                  if (globalIndex >= 0) {
+                    const val = parseInt(e.target.value, 10);
+                    if (!isNaN(val)) {
+                      onEditCaptionTime(globalIndex, val, word.endMs);
+                    }
+                  }
+                }}
+                className="h-6 text-[9px] px-1 w-[52px] font-mono text-muted-foreground border-transparent hover:border-border focus:border-border"
+                title="Inicio (ms)"
+              />
+              <Input
+                type="number"
+                step={10}
+                value={word.endMs}
+                onChange={(e) => {
+                  if (globalIndex >= 0) {
+                    const val = parseInt(e.target.value, 10);
+                    if (!isNaN(val)) {
+                      onEditCaptionTime(globalIndex, word.startMs, val);
+                    }
+                  }
+                }}
+                className="h-6 text-[9px] px-1 w-[52px] font-mono text-muted-foreground border-transparent hover:border-border focus:border-border"
+                title="Fin (ms)"
+              />
               {getConfidenceBadge(word.confidence)}
             </div>
           );

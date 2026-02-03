@@ -17,9 +17,11 @@ import {
   AlertTriangle,
   PanelRightClose,
 } from "lucide-react";
+import { EffectProperties } from "./EffectProperties";
 import type { SubtitlePage } from "@/core/captions/group-into-pages";
 import type { Caption } from "@/core/script/align";
 import type { PreselectionLog } from "@/core/preselection";
+import type { AppliedEffect } from "@/core/effects/types";
 
 interface PropertiesPanelProps {
   videoId: string;
@@ -30,6 +32,9 @@ interface PropertiesPanelProps {
   onEditCaption: (captionIndex: number, newText: string) => void;
   onEditCaptionTime: (captionIndex: number, startMs: number, endMs: number) => void;
   onShowLog?: (segmentId: string) => void;
+  effects?: AppliedEffect[];
+  selectedEffectIndex?: number | null;
+  onEditEffect?: (index: number, updates: Partial<AppliedEffect>) => void;
 }
 
 function TabButton({
@@ -66,6 +71,9 @@ export function PropertiesPanel({
   onEditCaption,
   onEditCaptionTime,
   onShowLog,
+  effects,
+  selectedEffectIndex,
+  onEditEffect,
 }: PropertiesPanelProps) {
   const selection = useEditorUIStore((s) => s.selection);
   const tab = useEditorUIStore((s) => s.propertiesPanelTab);
@@ -84,7 +92,7 @@ export function PropertiesPanel({
   const showLogs = tab === "logs";
 
   return (
-    <aside className="hidden md:flex md:flex-col w-[320px] flex-shrink-0 border-l bg-background min-h-0">
+    <aside className="hidden md:flex md:flex-col w-[400px] flex-shrink-0 border-l bg-background min-h-0">
       {/* Tabs + close */}
       <div className="flex items-center justify-between border-b flex-shrink-0">
         <div className="flex bg-muted/20">
@@ -121,7 +129,10 @@ export function PropertiesPanel({
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-subtle">
+      <div className={cn(
+        "flex-1 min-h-0",
+        showScript && !showLogs ? "flex flex-col" : "overflow-y-auto scrollbar-subtle"
+      )}>
         {/* Auto: show properties based on selection */}
         {showAuto && selection?.type === "segment" && (
           <SegmentProperties
@@ -143,10 +154,19 @@ export function PropertiesPanel({
           />
         )}
 
+        {showAuto && selection?.type === "effect" && effects && selectedEffectIndex != null && (
+          <EffectProperties
+            effect={effects[selectedEffectIndex]}
+            effectIndex={selectedEffectIndex}
+            onSeekTo={onSeekTo}
+            onEditEffect={onEditEffect}
+          />
+        )}
+
         {/* Script tab */}
         {showScript && !showLogs && (
-          <div className="p-4 space-y-3">
-            <div className="flex items-center justify-between">
+          <div className="p-4 flex flex-col gap-3 h-full">
+            <div className="flex items-center justify-between flex-shrink-0">
               <h3 className="text-sm font-medium">Guion original</h3>
               {scriptState?.rawScript && (
                 <Button
@@ -164,7 +184,7 @@ export function PropertiesPanel({
               placeholder="Pega aqui tu guion original..."
               value={scriptState?.rawScript ?? ""}
               onChange={(e) => setScript(videoId, e.target.value)}
-              className="min-h-[200px] text-xs font-mono resize-y"
+              className="flex-1 min-h-0 text-xs font-mono resize-none"
             />
             {scriptState?.rawScript &&
               (() => {
