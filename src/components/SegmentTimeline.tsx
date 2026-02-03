@@ -13,7 +13,11 @@ import { SegmentTrack } from "@/components/Timeline/SegmentTrack";
 import { CaptionTrack } from "@/components/Timeline/CaptionTrack";
 import { LABEL_COLUMN_WIDTH, getPxPerMs } from "@/components/Timeline/constants";
 import type { SubtitlePage } from "@/core/captions/group-into-pages";
+import type { AppliedEffect } from "@/core/effects/types";
 import { useWaveform } from "@/hooks/useWaveform";
+import { Waveform, WaveformPlaceholder } from "@/components/Timeline/Waveform";
+import { TimelineTrack } from "@/components/Timeline/TimelineTrack";
+import { EffectsTrack } from "@/components/Timeline/EffectsTrack";
 import {
   useVideoSegments,
   useVideoSilences,
@@ -45,6 +49,14 @@ interface SegmentTimelineProps {
   selectedCaptionPageIndex?: number | null;
   /** Callback when user selects a caption page */
   onSelectCaptionPage?: (index: number) => void;
+  /** Timeline mode: "original" shows segments, "cut" shows simplified audio+captions */
+  mode?: "original" | "cut";
+  /** Applied effects for the effects track (cut mode) */
+  effects?: AppliedEffect[];
+  /** Currently selected effect index */
+  selectedEffectIndex?: number | null;
+  /** Callback when user selects an effect */
+  onSelectEffect?: (effectIndex: number) => void;
 }
 
 export function SegmentTimeline({
@@ -60,7 +72,12 @@ export function SegmentTimeline({
   captionPages,
   selectedCaptionPageIndex,
   onSelectCaptionPage,
+  mode = "original",
+  effects,
+  selectedEffectIndex,
+  onSelectEffect,
 }: SegmentTimelineProps) {
+  const isCutMode = mode === "cut";
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [showFullTimeline, setShowFullTimeline] = useState(true);
@@ -69,6 +86,7 @@ export function SegmentTimeline({
   const prevContinuousPlayRef = useRef(continuousPlay);
   const prevShowFullTimelineRef = useRef(showFullTimeline);
   const hasInitializedFitRef = useRef(false);
+  const prevModeRef = useRef(mode);
   // Follow-playhead toggle: state for UI, ref for RAF loop
   const [followPlayhead, setFollowPlayhead] = useState(true);
   const followPlayheadRef = useRef(true);
@@ -155,8 +173,8 @@ export function SegmentTimeline({
     [allSortedSegments, contiguousDurationMs]
   );
 
-  // Determine view mode
-  const isContiguous = !showFullTimeline;
+  // Determine view mode — cut mode always uses full timeline
+  const isContiguous = isCutMode ? false : !showFullTimeline;
 
   // Effective duration and playhead based on view mode
   const effectiveDurationMs = isContiguous ? contiguousDurationMs : durationMs;
@@ -218,6 +236,22 @@ export function SegmentTimeline({
       }
     }
   }, [containerWidth, effectiveDurationMs, fitToView]);
+
+  // Re-fit when mode changes (original <-> cut have very different durations)
+  useEffect(() => {
+    if (prevModeRef.current === mode) return;
+    prevModeRef.current = mode;
+
+    // Reset so the initial fit effect can retry if this runs with stale dimensions
+    hasInitializedFitRef.current = false;
+
+    scrollTo(0);
+    const viewportWidth = containerWidth - LABEL_COLUMN_WIDTH;
+    if (viewportWidth > 0 && effectiveDurationMs > 0) {
+      fitToView(effectiveDurationMs, viewportWidth);
+      hasInitializedFitRef.current = true;
+    }
+  }, [mode, containerWidth, effectiveDurationMs, fitToView, scrollTo]);
 
   // Sync viewport when switching between contiguous and full timeline view
   useEffect(() => {
@@ -449,6 +483,30 @@ export function SegmentTimeline({
   const thumbLeft = effectiveDurationMs > 0 ? viewportStartMs / effectiveDurationMs : 0;
   const showScrollbar = thumbRatio < 1;
 
+  // Hover playhead (ghost playhead)
+  const [hoverMs, setHoverMs] = useState<number | null>(null);
+
+  const handleTimelineMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const cursorX = e.clientX - rect.left - LABEL_COLUMN_WIDTH;
+      if (cursorX < 0) {
+        setHoverMs(null);
+        return;
+      }
+      const pxPerMs = getPxPerMs(zoomLevel);
+      const ms = viewportStartMs + cursorX / pxPerMs;
+      setHoverMs(Math.max(0, Math.min(effectiveDurationMs, ms)));
+    },
+    [zoomLevel, viewportStartMs, effectiveDurationMs]
+  );
+
+  const handleTimelineMouseLeave = useCallback(() => {
+    setHoverMs(null);
+  }, []);
+
   const scrollbarRef = useRef<HTMLDivElement>(null);
   const isDraggingScrollbar = useRef(false);
   const dragStartX = useRef(0);
@@ -537,9 +595,16 @@ export function SegmentTimeline({
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">Timeline</span>
-            <span className="text-xs text-muted-foreground">
-              {segments.length} segmentos
-            </span>
+            {!isCutMode && (
+              <span className="text-xs text-muted-foreground">
+                {segments.length} segmentos
+              </span>
+            )}
+            {isCutMode && (
+              <span className="text-xs text-muted-foreground">
+                Cut
+              </span>
+            )}
           </div>
 
         </div>
@@ -590,32 +655,36 @@ export function SegmentTimeline({
             </TooltipTrigger>
             <ShortcutTooltipContent shortcut="F">{followPlayhead ? "Dejar de seguir playhead" : "Seguir playhead"}</ShortcutTooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={showFullTimeline ? "secondary" : "ghost"}
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => setShowFullTimeline(v => !v)}
-              >
-                <Film className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <ShortcutTooltipContent shortcut="T">{showFullTimeline ? "Vista contigua (sin huecos)" : "Timeline completo"}</ShortcutTooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={trackExpanded ? "secondary" : "ghost"}
-                size="icon"
-                className="h-7 w-7 text-xs font-bold"
-                onClick={() => setTrackExpanded(v => !v)}
-              >
-                2x
-              </Button>
-            </TooltipTrigger>
-            <ShortcutTooltipContent shortcut="H">{trackExpanded ? "Altura normal" : "Duplicar altura del track"}</ShortcutTooltipContent>
-          </Tooltip>
+          {!isCutMode && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={showFullTimeline ? "secondary" : "ghost"}
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setShowFullTimeline(v => !v)}
+                >
+                  <Film className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <ShortcutTooltipContent shortcut="T">{showFullTimeline ? "Vista contigua (sin huecos)" : "Timeline completo"}</ShortcutTooltipContent>
+            </Tooltip>
+          )}
+          {!isCutMode && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={trackExpanded ? "secondary" : "ghost"}
+                  size="icon"
+                  className="h-7 w-7 text-xs font-bold"
+                  onClick={() => setTrackExpanded(v => !v)}
+                >
+                  2x
+                </Button>
+              </TooltipTrigger>
+              <ShortcutTooltipContent shortcut="H">{trackExpanded ? "Altura normal" : "Duplicar altura del track"}</ShortcutTooltipContent>
+            </Tooltip>
+          )}
         </div>
       </div>
 
@@ -623,6 +692,8 @@ export function SegmentTimeline({
       <div
         ref={containerRef}
         className="relative overflow-hidden select-none overscroll-contain touch-none"
+        onMouseMove={handleTimelineMouseMove}
+        onMouseLeave={handleTimelineMouseLeave}
       >
         {/* Ruler */}
         <TimelineRuler
@@ -639,29 +710,47 @@ export function SegmentTimeline({
           }}
         />
 
-        {/* Segment track - always visible, contiguous by default */}
-        <SegmentTrack
-          segments={segments}
-          silences={silences}
-          zoomLevel={zoomLevel}
-          viewportStartMs={viewportStartMs}
-          durationMs={effectiveDurationMs}
-          selection={selection}
-          onSelect={select}
-          onResizeSegment={handleResizeSegment}
-          onToggleSegment={handleToggleSegment}
-          onAddSegment={isContiguous ? undefined : handleAddSegment}
-          contiguous={isContiguous}
-          waveformRawData={waveformRawData}
-          viewportWaveformData={waveformDisplayData}
-          viewportWidthPx={viewportWidthPx}
-          waveformOffsetPx={waveformOffsetPx}
-          expanded={trackExpanded}
-          onShowLog={onShowLog}
-        />
+        {/* Segment track — hidden in cut mode */}
+        {!isCutMode && (
+          <SegmentTrack
+            segments={segments}
+            silences={silences}
+            zoomLevel={zoomLevel}
+            viewportStartMs={viewportStartMs}
+            durationMs={effectiveDurationMs}
+            selection={selection}
+            onSelect={select}
+            onResizeSegment={handleResizeSegment}
+            onToggleSegment={handleToggleSegment}
+            onAddSegment={isContiguous ? undefined : handleAddSegment}
+            contiguous={isContiguous}
+            waveformRawData={waveformRawData}
+            viewportWaveformData={waveformDisplayData}
+            viewportWidthPx={viewportWidthPx}
+            waveformOffsetPx={waveformOffsetPx}
+            expanded={trackExpanded}
+            onShowLog={onShowLog}
+          />
+        )}
 
-        {/* Caption track - only in full timeline mode */}
-        {showFullTimeline && captionPages && captionPages.length > 0 && (
+        {/* Simplified audio track — only in cut mode */}
+        {isCutMode && (
+          <TimelineTrack name="Audio" height={48}>
+            {waveformDisplayData ? (
+              <Waveform
+                data={waveformDisplayData}
+                height={48}
+                width={viewportWidthPx}
+                offsetPx={waveformOffsetPx}
+              />
+            ) : (
+              <WaveformPlaceholder width={viewportWidthPx} height={48} />
+            )}
+          </TimelineTrack>
+        )}
+
+        {/* Caption track — in cut mode always shown, in original only with full timeline */}
+        {(isCutMode || showFullTimeline) && captionPages && captionPages.length > 0 && (
           <CaptionTrack
             pages={captionPages}
             zoomLevel={zoomLevel}
@@ -672,6 +761,31 @@ export function SegmentTimeline({
             onSelectPage={onSelectCaptionPage ?? (() => {})}
             onSeek={handleRulerSeek}
           />
+        )}
+
+        {/* Effects track — only in cut mode when effects available */}
+        {isCutMode && effects && effects.length > 0 && (
+          <EffectsTrack
+            effects={effects}
+            zoomLevel={zoomLevel}
+            viewportStartMs={viewportStartMs}
+            viewportWidthPx={viewportWidthPx}
+            selectedEffectIndex={selectedEffectIndex ?? null}
+            onSelectEffect={onSelectEffect ?? (() => {})}
+            onSeek={handleRulerSeek}
+          />
+        )}
+
+        {/* Hover playhead (ghost) */}
+        {hoverMs !== null && (
+          <div
+            className="absolute top-0 bottom-0 pointer-events-none z-10"
+            style={{
+              transform: `translateX(${LABEL_COLUMN_WIDTH + (hoverMs - viewportStartMs) * getPxPerMs(zoomLevel)}px)`,
+            }}
+          >
+            <div className="w-px h-full bg-foreground/30" />
+          </div>
         )}
 
         {/* Playhead */}

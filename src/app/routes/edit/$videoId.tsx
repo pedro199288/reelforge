@@ -11,13 +11,6 @@ import { Player, type PlayerRef } from "@remotion/player";
 import { CaptionedVideoForPlayer } from "@/remotion-compositions/CaptionedVideo/ForPlayer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
 import type { Video } from "@/components/VideoList";
 import {
   useVideoSegments,
@@ -43,9 +36,10 @@ import {
   Eye,
   Scissors,
   SkipForward,
-  Zap,
   Subtitles,
   Gauge,
+  PanelLeftOpen,
+  PanelLeftClose,
   PanelRightOpen,
   PanelRightClose,
 } from "lucide-react";
@@ -61,6 +55,8 @@ import { useFullCaptions } from "@/hooks/useFullCaptions";
 import { useCutCaptions } from "@/hooks/useCutCaptions";
 import { VideoSubtitleOverlay } from "@/components/VideoSubtitleOverlay";
 import { groupIntoPages } from "@/core/captions/group-into-pages";
+import { useVideoEffects } from "@/store/effects";
+import type { AppliedEffect } from "@/core/effects/types";
 
 const API_URL = "http://localhost:3012";
 const PLAYBACK_RATES = [1, 1.25, 1.5, 2, 2.5, 3] as const;
@@ -180,6 +176,9 @@ function EditorPage() {
   const [cutVideoDuration, setCutVideoDuration] = useState<number | null>(null);
   const [selectedCaptionPageIndex, setSelectedCaptionPageIndex] = useState<number | null>(null);
   const [editedCaptions, setEditedCaptions] = useState<Caption[] | null>(null);
+  const [editedCutCaptions, setEditedCutCaptions] = useState<Caption[] | null>(null);
+  const [editedEffects, setEditedEffects] = useState<AppliedEffect[] | null>(null);
+  const [selectedEffectIndex, setSelectedEffectIndex] = useState<number | null>(null);
   const [nativeVideoDuration, setNativeVideoDuration] = useState<number | null>(null);
   const [showCaptions, setShowCaptions] = useState(() => {
     try { return localStorage.getItem("editor:showCaptions") === "true"; } catch { return false; }
@@ -203,6 +202,9 @@ function EditorPage() {
     useTimelineActions();
   const { highlightColor, fontFamily } = useSubtitleStore();
 
+  // --- Effects from store ---
+  const storeEffects = useVideoEffects(videoId);
+
   // --- Active video element (depends on source) ---
   const activeVideoEl = videoSource === "cut" ? cutVideoEl : videoEl;
   const activeVideoRef = videoSource === "cut" ? cutVideoRef : videoRef;
@@ -217,8 +219,11 @@ function EditorPage() {
   // --- Keyboard shortcuts ---
   useSegmentEditorShortcuts({
     videoId,
-    videoRef,
-    totalDurationMs: (segmentsResult?.totalDuration ?? 0) * 1000,
+    videoRef: activeVideoRef,
+    totalDurationMs: videoSource === "cut"
+      ? (cutVideoDuration ?? 0) * 1000
+      : (segmentsResult?.totalDuration ?? 0) * 1000,
+    readOnly: videoSource === "cut",
   });
 
   // --- Footer keyboard shortcuts ---
@@ -321,6 +326,72 @@ function EditorPage() {
     },
     []
   );
+
+  // --- Cut captions (with local edits) ---
+  const effectiveCutCaptions = editedCutCaptions ?? rawCutCaptions;
+  const cutCaptionPages = useMemo(
+    () => effectiveCutCaptions ? groupIntoPages(effectiveCutCaptions) : [],
+    [effectiveCutCaptions]
+  );
+
+  // Initialize edited cut captions when raw cut captions arrive
+  useEffect(() => {
+    if (rawCutCaptions && !editedCutCaptions) {
+      setEditedCutCaptions([...rawCutCaptions]);
+    }
+  }, [rawCutCaptions, editedCutCaptions]);
+
+  const handleEditCutCaption = useCallback((captionIndex: number, newText: string) => {
+    setEditedCutCaptions(prev => {
+      if (!prev) return prev;
+      const updated = [...prev];
+      updated[captionIndex] = { ...updated[captionIndex], text: newText };
+      return updated;
+    });
+  }, []);
+
+  const handleEditCutCaptionTime = useCallback(
+    (captionIndex: number, newStartMs: number, newEndMs: number) => {
+      setEditedCutCaptions(prev => {
+        if (!prev) return prev;
+        const updated = [...prev];
+        updated[captionIndex] = {
+          ...updated[captionIndex],
+          startMs: newStartMs,
+          endMs: newEndMs,
+        };
+        return updated;
+      });
+    },
+    []
+  );
+
+  // --- Applied effects (with local edits) ---
+  const appliedEffects = useMemo(
+    () => editedEffects ?? storeEffects?.effects ?? [],
+    [editedEffects, storeEffects]
+  );
+
+  const handleEditEffect = useCallback((index: number, updates: Partial<AppliedEffect>) => {
+    setEditedEffects(prev => {
+      const base = prev ?? storeEffects?.effects ?? [];
+      const updated = [...base];
+      updated[index] = { ...updated[index], ...updates };
+      return updated;
+    });
+  }, [storeEffects]);
+
+  // Reset editedEffects when store effects change (recomputation)
+  useEffect(() => {
+    setEditedEffects(null);
+  }, [storeEffects]);
+
+  // --- Clean up selection when switching video source ---
+  useEffect(() => {
+    setSelectedCaptionPageIndex(null);
+    setSelectedEffectIndex(null);
+    useEditorUIStore.getState().clearSelection();
+  }, [videoSource]);
 
   // --- Derived data ---
   const totalDuration = segmentsResult?.totalDuration ?? nativeVideoDuration ?? 0;
@@ -468,9 +539,9 @@ function EditorPage() {
     }
   }, [video, loadPipelineStatus]);
 
-  // --- Probe cut video duration for Remotion preview ---
+  // --- Probe cut video duration (needed for both cut view and Remotion preview) ---
   useEffect(() => {
-    if (!canPreview) {
+    if (!canViewCut) {
       setCutVideoDuration(null);
       return;
     }
@@ -482,7 +553,7 @@ function EditorPage() {
     probe.onerror = () => {
       setCutVideoDuration(null);
     };
-  }, [canPreview, cutVideoSrc]);
+  }, [canViewCut, cutVideoSrc]);
 
   // Reset video source if current source becomes unavailable
   useEffect(() => {
@@ -716,11 +787,16 @@ function EditorPage() {
     );
   }
 
-  const showTimeline = totalDuration > 0 && videoPath;
+  // Timeline visibility: show for original (needs totalDuration + videoPath)
+  // and for cut mode (needs cutVideoDuration + cutVideoStreamUrl)
+  const showTimeline =
+    videoSource === "cut"
+      ? (cutVideoDuration ?? 0) > 0 && cutVideoStreamUrl
+      : totalDuration > 0 && videoPath;
 
   // Determine which captions to show on overlay
   const overlayCaptions =
-    videoSource === "cut" ? rawCutCaptions :
+    videoSource === "cut" ? effectiveCutCaptions :
     videoSource === "original" ? effectiveCaptions :
     null; // preview uses Remotion's own captions
 
@@ -745,15 +821,19 @@ function EditorPage() {
               {completedSteps}/{TOTAL_STEPS}
             </Badge>
           )}
-          {/* Pipeline drawer trigger */}
+          {/* Pipeline panel toggle */}
           <Button
             variant={pipelineDrawerOpen ? "default" : "ghost"}
             size="sm"
             className="h-7 px-2 gap-1.5"
             onClick={() => setPipelineDrawerOpen(!pipelineDrawerOpen)}
-            title="Abrir pipeline"
+            title={pipelineDrawerOpen ? "Cerrar pipeline" : "Abrir pipeline"}
           >
-            <Zap className="w-4 h-4" />
+            {pipelineDrawerOpen ? (
+              <PanelLeftClose className="w-4 h-4" />
+            ) : (
+              <PanelLeftOpen className="w-4 h-4" />
+            )}
           </Button>
         </div>
 
@@ -784,31 +864,24 @@ function EditorPage() {
         </div>
       </header>
 
-      {/* ===== PIPELINE DRAWER (Sheet) ===== */}
-      <Sheet open={pipelineDrawerOpen} onOpenChange={setPipelineDrawerOpen}>
-        <SheetContent side="left" className="w-[480px] sm:max-w-[480px] p-0" showCloseButton={false}>
-          <SheetHeader className="sr-only">
-            <SheetTitle>Pipeline</SheetTitle>
-            <SheetDescription>Ejecutar y configurar pasos del pipeline</SheetDescription>
-          </SheetHeader>
-          {video && (
+      {/* ===== MAIN BODY: Pipeline (left) + Video + Properties Panel (right) ===== */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* Pipeline panel (left side) */}
+        {pipelineDrawerOpen && video && (
+          <aside className="w-[420px] flex-shrink-0 border-r bg-background overflow-y-auto scrollbar-subtle">
             <EditorPipelinePanel
               video={video}
               segmentsResult={segmentsResult}
               onStepCompleted={handleStepCompleted}
               onOpenLogs={preselectionLog ? () => {
                 setPipelineDrawerOpen(false);
-                setPropertiesPanelOpen(true);
+                useEditorUIStore.getState().setPropertiesPanelOpen(true);
                 useEditorUIStore.getState().setPropertiesPanelTab("logs");
               } : undefined}
               onSeekTo={handleSeekTo}
             />
-          )}
-        </SheetContent>
-      </Sheet>
-
-      {/* ===== MAIN BODY: Video + Properties Panel ===== */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+          </aside>
+        )}
         {/* Video player area */}
         <div className="flex-1 flex items-center justify-center bg-black min-h-0 overflow-hidden relative">
           {videoSource === "preview" && canPreview && durationInFrames > 0 ? (
@@ -849,19 +922,34 @@ function EditorPage() {
                 ref={(el) => { cutVideoRef.current = el; setCutVideoEl(el); }}
                 src={cutVideoStreamUrl}
                 className="max-h-full max-w-full object-contain"
-                controls
                 onClick={togglePlayback}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => setIsPlaying(false)}
+                onLoadedMetadata={(e) => {
+                  const d = e.currentTarget.duration;
+                  if (d && isFinite(d)) setCutVideoDuration(d);
+                }}
                 onError={() => {
                   toast.error("Error al cargar video cortado, volviendo a original");
                   setVideoSource("original");
                 }}
               />
 
-              {showCaptions && rawCutCaptions && (
-                <VideoSubtitleOverlay captions={rawCutCaptions} currentTimeMs={currentTimeMs} />
+              {!isPlaying && (
+                <button
+                  type="button"
+                  className="absolute inset-0 flex items-center justify-center cursor-pointer"
+                  onClick={togglePlayback}
+                >
+                  <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center">
+                    <Play className="w-8 h-8 text-black ml-1" />
+                  </div>
+                </button>
+              )}
+
+              {showCaptions && effectiveCutCaptions && (
+                <VideoSubtitleOverlay captions={effectiveCutCaptions} currentTimeMs={currentTimeMs} />
               )}
 
               <TimeIndicator currentTime={currentTime} currentTimeMs={currentTimeMs} />
@@ -915,12 +1003,15 @@ function EditorPage() {
           <PropertiesPanel
             videoId={videoId}
             preselectionLog={preselectionLog}
-            captionPages={captionPages}
-            captions={effectiveCaptions ?? []}
+            captionPages={videoSource === "cut" ? cutCaptionPages : captionPages}
+            captions={videoSource === "cut" ? (effectiveCutCaptions ?? []) : (effectiveCaptions ?? [])}
             onSeekTo={handleSeekTo}
-            onEditCaption={handleEditCaption}
-            onEditCaptionTime={handleEditCaptionTime}
+            onEditCaption={videoSource === "cut" ? handleEditCutCaption : handleEditCaption}
+            onEditCaptionTime={videoSource === "cut" ? handleEditCutCaptionTime : handleEditCaptionTime}
             onShowLog={preselectionLog ? handleShowLog : undefined}
+            effects={appliedEffects}
+            selectedEffectIndex={selectedEffectIndex}
+            onEditEffect={handleEditEffect}
           />
         )}
       </div>
@@ -930,33 +1021,36 @@ function EditorPage() {
         <div className="flex-shrink-0 border-t">
           <SegmentTimeline
             videoId={videoId}
-            videoPath={videoPath}
-            durationMs={totalDuration * 1000}
+            videoPath={videoSource === "cut" ? cutVideoStreamUrl : videoPath}
+            durationMs={videoSource === "cut" ? (cutVideoDuration ?? 0) * 1000 : totalDuration * 1000}
             currentTimeMs={currentTimeMs}
             onSeek={(ms) => {
-              if (videoSource === "original" && videoRef.current) {
-                videoRef.current.currentTime = ms / 1000;
-              } else if (videoSource === "cut" && cutVideoRef.current) {
-                // In cut mode, timeline shows original-space coordinates
-                // but we need to seek the cut video. For now, use the original video seek.
-                // TODO: map through coordinate space when timeline supports cut-space
-                cutVideoRef.current.currentTime = ms / 1000;
-              } else if (videoRef.current) {
-                videoRef.current.currentTime = ms / 1000;
+              if (activeVideoRef.current) {
+                activeVideoRef.current.pause();
+                activeVideoRef.current.currentTime = ms / 1000;
               }
             }}
             enablePlayheadTransition={isTransitioning}
-            continuousPlay={continuousPlay}
+            continuousPlay={videoSource === "cut" ? false : continuousPlay}
             onShowLog={preselectionLog ? handleShowLog : undefined}
-            captionPages={captionPages}
+            captionPages={videoSource === "cut" ? cutCaptionPages : captionPages}
             selectedCaptionPageIndex={selectedCaptionPageIndex}
             onSelectCaptionPage={(idx) => {
               setSelectedCaptionPageIndex(idx);
-              // Open properties panel with caption selected
               useEditorUIStore.getState().setSelection({
                 type: "caption",
                 index: idx,
                 pageIndex: idx,
+              });
+            }}
+            mode={videoSource === "cut" ? "cut" : "original"}
+            effects={appliedEffects}
+            selectedEffectIndex={selectedEffectIndex}
+            onSelectEffect={(idx) => {
+              setSelectedEffectIndex(idx);
+              useEditorUIStore.getState().setSelection({
+                type: "effect",
+                id: String(idx),
               });
             }}
           />
@@ -1008,7 +1102,7 @@ function EditorPage() {
               {captionSource === "post-cut" ? "Post-Cuts" : "Full"}
             </span>
           )}
-          {showCaptions && rawCutCaptions && videoSource === "cut" && (
+          {showCaptions && effectiveCutCaptions && videoSource === "cut" && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-600/20 text-cyan-400">
               Cut-Subs
             </span>

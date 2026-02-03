@@ -8,6 +8,7 @@ interface UseSegmentEditorShortcutsOptions {
   videoRef: RefObject<HTMLVideoElement | null>;
   totalDurationMs: number;
   enabled?: boolean;
+  readOnly?: boolean;
 }
 
 export function isEditableElement(): boolean {
@@ -38,6 +39,7 @@ export function useSegmentEditorShortcuts({
   videoRef,
   totalDurationMs,
   enabled = true,
+  readOnly = false,
 }: UseSegmentEditorShortcutsOptions) {
   const segments = useVideoSegments(videoId);
   const { splitSegmentAt, resizeSegment } = useTimelineActions();
@@ -72,6 +74,7 @@ export function useSegmentEditorShortcuts({
   useHotkeys(
     "mod+b",
     () => {
+      if (readOnly) return;
       const currentMs = getCurrentTimeMs();
       if (currentMs === null) return;
 
@@ -100,6 +103,7 @@ export function useSegmentEditorShortcuts({
     "q",
     () => {
       if (isEditableElement()) return;
+      if (readOnly) return;
 
       const currentMs = getCurrentTimeMs();
       if (currentMs === null) return;
@@ -128,6 +132,7 @@ export function useSegmentEditorShortcuts({
     "w",
     () => {
       if (isEditableElement()) return;
+      if (readOnly) return;
 
       const currentMs = getCurrentTimeMs();
       if (currentMs === null) return;
@@ -198,6 +203,7 @@ export function useSegmentEditorShortcuts({
     "up",
     () => {
       if (isEditableElement()) return;
+      if (readOnly) return;
 
       const currentMs = getCurrentTimeMs();
       if (currentMs === null) return;
@@ -226,6 +232,7 @@ export function useSegmentEditorShortcuts({
     "down",
     () => {
       if (isEditableElement()) return;
+      if (readOnly) return;
 
       const currentMs = getCurrentTimeMs();
       if (currentMs === null) return;
@@ -288,6 +295,7 @@ export function useSegmentEditorShortcuts({
     if (!enabled) return;
 
     const handleUndoRedo = (e: KeyboardEvent) => {
+      if (readOnly) return;
       if (!(e.ctrlKey || e.metaKey)) return;
       if (isEditableElement()) return;
 
@@ -316,7 +324,7 @@ export function useSegmentEditorShortcuts({
     // Capture phase → fires BEFORE bubble-phase listeners (useUndoRedoKeyboard)
     window.addEventListener("keydown", handleUndoRedo, true);
     return () => window.removeEventListener("keydown", handleUndoRedo, true);
-  }, [enabled]);
+  }, [enabled, readOnly]);
 }
 
 /** Collect and deduplicate all segment boundary times, sorted ascending. */
