@@ -284,15 +284,21 @@ export function SegmentTimeline({
     const startMs = Math.max(0, viewportStartMs);
     const endMs = Math.min(durationMs, viewportStartMs + visibleDurationMs);
 
-    // Safety net: scale samplesPerMs if waveform duration doesn't match video duration
+    // Check if waveform data matches the expected duration
     const waveformDurationMs = (waveformRawData.samples.length / waveformRawData.sampleRate) * 1000;
     let samplesPerMs = waveformRawData.sampleRate / 1000;
-    if (durationMs > 0 && Math.abs(waveformDurationMs - durationMs) > 50) {
-      const ratio = waveformDurationMs / durationMs;
-      samplesPerMs *= ratio;
-      console.warn(
-        `[Waveform] duration mismatch: waveform=${waveformDurationMs.toFixed(0)}ms video=${durationMs.toFixed(0)}ms ratio=${ratio.toFixed(4)}`
-      );
+
+    if (durationMs > 0) {
+      const mismatchRatio = Math.abs(waveformDurationMs - durationMs) / durationMs;
+      if (mismatchRatio > 0.05) {
+        // Large mismatch (>5%): stale data from a different video/mode — skip
+        return null;
+      }
+      if (Math.abs(waveformDurationMs - durationMs) > 50) {
+        // Small mismatch (<5%): adjust sample rate for alignment
+        const ratio = waveformDurationMs / durationMs;
+        samplesPerMs *= ratio;
+      }
     }
 
     // Calculate sample indices
@@ -321,6 +327,15 @@ export function SegmentTimeline({
     }
     return result;
   }, [waveformRawData, zoomLevel, viewportStartMs, durationMs, viewportWidthPx]);
+
+  // Content width for waveform: clipped to video duration (prevents stretching beyond end)
+  const waveformContentWidthPx = useMemo(() => {
+    const pxPerMs = getPxPerMs(zoomLevel);
+    const visibleDurationMs = viewportWidthPx / pxPerMs;
+    const contentEndMs = Math.min(durationMs, viewportStartMs + visibleDurationMs);
+    const contentStartMs = Math.max(0, viewportStartMs);
+    return Math.min(viewportWidthPx, Math.max(0, Math.round((contentEndMs - contentStartMs) * pxPerMs)));
+  }, [zoomLevel, viewportWidthPx, viewportStartMs, durationMs]);
 
   // Calculate waveform offset for sub-sample alignment
   const waveformOffsetPx = useMemo(() => {
@@ -670,21 +685,19 @@ export function SegmentTimeline({
               <ShortcutTooltipContent shortcut="T">{showFullTimeline ? "Vista contigua (sin huecos)" : "Timeline completo"}</ShortcutTooltipContent>
             </Tooltip>
           )}
-          {!isCutMode && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={trackExpanded ? "secondary" : "ghost"}
-                  size="icon"
-                  className="h-7 w-7 text-xs font-bold"
-                  onClick={() => setTrackExpanded(v => !v)}
-                >
-                  2x
-                </Button>
-              </TooltipTrigger>
-              <ShortcutTooltipContent shortcut="H">{trackExpanded ? "Altura normal" : "Duplicar altura del track"}</ShortcutTooltipContent>
-            </Tooltip>
-          )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={trackExpanded ? "secondary" : "ghost"}
+                size="icon"
+                className="h-7 w-7 text-xs font-bold"
+                onClick={() => setTrackExpanded(v => !v)}
+              >
+                2x
+              </Button>
+            </TooltipTrigger>
+            <ShortcutTooltipContent shortcut="H">{trackExpanded ? "Altura normal" : "Duplicar altura del track"}</ShortcutTooltipContent>
+          </Tooltip>
         </div>
       </div>
 
@@ -735,16 +748,16 @@ export function SegmentTimeline({
 
         {/* Simplified audio track — only in cut mode */}
         {isCutMode && (
-          <TimelineTrack name="Audio" height={48}>
+          <TimelineTrack name="Audio" height={trackExpanded ? 96 : 48}>
             {waveformDisplayData ? (
               <Waveform
                 data={waveformDisplayData}
-                height={48}
-                width={viewportWidthPx}
+                height={trackExpanded ? 96 : 48}
+                width={waveformContentWidthPx}
                 offsetPx={waveformOffsetPx}
               />
             ) : (
-              <WaveformPlaceholder width={viewportWidthPx} height={48} />
+              <WaveformPlaceholder width={waveformContentWidthPx} height={trackExpanded ? 96 : 48} />
             )}
           </TimelineTrack>
         )}
