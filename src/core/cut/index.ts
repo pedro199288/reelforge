@@ -109,7 +109,7 @@ async function execAsync(
 export interface CutConfig {
   /** Use codec copy for faster processing (may be less precise at cut points) */
   codecCopy: boolean;
-  /** Video codec for re-encoding (default: libx264) */
+  /** Video codec: "auto" detects hardware encoder, or force "libx264" / "h264_videotoolbox" */
   videoCodec: string;
   /** Audio codec for re-encoding (default: aac) */
   audioCodec: string;
@@ -123,7 +123,7 @@ export interface CutConfig {
 
 const DEFAULT_CONFIG: CutConfig = {
   codecCopy: false,
-  videoCodec: "libx264",
+  videoCodec: "auto",
   audioCodec: "aac",
   crf: 18,
 };
@@ -152,6 +152,80 @@ async function getFfmpegCommand(): Promise<string> {
 
   cachedFfmpegPath = "npx remotion ffmpeg";
   return cachedFfmpegPath;
+}
+
+interface HardwareEncoderInfo {
+  codec: string;
+  isHardware: boolean;
+  qualityArgs: string[];
+}
+
+let cachedEncoder: HardwareEncoderInfo | null = null;
+
+/**
+ * Map CRF (0-51) to videotoolbox quality (1-100).
+ * CRF 0 (lossless) → 100, CRF 51 (worst) → 1, CRF 18 → ~65
+ */
+function mapCrfToQuality(crf: number): number {
+  return Math.max(1, Math.min(100, Math.round(100 - crf * 1.96)));
+}
+
+/**
+ * Build FFmpeg video encoder arguments from encoder info.
+ */
+function buildVideoEncoderArgs(encoder: HardwareEncoderInfo): string {
+  return `-c:v ${encoder.codec} ${encoder.qualityArgs.join(" ")}`;
+}
+
+/**
+ * Detect if h264_videotoolbox (macOS GPU encoder) is available.
+ * Falls back to libx264 software encoding.
+ * Result is cached for the process lifetime.
+ */
+async function detectHardwareEncoder(crf: number): Promise<HardwareEncoderInfo> {
+  if (cachedEncoder) return cachedEncoder;
+
+  const ffmpeg = await getFfmpegCommand();
+  try {
+    const proc = spawn(
+      ["sh", "-c", `${ffmpeg} -f lavfi -i nullsrc=s=64x64:d=0.1 -c:v h264_videotoolbox -q:v 65 -f null -`],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+
+    // Consume streams to prevent buffer hang
+    const consumeStream = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
+      try {
+        while (true) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
+      } catch {}
+    };
+
+    await Promise.all([
+      consumeStream(proc.stdout.getReader()),
+      consumeStream(proc.stderr.getReader()),
+    ]);
+
+    const exitCode = await proc.exited;
+    if (exitCode === 0) {
+      cachedEncoder = {
+        codec: "h264_videotoolbox",
+        isHardware: true,
+        qualityArgs: ["-q:v", String(mapCrfToQuality(crf))],
+      };
+      return cachedEncoder;
+    }
+  } catch {
+    // Fall through to software fallback
+  }
+
+  cachedEncoder = {
+    codec: "libx264",
+    isHardware: false,
+    qualityArgs: ["-crf", String(crf), "-preset", "fast"],
+  };
+  return cachedEncoder;
 }
 
 /**
@@ -186,17 +260,36 @@ export async function cutVideo(
   // Calculate total output duration for progress tracking
   const totalDurationSec = config.totalDurationSec ?? segments.reduce((sum, s) => sum + s.duration, 0);
 
-  // Always use the segment-by-segment method with input seeking
-  // This is MUCH faster than filter_complex because it seeks directly to each segment
-  // instead of decoding the entire input video
-  await cutWithInputSeeking(input, segments, output, {
-    codecCopy,
-    videoCodec,
-    audioCodec,
-    crf,
-    onProgress: config.onProgress,
-    totalDurationSec,
-  });
+  if (codecCopy) {
+    // Stream copy: very fast but cuts only at keyframes
+    await cutWithInputSeeking(input, segments, output, {
+      codecCopy: true,
+      audioCodec,
+      crf,
+      onProgress: config.onProgress,
+      totalDurationSec,
+    });
+  } else {
+    // Re-encode with hardware acceleration when available
+    const encoder = videoCodec === "auto"
+      ? await detectHardwareEncoder(crf)
+      : {
+          codec: videoCodec,
+          isHardware: videoCodec === "h264_videotoolbox",
+          qualityArgs: videoCodec === "h264_videotoolbox"
+            ? ["-q:v", String(mapCrfToQuality(crf))]
+            : ["-crf", String(crf), "-preset", "fast"],
+        };
+
+    await cutWithInputSeeking(input, segments, output, {
+      codecCopy: false,
+      encoder,
+      audioCodec,
+      crf,
+      onProgress: config.onProgress,
+      totalDurationSec,
+    });
+  }
 }
 
 /**
@@ -210,14 +303,14 @@ async function cutWithInputSeeking(
   output: string,
   opts: {
     codecCopy: boolean;
-    videoCodec: string;
+    encoder?: HardwareEncoderInfo;
     audioCodec: string;
     crf: number;
     onProgress?: ProgressCallback;
     totalDurationSec?: number;
   },
 ): Promise<void> {
-  const { codecCopy, videoCodec, audioCodec, crf, onProgress, totalDurationSec } = opts;
+  const { codecCopy, encoder, audioCodec, crf, onProgress, totalDurationSec } = opts;
   const tempDir = join(tmpdir(), `reelforge-cut-${Date.now()}`);
   mkdirSync(tempDir, { recursive: true });
   const ffmpeg = await getFfmpegCommand();
@@ -232,13 +325,10 @@ async function cutWithInputSeeking(
       const segmentFile = join(tempDir, `segment_${i.toString().padStart(4, "0")}.mp4`);
       segmentFiles.push(segmentFile);
 
-      // Use -ss BEFORE -i for fast input seeking (seeks at demuxer level)
-      // Then use -t for duration (more reliable than -to with input seeking)
       const duration = seg.endTime - seg.startTime;
 
       let cmd: string;
       if (codecCopy) {
-        // Codec copy: very fast but cuts only at keyframes
         cmd = [
           `${ffmpeg} -y`,
           `-ss ${seg.startTime}`,
@@ -249,13 +339,13 @@ async function cutWithInputSeeking(
           `"${segmentFile}"`,
         ].join(" ");
       } else {
-        // Re-encode: slower but frame-accurate cuts
+        const encoderArgs = encoder ? buildVideoEncoderArgs(encoder) : `-c:v libx264 -crf ${crf} -preset fast`;
         cmd = [
           `${ffmpeg} -y`,
           `-ss ${seg.startTime}`,
           `-i "${input}"`,
           `-t ${duration}`,
-          `-c:v ${videoCodec} -crf ${crf} -preset fast`,
+          encoderArgs,
           `-c:a ${audioCodec}`,
           `-avoid_negative_ts make_zero`,
           `"${segmentFile}"`,
@@ -275,7 +365,19 @@ async function cutWithInputSeeking(
           }
         : undefined;
 
-      await execAsync(cmd, { onProgress: segmentProgress, totalDurationSec: duration });
+      try {
+        await execAsync(cmd, { onProgress: segmentProgress, totalDurationSec: duration });
+      } catch (err) {
+        // If hardware encoder fails on this segment, retry with software fallback
+        if (!codecCopy && encoder?.isHardware) {
+          const fallbackArgs = `-c:v libx264 -crf ${crf} -preset fast`;
+          const fallbackCmd = cmd.replace(buildVideoEncoderArgs(encoder), fallbackArgs);
+          await execAsync(fallbackCmd, { onProgress: segmentProgress, totalDurationSec: duration });
+        } else {
+          throw err;
+        }
+      }
+
       processedDuration += seg.duration;
 
       // Report segment completion

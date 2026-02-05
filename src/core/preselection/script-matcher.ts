@@ -6,7 +6,7 @@
  */
 
 import type { Caption } from "../script/align";
-import { normalize, similarity } from "../script/align";
+import { normalize, similarity, alignWords } from "../script/align";
 import { splitIntoSentences } from "../script/takes";
 import type { SegmentScriptMatch, InputSegment } from "./types";
 
@@ -20,6 +20,8 @@ interface ScriptSentence {
   wordCount: number;
 }
 
+const BOUNDARY_TOLERANCE_MS = 150;
+
 /**
  * Extracts the transcribed text for a segment from captions
  */
@@ -28,14 +30,17 @@ export function getSegmentTranscription(
   captions: Caption[]
 ): string {
   const overlapping = captions.filter(
-    (cap) => cap.startMs < segment.endMs && cap.endMs > segment.startMs
+    (cap) =>
+      cap.startMs < segment.endMs + BOUNDARY_TOLERANCE_MS &&
+      cap.endMs > segment.startMs - BOUNDARY_TOLERANCE_MS
   );
 
   return overlapping.map((cap) => cap.text).join(" ").trim();
 }
 
 /**
- * Calculates word-level coverage of a sentence by the segment text
+ * Calculates order-aware coverage of a sentence by the segment text
+ * using Needleman-Wunsch alignment instead of bag-of-words.
  */
 function calculateSentenceCoverage(
   segmentText: string,
@@ -47,22 +52,25 @@ function calculateSentenceCoverage(
   if (!sentenceNorm) return 0;
 
   const sentenceWords = sentenceNorm.split(/\s+/).filter(Boolean);
-  const segmentWords = new Set(segmentNorm.split(/\s+/).filter(Boolean));
+  const segmentWords = segmentNorm.split(/\s+/).filter(Boolean);
 
   if (sentenceWords.length === 0) return 0;
+  if (segmentWords.length === 0) return 0;
 
-  let matchedWords = 0;
-  for (const word of sentenceWords) {
-    // Check for exact match or high similarity
-    for (const segWord of segmentWords) {
-      if (similarity(word, segWord) > 0.8) {
-        matchedWords++;
-        break;
+  // Use NW alignment to find ordered matches
+  const alignment = alignWords(sentenceWords, segmentWords);
+
+  let alignedCount = 0;
+  for (let i = 0; i < sentenceWords.length; i++) {
+    const mappedIdx = alignment[i];
+    if (mappedIdx >= 0 && mappedIdx < segmentWords.length) {
+      if (similarity(sentenceWords[i], segmentWords[mappedIdx]) > 0.6) {
+        alignedCount++;
       }
     }
   }
 
-  return (matchedWords / sentenceWords.length) * 100;
+  return (alignedCount / sentenceWords.length) * 100;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ import {
   XCircle,
   AlertCircle,
 } from "lucide-react";
+import { toast } from "sonner";
 import type {
   PreselectionLog,
   SegmentPreselectionLog,
@@ -40,6 +41,8 @@ import type {
 interface PreselectionLogsProps {
   log: PreselectionLog;
   onSeekTo?: (seconds: number) => void;
+  /** When set, auto-expand and scroll to this segment's log card */
+  highlightSegmentId?: string | null;
 }
 
 type FilterStatus = "all" | "selected" | "rejected" | "ambiguous";
@@ -152,8 +155,8 @@ function SegmentLogCard({
             #{index + 1}
           </Badge>
 
-          <span className="text-sm font-mono text-muted-foreground flex-shrink-0">
-            {formatTime(segment.timing.startMs)} - {formatTime(segment.timing.endMs)}
+          <span className="text-xs font-mono text-muted-foreground flex-shrink-0">
+            {formatTime(segment.timing.startMs)} – {formatTime(segment.timing.endMs)}
           </span>
 
           <Badge
@@ -173,16 +176,31 @@ function SegmentLogCard({
 
       <CollapsibleContent>
         <div className="ml-8 mt-2 p-4 bg-muted/30 rounded-lg space-y-4">
+          {/* Timing (ms values, copiables) */}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+            <Clock className="w-3 h-3" />
+            <button type="button" className="hover:text-foreground cursor-pointer" onClick={() => { navigator.clipboard.writeText(String(segment.timing.startMs)).then(() => toast.success(`Copiado: ${segment.timing.startMs}ms`)); }} title="Copiar startMs">{segment.timing.startMs}ms</button>
+            <span>–</span>
+            <button type="button" className="hover:text-foreground cursor-pointer" onClick={() => { navigator.clipboard.writeText(String(segment.timing.endMs)).then(() => toast.success(`Copiado: ${segment.timing.endMs}ms`)); }} title="Copiar endMs">{segment.timing.endMs}ms</button>
+            <span className="text-muted-foreground/50">({formatDuration(segment.timing.durationMs)})</span>
+          </div>
+
           {/* Score Breakdown */}
           <div className="grid grid-cols-2 gap-4">
             <ScoreBar
-              label="Script Match"
+              label="Cobertura del Guion"
               score={segment.scores.breakdown.scriptMatch}
               weighted={segment.scores.weighted.scriptMatch}
               weight={weights.scriptMatch}
             />
             <ScoreBar
-              label="Orden de Toma"
+              label="Confianza Whisper"
+              score={segment.scores.breakdown.whisperConfidence}
+              weighted={segment.scores.weighted.whisperConfidence}
+              weight={weights.whisperConfidence}
+            />
+            <ScoreBar
+              label="Fluidez"
               score={segment.scores.breakdown.takeOrder}
               weighted={segment.scores.weighted.takeOrder}
               weight={weights.takeOrder}
@@ -292,9 +310,15 @@ function SegmentLogCard({
                   {segment.decision.criterionReasons.scriptMatch}
                 </div>
               )}
+              {segment.decision.criterionReasons.whisperConfidence && (
+                <div className="text-muted-foreground">
+                  <span className="font-medium">Whisper:</span>{" "}
+                  {segment.decision.criterionReasons.whisperConfidence}
+                </div>
+              )}
               {segment.decision.criterionReasons.takeOrder && (
                 <div className="text-muted-foreground">
-                  <span className="font-medium">Toma:</span>{" "}
+                  <span className="font-medium">Fluidez:</span>{" "}
                   {segment.decision.criterionReasons.takeOrder}
                 </div>
               )}
@@ -333,7 +357,7 @@ function SegmentLogCard({
   );
 }
 
-export function PreselectionLogs({ log, onSeekTo }: PreselectionLogsProps) {
+export function PreselectionLogs({ log, onSeekTo, highlightSegmentId }: PreselectionLogsProps) {
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
   const [searchText, setSearchText] = useState("");
   const [minScore, setMinScore] = useState(0);
@@ -372,6 +396,9 @@ export function PreselectionLogs({ log, onSeekTo }: PreselectionLogsProps) {
     return { total, selected, avgScore };
   }, [log]);
 
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
   const toggleSegment = (segmentId: string) => {
     setOpenSegments((prev) => {
       const next = new Set(prev);
@@ -383,6 +410,32 @@ export function PreselectionLogs({ log, onSeekTo }: PreselectionLogsProps) {
       return next;
     });
   };
+
+  // Auto-expand and scroll to highlighted segment
+  useEffect(() => {
+    if (!highlightSegmentId) return;
+
+    // Expand the segment
+    setOpenSegments((prev) => {
+      const next = new Set(prev);
+      next.add(highlightSegmentId);
+      return next;
+    });
+
+    // Highlight with temporary ring
+    setHighlightedId(highlightSegmentId);
+    const timer = setTimeout(() => setHighlightedId(null), 2000);
+
+    // Scroll into view after a brief delay (to let expand animation finish)
+    requestAnimationFrame(() => {
+      const el = scrollContainerRef.current?.querySelector(
+        `[data-segment-id="${highlightSegmentId}"]`
+      );
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    return () => clearTimeout(timer);
+  }, [highlightSegmentId]);
 
   const handleExport = () => {
     const dataStr = JSON.stringify(log, null, 2);
@@ -546,17 +599,25 @@ export function PreselectionLogs({ log, onSeekTo }: PreselectionLogsProps) {
         </div>
 
         {/* Segment List */}
-        <div className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-subtle">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-subtle">
           {filteredSegments.map((segment, index) => (
-            <SegmentLogCard
+            <div
               key={segment.segmentId}
-              segment={segment}
-              index={index}
-              weights={log.config.weights}
-              onSeekTo={onSeekTo}
-              isOpen={openSegments.has(segment.segmentId)}
-              onToggle={() => toggleSegment(segment.segmentId)}
-            />
+              data-segment-id={segment.segmentId}
+              className={cn(
+                "transition-shadow duration-300",
+                highlightedId === segment.segmentId && "ring-2 ring-blue-500 rounded-lg"
+              )}
+            >
+              <SegmentLogCard
+                segment={segment}
+                index={index}
+                weights={log.config.weights}
+                onSeekTo={onSeekTo}
+                isOpen={openSegments.has(segment.segmentId)}
+                onToggle={() => toggleSegment(segment.segmentId)}
+              />
+            </div>
           ))}
 
           {filteredSegments.length === 0 && (

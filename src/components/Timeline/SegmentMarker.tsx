@@ -1,6 +1,8 @@
 import { useRef, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import type { TimelineSegment } from "@/store/timeline";
+import { BarChart3 } from "lucide-react";
+import { Waveform } from "@/components/Timeline/Waveform";
+import { useTimelineStore, type TimelineSegment } from "@/store/timeline";
 
 interface SegmentMarkerProps {
   segment: TimelineSegment;
@@ -10,6 +12,26 @@ interface SegmentMarkerProps {
   onSelect: () => void;
   onResize?: (field: "startMs" | "endMs", newValue: number) => void;
   onToggleEnabled?: () => void;
+  /** Callback to show the preselection log for this segment */
+  onShowLog?: () => void;
+  /** Offset in ms for contiguous (no-gap) layout */
+  contiguousOffsetMs?: number;
+  /** Waveform samples for this segment (used as background in contiguous mode) */
+  waveformSlice?: number[];
+  /** Track height in pixels (for dynamic waveform sizing) */
+  trackHeight?: number;
+  /** Viewport width in pixels (for viewport-aware culling) */
+  viewportWidthPx?: number;
+}
+
+function downsampleForWidth(samples: number[], targetWidth: number): number[] {
+  if (samples.length <= targetWidth) return samples;
+  const step = samples.length / targetWidth;
+  const result: number[] = [];
+  for (let i = 0; i < targetWidth; i++) {
+    result.push(samples[Math.floor(i * step)]);
+  }
+  return result;
 }
 
 type DragMode = "resize-start" | "resize-end" | null;
@@ -50,8 +72,14 @@ export function SegmentMarker({
   onSelect,
   onResize,
   onToggleEnabled,
+  onShowLog,
+  contiguousOffsetMs,
+  waveformSlice,
+  trackHeight,
+  viewportWidthPx,
 }: SegmentMarkerProps) {
   const markerRef = useRef<HTMLDivElement>(null);
+  const preDragSnapshotRef = useRef<{ timelines: any } | null>(null);
   const [dragMode, setDragMode] = useState<DragMode>(null);
   const [dragStartX, setDragStartX] = useState(0);
   const [originalStartMs, setOriginalStartMs] = useState(0);
@@ -60,8 +88,10 @@ export function SegmentMarker({
   // Calculate pixels per millisecond based on zoom level
   const pxPerMs = (100 * zoomLevel) / 1000;
 
-  // Use actual calculated positions - no artificial expansion
-  const x = (segment.startMs - viewportStartMs) * pxPerMs;
+  // Use contiguous offset if provided, otherwise absolute position
+  const isContiguous = contiguousOffsetMs !== undefined;
+  const displayStartMs = isContiguous ? contiguousOffsetMs : segment.startMs;
+  const x = (displayStartMs - viewportStartMs) * pxPerMs;
   const actualWidth = (segment.endMs - segment.startMs) * pxPerMs;
   // Keep minimum width for clickability, but this is the VISUAL width only
   const width = Math.max(actualWidth, 4); // Minimum 4px for clickability
@@ -84,6 +114,13 @@ export function SegmentMarker({
 
       // Capture pointer for smooth dragging
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+      // Batch undo: save pre-drag state and pause undo tracking
+      const temporal = useTimelineStore.temporal.getState();
+      preDragSnapshotRef.current = {
+        timelines: useTimelineStore.getState().timelines,
+      };
+      temporal.pause();
     },
     [onSelect, onResize, segment.startMs, segment.endMs]
   );
@@ -114,6 +151,18 @@ export function SegmentMarker({
     (e: React.PointerEvent) => {
       if (dragMode) {
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+
+        // Batch undo: insert pre-drag snapshot as single undo entry and resume
+        const temporal = useTimelineStore.temporal.getState();
+        if (preDragSnapshotRef.current) {
+          useTimelineStore.temporal.setState({
+            pastStates: [...temporal.pastStates, preDragSnapshotRef.current],
+            futureStates: [],
+          });
+          preDragSnapshotRef.current = null;
+        }
+        temporal.resume();
+
         setDragMode(null);
       }
     },
@@ -144,8 +193,23 @@ export function SegmentMarker({
     ? getScoreColorClasses(segment.preselectionScore)
     : null;
 
+  // Build tooltip text with score breakdown
+  const tooltipText = segment.scoreBreakdown
+    ? [
+        `Score: ${segment.preselectionScore ?? "—"}%`,
+        `Script: ${segment.scoreBreakdown.scriptMatch.toFixed(0)}%`,
+        `Whisper: ${segment.scoreBreakdown.whisperConfidence.toFixed(0)}%`,
+        `Recencia: ${segment.scoreBreakdown.takeOrder.toFixed(0)}%`,
+        `Completitud: ${segment.scoreBreakdown.completeness.toFixed(0)}%`,
+        `Duracion: ${segment.scoreBreakdown.duration.toFixed(0)}%`,
+        segment.totalTakes && segment.totalTakes > 1
+          ? `Toma ${segment.takeNumber}/${segment.totalTakes}`
+          : null,
+      ].filter(Boolean).join("\n")
+    : segment.preselectionReason || undefined;
+
   // Don't render if outside viewport (after hooks to follow React rules)
-  if (x + width < -50 || x > 2000) return null;
+  if (x + width < -50 || x > (viewportWidthPx || 2000) + 100) return null;
 
   const resizeHandleClass =
     "absolute top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/30 transition-colors z-10";
@@ -154,8 +218,8 @@ export function SegmentMarker({
     <div
       ref={markerRef}
       className={cn(
-        "absolute top-1 bottom-1 rounded transition-shadow select-none box-border",
-        "border-2 flex items-center justify-center text-xs font-medium",
+        "group absolute top-1 bottom-1 rounded transition-shadow select-none box-border",
+        "border-2 flex items-end justify-center text-xs font-medium",
         segment.enabled
           ? scoreColors
             ? `${scoreColors.bg} ${scoreColors.border} ${scoreColors.text}`
@@ -170,6 +234,7 @@ export function SegmentMarker({
         width,
         cursor: dragMode ? "ew-resize" : "pointer",
       }}
+      title={tooltipText}
       onClick={handleBodyClick}
       onDoubleClick={handleDoubleClick}
     >
@@ -183,8 +248,43 @@ export function SegmentMarker({
         />
       )}
 
-      {/* Content */}
-      <span className="truncate px-1 pointer-events-none opacity-70">
+      {/* Waveform background */}
+      {waveformSlice && waveformSlice.length > 0 && (
+        <div className="absolute inset-0 overflow-hidden rounded pointer-events-none">
+          <Waveform
+            data={downsampleForWidth(waveformSlice, Math.max(1, Math.round(width)))}
+            width={Math.max(1, Math.round(width))}
+            height={(trackHeight ?? 80) - 8}
+            color={segment.enabled ? "rgb(74, 222, 128)" : "rgb(156, 163, 175)"}
+            style="mirror"
+          />
+        </div>
+      )}
+
+      {/* Take indicator (top-left) */}
+      {segment.enabled && segment.totalTakes && segment.totalTakes > 1 && segment.takeNumber && actualWidth > 40 && (
+        <span className="absolute top-0.5 left-1 pointer-events-none text-[9px] font-bold opacity-80 leading-none">
+          T{segment.takeNumber}/{segment.totalTakes}
+        </span>
+      )}
+
+      {/* Show log button (top-right, hover only) */}
+      {onShowLog && segment.preselectionScore !== undefined && (
+        <button
+          type="button"
+          className="absolute top-0.5 right-0.5 z-20 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-white/30"
+          onClick={(e) => {
+            e.stopPropagation();
+            onShowLog();
+          }}
+          title="Ver log de preseleccion"
+        >
+          <BarChart3 className="w-3 h-3" />
+        </button>
+      )}
+
+      {/* Content label (bottom) */}
+      <span className="truncate px-1 pb-0.5 pointer-events-none opacity-70 text-[10px] leading-none">
         {segment.enabled
           ? segment.preselectionScore !== undefined && actualWidth > 30
             ? `${segment.preselectionScore}%`

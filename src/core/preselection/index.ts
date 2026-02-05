@@ -16,6 +16,16 @@ export type {
   SegmentScriptMatch,
   InputSegment,
   CutMapEntry,
+  // Take-based scoring types
+  TakeScoreBreakdown,
+  TakeScore,
+  // New AI-First types
+  ContentType,
+  ProposedSplit,
+  AIPreselectionWarningType,
+  AIPreselectionWarning,
+  AIPreselectionSummary,
+  AIPreselectionResult,
 } from "./types";
 
 export {
@@ -48,6 +58,49 @@ export type {
   ReapplyWithCaptionsOptions,
 } from "./preselect";
 
+// AI-First preselection
+export {
+  aiPreselectSegments,
+  aiPreselectSegmentsFull,
+  rerunAIPreselection,
+  AIPreselectionResponseSchema,
+} from "./ai-preselect";
+
+// AI preselection schemas
+export {
+  ContentTypeSchema,
+  ProposedSplitSchema,
+  SegmentDecisionSchema,
+  WarningTypeSchema,
+  AIPreselectionWarningSchema,
+  AIPreselectionSummarySchema,
+} from "./ai-preselection-schema";
+export type {
+  SegmentDecision,
+  AIPreselectionResponse,
+  AISegmentInput,
+  ScriptLineInput,
+} from "./ai-preselection-schema";
+
+// AI preselection prompt builders
+export {
+  parseScriptLines,
+  getSegmentTranscription as getSegmentTranscriptionForAI,
+  formatSegmentsForAI,
+  buildSystemPrompt,
+  buildUserPrompt,
+  buildUserPromptNoScript,
+} from "./ai-preselection-prompt";
+
+// Segment splitter
+export {
+  splitSegment,
+  applyProposedSplits,
+  validateProposedSplit,
+  createManualSplit,
+} from "./segment-splitter";
+export type { SplitResult } from "./segment-splitter";
+
 // Logger utilities
 export {
   createLogCollector,
@@ -68,5 +121,22 @@ export {
 } from "./script-matcher";
 
 // Scoring utilities
-export { scoreSegments, selectByScore } from "./scorer";
+export { scoreSegments, selectByScore, selectBestPerGroup } from "./scorer";
 export type { ScoreSegmentsOptions } from "./scorer";
+
+// Take-based preselection
+export {
+  extractAndClassifyTakes,
+  mapTakesToSegments,
+} from "./take-extractor";
+export type {
+  ClassifiedTake,
+  TakeExtractionResult,
+} from "./take-extractor";
+
+export {
+  scoreTake,
+  selectBestTakes,
+  DEFAULT_TAKE_SCORE_CONFIG,
+} from "./take-scorer";
+export type { TakeScoreConfig } from "./take-scorer";

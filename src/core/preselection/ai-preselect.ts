@@ -1,10 +1,16 @@
 /**
- * AI-Powered Preselection using Vercel AI SDK
+ * AI-First Preselection using Vercel AI SDK
+ *
+ * Analyzes transcribed captions against the original script to:
+ * - Detect which script lines each segment covers
+ * - Identify the best take when multiple attempts exist
+ * - Detect false starts and aborted attempts
+ * - Evaluate off-script content for value
  */
-import { generateObject } from "ai";
+import { generateObject, type LanguageModelUsage } from "ai";
 import { anthropic, createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
-import { z } from "zod";
+import { OpenAICompatibleChatLanguageModel } from "@ai-sdk/openai-compatible";
 import { nanoid } from "nanoid";
 import type { Caption } from "../script/align";
 import type {
@@ -14,92 +20,150 @@ import type {
   PreselectionStats,
   InputSegment,
   AIPreselectionTrace,
+  AIPreselectionResult,
+  AIPreselectionSummary,
+  AIPreselectionWarning,
+  ContentType,
 } from "./types";
 import { logAITrace, type LogCollector } from "./logger";
+import {
+  AIPreselectionResponseSchema,
+  type AIPreselectionResponse,
+  type SegmentDecision,
+} from "./ai-preselection-schema";
+import {
+  buildSystemPrompt,
+  buildUserPrompt,
+  buildUserPromptNoScript,
+  formatSegmentsForAI,
+  parseScriptLines,
+} from "./ai-preselection-prompt";
 
-// Schema para respuesta estructurada
-const AIResponseSchema = z.object({
-  selections: z.array(
-    z.object({
-      segmentIndex: z.number(),
-      enabled: z.boolean(),
-      score: z.number().min(0).max(100),
-      reason: z.string(),
-    })
-  ),
-  summary: z.object({
-    repetitionsDetected: z.number(),
-  }),
-});
+// Re-export for backwards compatibility
+export { AIPreselectionResponseSchema } from "./ai-preselection-schema";
 
-const SYSTEM_PROMPT = `Eres un editor de video IA que selecciona los mejores segmentos de una grabacion.
-
-Tu tarea es analizar segmentos transcritos y determinar cuales deben HABILITARSE (incluir) o DESHABILITARSE (cortar).
-
-Criterios de seleccion:
-1. **Repeticiones**: Si el hablante dice lo mismo varias veces (tomas), selecciona SOLO la MEJOR toma. Deshabilita las otras.
-2. **Calidad**: Prefiere segmentos con oraciones completas y claras.
-3. **Relevancia**: Si hay guion, prioriza segmentos que cubran el contenido del guion.
-4. **Flujo**: Los segmentos seleccionados deben crear una narrativa coherente.
-5. **Duracion**: Segmentos muy cortos (<1s) o muy largos (>20s) necesitan justificacion.
-
-Para cada segmento provee:
-- enabled: true si debe incluirse, false si se corta
-- score: 0-100 (100 = perfecto, 0 = definitivamente cortar)
-- reason: Explicacion breve en espanol
-
-Se agresivo cortando repeticiones y falsos comienzos. Una buena edicion elimina 30-70% del material.`;
-
-function buildUserPrompt(
-  segments: Array<{ id: string; startMs: number; endMs: number }>,
-  captions: Caption[],
-  script?: string
-): string {
-  const segmentTexts = segments.map((seg, index) => {
-    const segCaptions = captions.filter(
-      (c) => c.startMs >= seg.startMs && c.endMs <= seg.endMs
-    );
-    const text =
-      segCaptions
-        .map((c) => c.text)
-        .join(" ")
-        .trim() || "[sin audio]";
-    const duration = ((seg.endMs - seg.startMs) / 1000).toFixed(1);
-    return `[${index}] ${duration}s: "${text}"`;
-  });
-
-  let prompt = `Analiza estos ${segments.length} segmentos:\n\n${segmentTexts.join("\n")}`;
-
-  if (script) {
-    prompt += `\n\n--- GUION ---\n${script}\n---\n\nSelecciona segmentos que mejor cubran el guion.`;
-  }
-
-  return prompt;
-}
-
+/**
+ * Get the AI model based on configuration
+ */
 function getModel(config: AIPreselectionConfig) {
   if (config.provider === "anthropic") {
-    // Anthropic provider uses environment variable ANTHROPIC_API_KEY by default
-    // If custom apiKey provided, use createAnthropic to configure it
     if (config.apiKey) {
       const customAnthropic = createAnthropic({ apiKey: config.apiKey });
       return customAnthropic(config.modelId);
     }
     return anthropic(config.modelId);
   } else if (config.provider === "openai-compatible") {
-    // LM Studio, Ollama, or other OpenAI-compatible servers
-    const openai = createOpenAI({
-      baseURL: config.baseUrl || "http://localhost:1234/v1",
-      apiKey: config.apiKey || "not-needed", // LM Studio doesn't require API key
+    return new OpenAICompatibleChatLanguageModel(config.modelId, {
+      provider: "lmstudio.chat",
+      url: ({ path }) => `${config.baseUrl || "http://localhost:1234/v1"}${path}`,
+      headers: () => ({}),
+      supportsStructuredOutputs: true,
     });
-    return openai(config.modelId);
   } else {
-    // Standard OpenAI
     const openai = createOpenAI({ apiKey: config.apiKey });
     return openai(config.modelId);
   }
 }
 
+/**
+ * Generate AI preselection response using generateObject for all providers.
+ */
+async function generateAIResponse(
+  model: ReturnType<typeof getModel>,
+  config: AIPreselectionConfig,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<{ object: AIPreselectionResponse; usage: LanguageModelUsage }> {
+  console.log("[ai-preselect] Generating AI response for model:", config.modelId);
+  const isLocalModel = config.provider === "openai-compatible";
+  const result = await generateObject({
+    model,
+    schema: AIPreselectionResponseSchema,
+    system: systemPrompt,
+    prompt: userPrompt,
+    timeout: isLocalModel ? 240_000 : 120_000,
+    ...(isLocalModel && {
+      maxOutputTokens: 16384,
+      providerOptions: {
+        openaiCompatible: { strictJsonSchema: false },
+      },
+    }),
+  });
+  return { object: result.object, usage: result.usage };
+}
+
+/**
+ * Convert AI decision to PreselectedSegment
+ */
+function decisionToSegment(
+  decision: SegmentDecision,
+  originalSegment: { id: string; startMs: number; endMs: number }
+): PreselectedSegment {
+  return {
+    id: decision.segmentId,
+    startMs: originalSegment.startMs,
+    endMs: originalSegment.endMs,
+    enabled: decision.enabled,
+    score: decision.score,
+    reason: decision.reason,
+    contentType: decision.contentType as ContentType,
+    coversScriptLines: decision.coversScriptLines,
+    bestTakeSegmentId: decision.bestTakeSegmentId,
+    proposedSplits: decision.proposedSplits,
+  };
+}
+
+/**
+ * Calculate statistics from AI preselection result
+ */
+function calculateStats(
+  segments: PreselectedSegment[],
+  summary: AIPreselectionSummary
+): PreselectionStats {
+  const selected = segments.filter((s) => s.enabled);
+  const originalDurationMs = segments.reduce(
+    (sum, s) => sum + (s.endMs - s.startMs),
+    0
+  );
+  const selectedDurationMs = selected.reduce(
+    (sum, s) => sum + (s.endMs - s.startMs),
+    0
+  );
+
+  const totalLines = new Set([
+    ...summary.coveredScriptLines,
+    ...summary.missingScriptLines,
+  ]).size;
+  const scriptCoverage =
+    totalLines > 0
+      ? (summary.coveredScriptLines.length / totalLines) * 100
+      : 100;
+
+  return {
+    totalSegments: segments.length,
+    selectedSegments: selected.length,
+    originalDurationMs,
+    selectedDurationMs,
+    scriptCoverage,
+    repetitionsRemoved: summary.repetitionsDetected,
+    averageScore:
+      selected.length > 0
+        ? selected.reduce((sum, s) => sum + s.score, 0) / selected.length
+        : 0,
+    ambiguousSegments: segments.filter((s) => s.score >= 40 && s.score <= 60)
+      .length,
+    falseStartsDetected: summary.falseStartsDetected,
+    coveredScriptLines: summary.coveredScriptLines,
+    missingScriptLines: summary.missingScriptLines,
+  };
+}
+
+/**
+ * AI-First preselection - main function
+ *
+ * Analyzes segments against script using AI to make intelligent
+ * selection decisions based on content quality and coverage.
+ */
 export async function aiPreselectSegments(
   inputSegments: InputSegment[],
   options: {
@@ -112,80 +176,295 @@ export async function aiPreselectSegments(
 ): Promise<PreselectionResult> {
   const { captions, script, aiConfig, collector } = options;
 
+  // Assign IDs to segments
   const segmentsWithIds = inputSegments.map((seg) => ({
     ...seg,
     id: nanoid(8),
   }));
 
-  const model = getModel(aiConfig);
-  const userPrompt = buildUserPrompt(segmentsWithIds, captions, script);
+  // Format segments for AI
+  const aiSegments = formatSegmentsForAI(segmentsWithIds, captions);
 
+  // Parse script if provided
+  const scriptLines = script ? parseScriptLines(script) : [];
+
+  // Build prompts
+  const systemPrompt = buildSystemPrompt();
+  const userPrompt =
+    scriptLines.length > 0
+      ? buildUserPrompt(aiSegments, scriptLines)
+      : buildUserPromptNoScript(aiSegments);
+
+  const model = getModel(aiConfig);
   const startTime = Date.now();
 
-  const { object: result, usage } = await generateObject({
-    model,
-    schema: AIResponseSchema,
-    system: SYSTEM_PROMPT,
-    prompt: userPrompt,
-  });
+  try {
+    const { object: result, usage } = await generateAIResponse(
+      model, aiConfig, systemPrompt, userPrompt
+    );
 
-  const latencyMs = Date.now() - startTime;
+    const latencyMs = Date.now() - startTime;
 
-  // Log AI trace if collector is provided
-  if (collector) {
-    const trace: AIPreselectionTrace = {
-      provider: aiConfig.provider,
-      modelId: aiConfig.modelId,
-      systemPrompt: SYSTEM_PROMPT,
-      userPrompt,
-      rawResponse: result,
-      parsedSelections: result.selections.map((s) => ({
-        segmentIndex: s.segmentIndex,
-        enabled: s.enabled,
-        score: s.score,
-        reason: s.reason,
-      })),
-      meta: {
-        promptTokens: usage?.inputTokens,
-        completionTokens: usage?.outputTokens,
-        latencyMs,
-      },
-    };
-    logAITrace(collector, trace);
+    // Log AI trace if collector is provided
+    if (collector) {
+      const trace: AIPreselectionTrace = {
+        provider: aiConfig.provider,
+        modelId: aiConfig.modelId,
+        systemPrompt,
+        userPrompt,
+        rawResponse: result,
+        parsedSelections: result.decisions.map((d) => ({
+          segmentIndex: aiSegments.findIndex((s) => s.id === d.segmentId),
+          enabled: d.enabled,
+          score: d.score,
+          reason: d.reason,
+        })),
+        meta: {
+          promptTokens: usage?.inputTokens,
+          completionTokens: usage?.outputTokens,
+          latencyMs,
+        },
+      };
+      logAITrace(collector, trace);
+    }
+
+    // Convert decisions to segments
+    const segments: PreselectedSegment[] = segmentsWithIds.map((seg) => {
+      const decision = result.decisions.find((d) => d.segmentId === seg.id);
+      if (decision) {
+        return decisionToSegment(decision, seg);
+      }
+      // Fallback if AI didn't include this segment
+      return {
+        id: seg.id,
+        startMs: seg.startMs,
+        endMs: seg.endMs,
+        enabled: true,
+        score: 50,
+        reason: "Sin análisis AI",
+        contentType: "off_script" as ContentType,
+        coversScriptLines: [],
+      };
+    });
+
+    const stats = calculateStats(segments, result.summary);
+
+    return { segments, stats };
+  } catch (error) {
+    console.error("[ai-preselect] Error calling AI:", error);
+    throw error;
   }
+}
 
-  const segments: PreselectedSegment[] = segmentsWithIds.map((seg, index) => {
-    const selection = result.selections.find((s: { segmentIndex: number }) => s.segmentIndex === index);
+/**
+ * AI-First preselection with full result (including warnings)
+ *
+ * Same as aiPreselectSegments but returns the complete result
+ * with warnings and detailed summary.
+ */
+export async function aiPreselectSegmentsFull(
+  inputSegments: InputSegment[],
+  options: {
+    captions: Caption[];
+    script?: string;
+    videoDurationMs: number;
+    aiConfig: AIPreselectionConfig;
+    collector?: LogCollector;
+  }
+): Promise<AIPreselectionResult> {
+  const { captions, script, aiConfig, collector } = options;
+
+  // Assign IDs to segments
+  const segmentsWithIds = inputSegments.map((seg) => ({
+    ...seg,
+    id: nanoid(8),
+  }));
+
+  // Format segments for AI
+  const aiSegments = formatSegmentsForAI(segmentsWithIds, captions);
+
+  // Parse script if provided
+  const scriptLines = script ? parseScriptLines(script) : [];
+
+  // Build prompts
+  const systemPrompt = buildSystemPrompt();
+  const userPrompt =
+    scriptLines.length > 0
+      ? buildUserPrompt(aiSegments, scriptLines)
+      : buildUserPromptNoScript(aiSegments);
+
+  const model = getModel(aiConfig);
+  const startTime = Date.now();
+
+  try {
+    const { object: result, usage } = await generateAIResponse(
+      model, aiConfig, systemPrompt, userPrompt
+    );
+
+    const latencyMs = Date.now() - startTime;
+
+    // Log AI trace if collector is provided
+    if (collector) {
+      const trace: AIPreselectionTrace = {
+        provider: aiConfig.provider,
+        modelId: aiConfig.modelId,
+        systemPrompt,
+        userPrompt,
+        rawResponse: result,
+        parsedSelections: result.decisions.map((d) => ({
+          segmentIndex: aiSegments.findIndex((s) => s.id === d.segmentId),
+          enabled: d.enabled,
+          score: d.score,
+          reason: d.reason,
+        })),
+        meta: {
+          promptTokens: usage?.inputTokens,
+          completionTokens: usage?.outputTokens,
+          latencyMs,
+        },
+      };
+      logAITrace(collector, trace);
+    }
+
+    // Convert decisions to segments
+    const segments: PreselectedSegment[] = segmentsWithIds.map((seg) => {
+      const decision = result.decisions.find((d) => d.segmentId === seg.id);
+      if (decision) {
+        return decisionToSegment(decision, seg);
+      }
+      return {
+        id: seg.id,
+        startMs: seg.startMs,
+        endMs: seg.endMs,
+        enabled: true,
+        score: 50,
+        reason: "Sin análisis AI",
+        contentType: "off_script" as ContentType,
+        coversScriptLines: [],
+      };
+    });
+
+    const stats = calculateStats(segments, result.summary);
+
+    // Convert warnings to our type
+    const warnings: AIPreselectionWarning[] = result.warnings.map((w) => ({
+      type: w.type,
+      message: w.message,
+      affectedScriptLines: w.affectedScriptLines,
+      affectedSegmentIds: w.affectedSegmentIds,
+    }));
+
     return {
-      id: seg.id,
-      startMs: seg.startMs,
-      endMs: seg.endMs,
-      enabled: selection?.enabled ?? true,
-      score: selection?.score ?? 50,
-      reason: selection?.reason ?? "Sin analisis AI",
+      segments,
+      summary: result.summary,
+      warnings,
+      stats,
     };
-  });
+  } catch (error) {
+    console.error("[ai-preselect] Error calling AI:", error);
+    throw error;
+  }
+}
 
-  const selected = segments.filter((s) => s.enabled);
-  const stats: PreselectionStats = {
-    totalSegments: segments.length,
-    selectedSegments: selected.length,
-    originalDurationMs: segments.reduce(
-      (sum, s) => sum + (s.endMs - s.startMs),
-      0
-    ),
-    selectedDurationMs: selected.reduce(
-      (sum, s) => sum + (s.endMs - s.startMs),
-      0
-    ),
-    scriptCoverage: 100,
-    repetitionsRemoved: result.summary.repetitionsDetected,
-    averageScore:
-      selected.length > 0
-        ? selected.reduce((sum, s) => sum + s.score, 0) / selected.length
-        : 0,
-    ambiguousSegments: 0,
-  };
+/**
+ * Re-run AI preselection on existing segments
+ *
+ * Used when segments already have IDs and we want to
+ * re-analyze with updated captions or script.
+ */
+export async function rerunAIPreselection(
+  existingSegments: Array<{ id: string; startMs: number; endMs: number }>,
+  options: {
+    captions: Caption[];
+    script?: string;
+    videoDurationMs: number;
+    aiConfig: AIPreselectionConfig;
+    collector?: LogCollector;
+  }
+): Promise<AIPreselectionResult> {
+  const { captions, script, aiConfig, collector } = options;
 
-  return { segments, stats };
+  // Format segments for AI (keeping existing IDs)
+  const aiSegments = formatSegmentsForAI(existingSegments, captions);
+
+  // Parse script if provided
+  const scriptLines = script ? parseScriptLines(script) : [];
+
+  // Build prompts
+  const systemPrompt = buildSystemPrompt();
+  const userPrompt =
+    scriptLines.length > 0
+      ? buildUserPrompt(aiSegments, scriptLines)
+      : buildUserPromptNoScript(aiSegments);
+
+  const model = getModel(aiConfig);
+  const startTime = Date.now();
+
+  try {
+    const { object: result, usage } = await generateAIResponse(
+      model, aiConfig, systemPrompt, userPrompt
+    );
+
+    const latencyMs = Date.now() - startTime;
+
+    // Log AI trace
+    if (collector) {
+      const trace: AIPreselectionTrace = {
+        provider: aiConfig.provider,
+        modelId: aiConfig.modelId,
+        systemPrompt,
+        userPrompt,
+        rawResponse: result,
+        parsedSelections: result.decisions.map((d) => ({
+          segmentIndex: aiSegments.findIndex((s) => s.id === d.segmentId),
+          enabled: d.enabled,
+          score: d.score,
+          reason: d.reason,
+        })),
+        meta: {
+          promptTokens: usage?.inputTokens,
+          completionTokens: usage?.outputTokens,
+          latencyMs,
+        },
+      };
+      logAITrace(collector, trace);
+    }
+
+    // Convert decisions to segments
+    const segments: PreselectedSegment[] = existingSegments.map((seg) => {
+      const decision = result.decisions.find((d) => d.segmentId === seg.id);
+      if (decision) {
+        return decisionToSegment(decision, seg);
+      }
+      return {
+        id: seg.id,
+        startMs: seg.startMs,
+        endMs: seg.endMs,
+        enabled: true,
+        score: 50,
+        reason: "Sin análisis AI",
+        contentType: "off_script" as ContentType,
+        coversScriptLines: [],
+      };
+    });
+
+    const stats = calculateStats(segments, result.summary);
+
+    const warnings: AIPreselectionWarning[] = result.warnings.map((w) => ({
+      type: w.type,
+      message: w.message,
+      affectedScriptLines: w.affectedScriptLines,
+      affectedSegmentIds: w.affectedSegmentIds,
+    }));
+
+    return {
+      segments,
+      summary: result.summary,
+      warnings,
+      stats,
+    };
+  } catch (error) {
+    console.error("[ai-preselect] Error calling AI:", error);
+    throw error;
+  }
 }

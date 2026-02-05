@@ -13,9 +13,11 @@ import {
 } from "remotion";
 import SubtitlePage from "./SubtitlePage";
 import { loadFont, type FontId, DEFAULT_FONT } from "../../load-font";
-import { Caption, createTikTokStyleCaptions } from "@remotion/captions";
+import { Caption } from "@remotion/captions";
+import { createSentenceAwarePages } from "../../core/captions/create-sentence-aware-pages";
 import { ZoomLayer } from "./ZoomLayer";
 import type { AlignedEvent } from "../../core/script/align";
+import { useSubtitleStyle } from "../../store/subtitles";
 
 const SWITCH_CAPTIONS_EVERY_MS = 1200;
 
@@ -30,6 +32,7 @@ export const CaptionedVideoForPlayer: React.FC<{
   const [fileZoomEvents, setFileZoomEvents] = useState<AlignedEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { fps } = useVideoConfig();
+  const style = useSubtitleStyle();
 
   // Use timeline events if provided, otherwise fall back to file events
   const zoomEvents = timelineEvents ?? fileZoomEvents;
@@ -81,9 +84,9 @@ export const CaptionedVideoForPlayer: React.FC<{
   }, [fetchSubtitles, fetchZoomEvents]);
 
   const { pages } = useMemo(() => {
-    return createTikTokStyleCaptions({
-      combineTokensWithinMilliseconds: SWITCH_CAPTIONS_EVERY_MS,
+    return createSentenceAwarePages({
       captions: subtitles ?? [],
+      maxPageDurationMs: SWITCH_CAPTIONS_EVERY_MS,
     });
   }, [subtitles]);
 
@@ -99,11 +102,18 @@ export const CaptionedVideoForPlayer: React.FC<{
       </AbsoluteFill>
       {pages.map((page, index) => {
         const nextPage = pages[index + 1] ?? null;
-        const subtitleStartFrame = (page.startMs / 1000) * fps;
-        const subtitleEndFrame = Math.min(
-          nextPage ? (nextPage.startMs / 1000) * fps : Infinity,
-          subtitleStartFrame + (SWITCH_CAPTIONS_EVERY_MS / 1000) * fps,
+        const prerollFrames = Math.max(
+          3,
+          Math.round((style.entranceDuration / 1000) * fps),
         );
+        const subtitleStartFrame = Math.max(
+          0,
+          (page.startMs / 1000) * fps - prerollFrames,
+        );
+        const pageEndMs = page.startMs + page.durationMs;
+        const subtitleEndFrame = nextPage
+          ? (Math.min(nextPage.startMs, pageEndMs) / 1000) * fps
+          : (pageEndMs / 1000) * fps;
         const durationInFrames = subtitleEndFrame - subtitleStartFrame;
         if (durationInFrames <= 0) {
           return null;
@@ -114,6 +124,7 @@ export const CaptionedVideoForPlayer: React.FC<{
             key={index}
             from={subtitleStartFrame}
             durationInFrames={durationInFrames}
+            style={{ zIndex: pages.length - index }}
           >
             <SubtitlePage
               key={index}

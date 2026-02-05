@@ -9,8 +9,6 @@ import {
   Pause,
   Clock,
   Scissors,
-  Eye,
-  Film,
   Crosshair,
   Sparkles,
   X,
@@ -21,6 +19,7 @@ import {
 } from "lucide-react";
 import type { PreselectedSegment, PreselectionStats, PreselectionLog } from "@/core/preselection";
 import { PreselectionLogs } from "./PreselectionLogs";
+import { AIPreselectionPanel } from "./AIPreselectionPanel";
 import {
   useVideoSegments,
   useTimelineActions,
@@ -28,7 +27,8 @@ import {
   type TimelineSegment,
 } from "@/store/timeline";
 import { SegmentTimeline } from "./SegmentTimeline";
-import { usePlayheadSync } from "@/hooks/usePlayheadSync";
+import { useDoubleBufferedPlayback } from "@/hooks/useDoubleBufferedPlayback";
+import { useSegmentEditorShortcuts } from "@/hooks/useSegmentEditorShortcuts";
 import { FullscreenWrapper } from "./FullscreenWrapper";
 
 interface Segment {
@@ -51,6 +51,10 @@ interface SegmentEditorPanelProps {
   };
   /** Detailed preselection logs for debugging */
   preselectionLog?: PreselectionLog;
+  /** Script text for AI preselection */
+  script?: string;
+  /** Whether captions are available (for AI preselection) */
+  hasCaptions?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -74,24 +78,14 @@ export function SegmentEditorPanel({
   onSegmentsChange,
   preselection,
   preselectionLog,
+  script,
+  hasCaptions = false,
 }: SegmentEditorPanelProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
   const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [isPlaying, setIsPlaying] = useState(false);
-  const [mode, setMode] = useState<"full" | "preview">("full");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
-
-  // Smooth playhead sync using RAF during playback
-  const { currentTimeMs, isTransitioning } = usePlayheadSync({
-    videoRef,
-    isPlaying,
-  });
-  const currentTime = currentTimeMs / 1000;
-
-  // State and refs for jump control (prevents race conditions in preview mode)
-  const [isJumping, setIsJumping] = useState(false);
-  const lastJumpTargetRef = useRef<number | null>(null);
+  const [showAIPanel, setShowAIPanel] = useState(true);
 
   // Get segments from timeline store (these are the editable ones with enabled state)
   const timelineSegments = useVideoSegments(videoId);
@@ -112,36 +106,31 @@ export function SegmentEditorPanel({
   }, [selectedSegment, timelineSegments]);
 
   // Track if we've already imported for this video/preselection combination
-  const lastImportRef = useRef<{ videoId: string; hasPreselection: boolean } | null>(null);
+  const lastImportRef = useRef<string | null>(null);
 
   // Initialize timeline segments from prop segments
-  // Re-import if preselection data is available but current segments don't have it
+  // Re-import if preselection data changes (e.g., after captions reapply)
   useEffect(() => {
     if (segments.length === 0) return;
 
     const hasPreselectionData = preselection && preselection.segments.length > 0;
-    const importKey = { videoId, hasPreselection: !!hasPreselectionData };
 
-    // Check if we've already imported with these parameters
-    if (
-      lastImportRef.current?.videoId === importKey.videoId &&
-      lastImportRef.current?.hasPreselection === importKey.hasPreselection &&
-      timelineSegments.length > 0
-    ) {
+    // Build a fingerprint that changes when preselection data changes
+    const fingerprint = hasPreselectionData
+      ? `${videoId}:pre:${preselection.segments.length}:${preselection.stats.averageScore.toFixed(1)}`
+      : `${videoId}:basic:${segments.length}`;
+
+    // Skip if we've already imported with this exact fingerprint
+    if (lastImportRef.current === fingerprint && timelineSegments.length > 0) {
       return;
     }
 
-    const currentSegmentsHavePreselection =
-      timelineSegments.length > 0 &&
-      timelineSegments.some((s) => s.preselectionScore !== undefined);
-
-    // Import if no segments yet, or if preselection available but not applied
     const shouldImport =
       timelineSegments.length === 0 ||
-      (hasPreselectionData && !currentSegmentsHavePreselection);
+      lastImportRef.current !== fingerprint;
 
     if (shouldImport) {
-      lastImportRef.current = importKey;
+      lastImportRef.current = fingerprint;
       if (hasPreselectionData) {
         importPreselectedSegments(videoId, preselection.segments, []);
       } else {
@@ -171,6 +160,31 @@ export function SegmentEditorPanel({
     [timelineSegments]
   );
 
+  // Double-buffered playback for seamless transitions
+  const {
+    activeVideo,
+    activeVideoRef,
+    currentTimeMs,
+    isTransitioning,
+    togglePlayback,
+    seekTo: hookSeekTo,
+    setVideoElA,
+    setVideoElB,
+  } = useDoubleBufferedPlayback({
+    videoPath,
+    enabledSegments,
+    isPlaying,
+  });
+
+  const currentTime = currentTimeMs / 1000;
+
+  // Keyboard shortcuts (CapCut-style)
+  useSegmentEditorShortcuts({
+    videoId,
+    videoRef: activeVideoRef,
+    totalDurationMs: totalDuration * 1000,
+  });
+
   // Calculate statistics
   const stats = useMemo(() => {
     const selectedDuration = enabledSegments.reduce(
@@ -190,159 +204,9 @@ export function SegmentEditorPanel({
     };
   }, [timelineSegments, enabledSegments, totalDuration]);
 
-  // Map original time to edited time (for preview mode)
-  const mapTimeToEdited = useCallback(
-    (originalMs: number): number | null => {
-      let editedMs = 0;
-
-      for (const segment of enabledSegments) {
-        if (originalMs >= segment.startMs && originalMs <= segment.endMs) {
-          return editedMs + (originalMs - segment.startMs);
-        }
-        if (originalMs > segment.endMs) {
-          editedMs += segment.endMs - segment.startMs;
-        }
-      }
-
-      // Time is in a silence/cut region
-      return null;
-    },
-    [enabledSegments]
-  );
-
-  // Ref for jump debounce (needs stable reference across renders)
-  const isJumpingRef = useRef(isJumping);
-  useEffect(() => {
-    isJumpingRef.current = isJumping;
-  }, [isJumping]);
-
-  // Perform jump with position-based deduplication and seeked event handling
-  const performJump = useCallback((targetTime: number) => {
-    const video = videoRef.current;
-    if (!video || isJumpingRef.current) return;
-
-    // Avoid redundant jump to the SAME destination (within 50ms tolerance)
-    if (
-      lastJumpTargetRef.current !== null &&
-      Math.abs(targetTime - lastJumpTargetRef.current) < 0.05
-    ) {
-      return;
-    }
-
-    setIsJumping(true);
-    lastJumpTargetRef.current = targetTime;
-
-    video.currentTime = targetTime;
-
-    // Wait for the video to confirm the seek
-    const handleSeeked = () => {
-      setIsJumping(false);
-      video.removeEventListener("seeked", handleSeeked);
-    };
-    video.addEventListener("seeked", handleSeeked, { once: true });
-
-    // Safety timeout in case seeked event doesn't fire
-    setTimeout(() => setIsJumping(false), 200);
-  }, []);
-
-  // Handle video events (play/pause/ended)
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
-    const handleEnded = () => setIsPlaying(false);
-
-    video.addEventListener("play", handlePlay);
-    video.addEventListener("pause", handlePause);
-    video.addEventListener("ended", handleEnded);
-
-    return () => {
-      video.removeEventListener("play", handlePlay);
-      video.removeEventListener("pause", handlePause);
-      video.removeEventListener("ended", handleEnded);
-    };
-  }, []);
-
-  // Reset jump state when switching modes
-  useEffect(() => {
-    setIsJumping(false);
-    lastJumpTargetRef.current = null;
-  }, [mode]);
-
-  // Preview mode: proactive edge detection with lookahead
-  useEffect(() => {
-    // Only process in preview mode while playing
-    if (mode !== "preview" || !isPlaying || isJumping) return;
-
-    const video = videoRef.current;
-    if (!video) return;
-
-    // Find the current segment we're in
-    const currentSegment = enabledSegments.find(
-      (s) => currentTimeMs >= s.startMs && currentTimeMs <= s.endMs
-    );
-
-    if (currentSegment) {
-      // We're inside a segment - check if we're approaching the end
-      const msToEnd = currentSegment.endMs - currentTimeMs;
-      const LOOKAHEAD_MS = 17; // ~1 frame at 60fps - jump just before hitting the gap
-
-      if (msToEnd <= LOOKAHEAD_MS && msToEnd > 0) {
-        // About to exit this segment - find and jump to next
-        const nextSegment = enabledSegments.find(
-          (s) => s.startMs > currentSegment.endMs
-        );
-        if (nextSegment) {
-          performJump(nextSegment.startMs / 1000);
-        } else {
-          // No more segments - pause at end
-          video.pause();
-        }
-      }
-      return;
-    }
-
-    // Fallback: we're already in a gap (shouldn't happen often with lookahead)
-    const nextSegment = enabledSegments.find((s) => s.startMs > currentTimeMs);
-    if (nextSegment) {
-      performJump(nextSegment.startMs / 1000);
-    } else {
-      // No more segments - end of video
-      video.pause();
-    }
-  }, [currentTimeMs, mode, isPlaying, isJumping, enabledSegments, performJump]);
-
-  const togglePlayback = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (isPlaying) {
-      video.pause();
-    } else {
-      // In preview mode, if starting from a cut region, jump to next segment
-      if (mode === "preview") {
-        const currentMs = video.currentTime * 1000;
-        const editedMs = mapTimeToEdited(currentMs);
-        if (editedMs === null) {
-          const nextSegment = enabledSegments.find((s) => s.startMs > currentMs);
-          if (nextSegment) {
-            video.currentTime = nextSegment.startMs / 1000;
-          } else if (enabledSegments.length > 0) {
-            video.currentTime = enabledSegments[0].startMs / 1000;
-          }
-        }
-      }
-      video.play();
-    }
-  }, [isPlaying, mode, enabledSegments, mapTimeToEdited]);
-
   const handleSeekTo = useCallback((seconds: number) => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.currentTime = seconds;
-  }, []);
+    hookSeekTo(seconds * 1000);
+  }, [hookSeekTo]);
 
   const handleSelectAll = useCallback(() => {
     // Enable all segments
@@ -396,13 +260,29 @@ export function SegmentEditorPanel({
             "relative bg-black",
             isFullscreen ? "flex-1 min-h-0" : "aspect-video"
           )}>
-            {/* eslint-disable-next-line @remotion/warn-native-media-tag -- Not a Remotion composition */}
+            {/* Double-buffered video: two overlapping <video> elements for seamless transitions */}
+            {/* eslint-disable @remotion/warn-native-media-tag -- Not a Remotion composition */}
             <video
-              ref={videoRef}
+              ref={setVideoElA}
               src={videoPath}
-              className="w-full h-full object-contain"
+              className={cn("absolute inset-0 w-full h-full object-contain", activeVideo !== "A" && "invisible")}
+              muted={activeVideo !== "A"}
               onClick={togglePlayback}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => { if (activeVideo === "A") setIsPlaying(false); }}
+              onEnded={() => { if (activeVideo === "A") setIsPlaying(false); }}
             />
+            <video
+              ref={setVideoElB}
+              src={videoPath}
+              className={cn("absolute inset-0 w-full h-full object-contain", activeVideo !== "B" && "invisible")}
+              muted={activeVideo !== "B"}
+              onClick={togglePlayback}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => { if (activeVideo === "B") setIsPlaying(false); }}
+              onEnded={() => { if (activeVideo === "B") setIsPlaying(false); }}
+            />
+            {/* eslint-enable @remotion/warn-native-media-tag */}
 
             {/* Play/Pause overlay */}
             {!isPlaying && (
@@ -416,16 +296,6 @@ export function SegmentEditorPanel({
                 </div>
               </button>
             )}
-
-            {/* Mode indicator */}
-            <div className="absolute top-2 left-2">
-              <Badge
-                variant={mode === "preview" ? "default" : "secondary"}
-                className="text-xs"
-              >
-                {mode === "preview" ? "Preview" : "Completo"}
-              </Badge>
-            </div>
 
             {/* Time indicator */}
             <div className="absolute bottom-2 right-2 bg-black/70 px-2 py-1 rounded text-white text-sm font-mono">
@@ -449,11 +319,29 @@ export function SegmentEditorPanel({
                 )}
                 {isPlaying ? "Pausa" : "Play"}
               </Button>
+              {hasCaptions && (
+                <Button
+                  variant={showAIPanel ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setShowAIPanel(!showAIPanel);
+                    if (!showAIPanel) setShowLogs(false);
+                  }}
+                  title="Abrir panel de preseleccion AI"
+                  className="gap-1"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  IA
+                </Button>
+              )}
               {preselectionLog && (
                 <Button
                   variant={showLogs ? "default" : "ghost"}
                   size="sm"
-                  onClick={() => setShowLogs(!showLogs)}
+                  onClick={() => {
+                    setShowLogs(!showLogs);
+                    if (!showLogs) setShowAIPanel(false);
+                  }}
                   title="Ver logs de preseleccion"
                   className="gap-1"
                 >
@@ -473,26 +361,6 @@ export function SegmentEditorPanel({
               )}
             </div>
 
-            <div className="flex items-center gap-1">
-              <Button
-                variant={mode === "full" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setMode("full")}
-                className="gap-1"
-              >
-                <Film className="w-4 h-4" />
-                Completo
-              </Button>
-              <Button
-                variant={mode === "preview" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setMode("preview")}
-                className="gap-1"
-              >
-                <Eye className="w-4 h-4" />
-                Preview
-              </Button>
-            </div>
           </div>
 
           {/* Timeline integrated with video (no separate Card) */}
@@ -503,13 +371,32 @@ export function SegmentEditorPanel({
               durationMs={totalDuration * 1000}
               currentTimeMs={currentTimeMs}
               onSeek={(ms) => {
-                if (videoRef.current) {
-                  videoRef.current.currentTime = ms / 1000;
-                }
+                hookSeekTo(ms);
               }}
               enablePlayheadTransition={isTransitioning}
             />
           </div>
+
+          {/* AI Preselection Panel - directly below timeline */}
+          {showAIPanel && (
+            <div className="border-t max-h-[400px] overflow-y-auto">
+              <AIPreselectionPanel
+                videoId={videoId}
+                script={script}
+                hasCaptions={hasCaptions}
+                currentSegments={preselection?.segments || []}
+                onSegmentsUpdate={(newSegments) => {
+                  importPreselectedSegments(videoId, newSegments, []);
+                }}
+                onSegmentClick={(segmentId) => {
+                  const segment = timelineSegments.find(s => s.id === segmentId);
+                  if (segment) {
+                    handleSeekTo(segment.startMs / 1000);
+                  }
+                }}
+              />
+            </div>
+          )}
 
           {/* Selected segment info panel */}
           {selectedSegment && selectedSegmentIndex && (
@@ -580,6 +467,43 @@ export function SegmentEditorPanel({
                     <div className="mt-3 p-2 bg-background/50 rounded border text-xs">
                       <span className="text-muted-foreground">Razon: </span>
                       <span>{selectedSegment.preselectionReason}</span>
+                    </div>
+                  )}
+
+                  {/* Take group info */}
+                  {selectedSegment.totalTakes && selectedSegment.totalTakes > 1 && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <Badge variant="outline" className="text-xs">
+                        Toma {selectedSegment.takeNumber}/{selectedSegment.totalTakes}
+                      </Badge>
+                    </div>
+                  )}
+
+                  {/* Score breakdown bars */}
+                  {selectedSegment.scoreBreakdown && (
+                    <div className="mt-3 space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">Desglose de score</div>
+                      {[
+                        { label: "Script", value: selectedSegment.scoreBreakdown.scriptMatch },
+                        { label: "Whisper", value: selectedSegment.scoreBreakdown.whisperConfidence },
+                        { label: "Recencia", value: selectedSegment.scoreBreakdown.takeOrder },
+                        { label: "Completitud", value: selectedSegment.scoreBreakdown.completeness },
+                        { label: "Duracion", value: selectedSegment.scoreBreakdown.duration },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="flex items-center gap-2 text-xs">
+                          <span className="w-20 text-muted-foreground shrink-0">{label}</span>
+                          <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className={cn(
+                                "h-full rounded-full",
+                                value >= 80 ? "bg-green-500" : value >= 50 ? "bg-yellow-500" : "bg-red-500"
+                              )}
+                              style={{ width: `${value}%` }}
+                            />
+                          </div>
+                          <span className="w-8 text-right font-mono">{value.toFixed(0)}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>

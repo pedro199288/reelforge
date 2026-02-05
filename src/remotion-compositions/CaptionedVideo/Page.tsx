@@ -35,7 +35,6 @@ export const Page: React.FC<PageProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const { width, fps } = useVideoConfig();
-  const timeInMs = (frame / fps) * 1000;
 
   // Get style from store, with prop overrides for backwards compatibility
   const storeStyle = useSubtitleStyle();
@@ -45,6 +44,9 @@ export const Page: React.FC<PageProps> = ({
     ...(propHighlightColor && { highlightColor: propHighlightColor }),
     ...(propFontFamily && { fontFamily: propFontFamily }),
   };
+
+  // Subtract entranceDuration so word highlights align with the pre-rolled Sequence
+  const timeInMs = (frame / fps) * 1000 - style.entranceDuration;
 
   // Calculate entrance animation
   const entranceFrame = Math.round(

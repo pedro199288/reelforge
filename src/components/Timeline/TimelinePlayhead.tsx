@@ -6,6 +6,8 @@ interface TimelinePlayheadProps {
   viewportStartMs: number;
   /** Enable CSS transition for smooth movement during playback */
   enableTransition?: boolean;
+  /** Viewport width in pixels (for viewport-aware culling) */
+  viewportWidthPx?: number;
 }
 
 export function TimelinePlayhead({
@@ -13,12 +15,13 @@ export function TimelinePlayhead({
   zoomLevel,
   viewportStartMs,
   enableTransition = false,
+  viewportWidthPx,
 }: TimelinePlayheadProps) {
   const pxPerMs = getPxPerMs(zoomLevel);
   const x = (playheadMs - viewportStartMs) * pxPerMs;
 
   // Only render if playhead is in visible viewport
-  if (x < -10 || x > 2000) return null;
+  if (x < -10 || x > (viewportWidthPx || 2000) + 100) return null;
 
   return (
     <div

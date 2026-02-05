@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, type RefObject } from "react";
+import { useState, useEffect, useRef } from "react";
 
 interface UsePlayheadSyncOptions {
-  videoRef: RefObject<HTMLVideoElement | null>;
+  videoElement: HTMLVideoElement | null;
   isPlaying: boolean;
 }
 
@@ -16,9 +16,12 @@ interface UsePlayheadSyncResult {
  * - When playing: uses requestAnimationFrame to read currentTime at 60fps
  * - When paused: falls back to timeupdate events (less frequent but sufficient)
  * - Returns isTransitioning flag to enable CSS transitions during playback
+ *
+ * Accepts `videoElement` (HTMLVideoElement | null) instead of a ref so that
+ * effects re-run when the element mounts/unmounts.
  */
 export function usePlayheadSync({
-  videoRef,
+  videoElement,
   isPlaying,
 }: UsePlayheadSyncOptions): UsePlayheadSyncResult {
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
@@ -26,8 +29,7 @@ export function usePlayheadSync({
 
   // RAF loop for smooth playhead during playback
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
+    if (!videoElement) return;
 
     if (!isPlaying) {
       // When paused, cancel any pending RAF
@@ -40,8 +42,8 @@ export function usePlayheadSync({
 
     // RAF loop for 60fps updates during playback
     const tick = () => {
-      if (videoRef.current) {
-        setCurrentTimeMs(videoRef.current.currentTime * 1000);
+      if (videoElement) {
+        setCurrentTimeMs(videoElement.currentTime * 1000);
       }
       rafRef.current = requestAnimationFrame(tick);
     };
@@ -54,33 +56,32 @@ export function usePlayheadSync({
         rafRef.current = null;
       }
     };
-  }, [isPlaying, videoRef]);
+  }, [isPlaying, videoElement]);
 
   // Fallback: sync on timeupdate when paused (for seek operations)
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
+    if (!videoElement) return;
 
     const handleTimeUpdate = () => {
       // Only update via timeupdate when NOT playing (RAF handles playback)
       if (!isPlaying) {
-        setCurrentTimeMs(video.currentTime * 1000);
+        setCurrentTimeMs(videoElement.currentTime * 1000);
       }
     };
 
     const handleSeeked = () => {
       // Always update immediately on seek
-      setCurrentTimeMs(video.currentTime * 1000);
+      setCurrentTimeMs(videoElement.currentTime * 1000);
     };
 
-    video.addEventListener("timeupdate", handleTimeUpdate);
-    video.addEventListener("seeked", handleSeeked);
+    videoElement.addEventListener("timeupdate", handleTimeUpdate);
+    videoElement.addEventListener("seeked", handleSeeked);
 
     return () => {
-      video.removeEventListener("timeupdate", handleTimeUpdate);
-      video.removeEventListener("seeked", handleSeeked);
+      videoElement.removeEventListener("timeupdate", handleTimeUpdate);
+      videoElement.removeEventListener("seeked", handleSeeked);
     };
-  }, [videoRef, isPlaying]);
+  }, [videoElement, isPlaying]);
 
   return {
     currentTimeMs,

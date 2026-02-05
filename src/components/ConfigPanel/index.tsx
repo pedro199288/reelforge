@@ -27,6 +27,7 @@ import { Separator } from "@/components/ui/separator";
 import { useWorkspaceStore, SILENCE_DEFAULTS } from "@/store/workspace";
 import type {
   TakeSelectionCriteria,
+  SilenceDetectionMethod,
   Resolution,
   FPS,
   RenderQuality,
@@ -60,43 +61,112 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
 
         <Separator className="my-4" />
 
-        <Accordion type="multiple" defaultValue={["silence", "takes", "output"]} className="px-4">
+        <Accordion
+          type="multiple"
+          defaultValue={["silence", "takes", "output"]}
+          className="px-4"
+        >
           {/* Silence Detection Section */}
           <AccordionItem value="silence">
             <AccordionTrigger>Deteccion de Silencios</AccordionTrigger>
             <AccordionContent className="space-y-6 pt-4">
               <div className="space-y-2">
-                <div className="flex justify-between">
-                  <Label>Threshold</Label>
-                  <span className="text-sm text-muted-foreground">
-                    {pipelineConfig.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb} dB
-                  </span>
-                </div>
-                <Slider
-                  value={[pipelineConfig.silence.thresholdDb ?? SILENCE_DEFAULTS.thresholdDb]}
-                  onValueChange={([v]) =>
+                <Label>Metodo de deteccion</Label>
+                <Select
+                  value={pipelineConfig.silence.method ?? SILENCE_DEFAULTS.method}
+                  onValueChange={(v: SilenceDetectionMethod) =>
                     setPipelineConfig({
-                      silence: { ...pipelineConfig.silence, thresholdDb: v },
+                      silence: { ...pipelineConfig.silence, method: v },
                     })
                   }
-                  min={-60}
-                  max={-20}
-                  step={1}
-                />
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ffmpeg">FFmpeg silencedetect</SelectItem>
+                    <SelectItem value="envelope">Envolvente de amplitud</SelectItem>
+                  </SelectContent>
+                </Select>
                 <p className="text-xs text-muted-foreground">
-                  Audio por debajo de este nivel se considera silencio
+                  {(pipelineConfig.silence.method ?? SILENCE_DEFAULTS.method) === "ffmpeg"
+                    ? "Usa el filtro silencedetect de FFmpeg (threshold en dB)"
+                    : "Analiza la envolvente de amplitud del audio (misma tecnica que el waveform)"}
                 </p>
               </div>
+
+              {/* Threshold: conditional on method */}
+              {(pipelineConfig.silence.method ?? SILENCE_DEFAULTS.method) === "ffmpeg" ? (
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <Label>Threshold</Label>
+                    <span className="text-sm text-muted-foreground">
+                      {pipelineConfig.silence.thresholdDb ??
+                        SILENCE_DEFAULTS.thresholdDb}{" "}
+                      dB
+                    </span>
+                  </div>
+                  <Slider
+                    value={[
+                      pipelineConfig.silence.thresholdDb ??
+                        SILENCE_DEFAULTS.thresholdDb,
+                    ]}
+                    onValueChange={([v]) =>
+                      setPipelineConfig({
+                        silence: { ...pipelineConfig.silence, thresholdDb: v },
+                      })
+                    }
+                    min={-60}
+                    max={-20}
+                    step={1}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Audio por debajo de este nivel se considera silencio
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <Label>Threshold de amplitud</Label>
+                    <span className="text-sm text-muted-foreground">
+                      {(pipelineConfig.silence.amplitudeThreshold ??
+                        SILENCE_DEFAULTS.amplitudeThreshold).toFixed(2)}
+                    </span>
+                  </div>
+                  <Slider
+                    value={[
+                      pipelineConfig.silence.amplitudeThreshold ??
+                        SILENCE_DEFAULTS.amplitudeThreshold,
+                    ]}
+                    onValueChange={([v]) =>
+                      setPipelineConfig({
+                        silence: { ...pipelineConfig.silence, amplitudeThreshold: v },
+                      })
+                    }
+                    min={0.01}
+                    max={0.30}
+                    step={0.01}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Amplitud normalizada (0-1) por debajo de la cual se considera silencio
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <Label>Duracion minima</Label>
                   <span className="text-sm text-muted-foreground">
-                    {pipelineConfig.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec}s
+                    {pipelineConfig.silence.minDurationSec ??
+                      SILENCE_DEFAULTS.minDurationSec}
+                    s
                   </span>
                 </div>
                 <Slider
-                  value={[pipelineConfig.silence.minDurationSec ?? SILENCE_DEFAULTS.minDurationSec]}
+                  value={[
+                    pipelineConfig.silence.minDurationSec ??
+                      SILENCE_DEFAULTS.minDurationSec,
+                  ]}
                   onValueChange={([v]) =>
                     setPipelineConfig({
                       silence: { ...pipelineConfig.silence, minDurationSec: v },
@@ -115,11 +185,16 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                 <div className="flex justify-between">
                   <Label>Padding</Label>
                   <span className="text-sm text-muted-foreground">
-                    {pipelineConfig.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec}s
+                    {pipelineConfig.silence.paddingSec ??
+                      SILENCE_DEFAULTS.paddingSec}
+                    s
                   </span>
                 </div>
                 <Slider
-                  value={[pipelineConfig.silence.paddingSec ?? SILENCE_DEFAULTS.paddingSec]}
+                  value={[
+                    pipelineConfig.silence.paddingSec ??
+                      SILENCE_DEFAULTS.paddingSec,
+                  ]}
                   onValueChange={([v]) =>
                     setPipelineConfig({
                       silence: { ...pipelineConfig.silence, paddingSec: v },
@@ -169,10 +244,17 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                     <Select
                       value={`${pipelineConfig.preselection.ai.provider}:${pipelineConfig.preselection.ai.modelId}`}
                       onValueChange={(v) => {
-                        const [provider, modelId] = v.split(":") as [AIProvider, string];
+                        const [provider, modelId] = v.split(":") as [
+                          AIProvider,
+                          string,
+                        ];
                         setPipelineConfig({
                           preselection: {
-                            ai: { ...pipelineConfig.preselection?.ai, provider, modelId },
+                            ai: {
+                              ...pipelineConfig.preselection?.ai,
+                              provider,
+                              modelId,
+                            },
                           },
                         });
                       }}
@@ -194,7 +276,8 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                   </div>
 
                   {/* Campos para servidor local (LM Studio, Ollama) */}
-                  {pipelineConfig.preselection.ai.provider === "openai-compatible" && (
+                  {pipelineConfig.preselection.ai.provider ===
+                    "openai-compatible" && (
                     <>
                       <div className="space-y-2">
                         <Label>URL del servidor</Label>
@@ -214,7 +297,8 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                           }
                         />
                         <p className="text-xs text-muted-foreground">
-                          LM Studio: http://localhost:1234/v1 | Ollama: http://localhost:11434/v1
+                          LM Studio: http://localhost:1234/v1 | Ollama:
+                          http://localhost:11434/v1
                         </p>
                       </div>
 
@@ -243,7 +327,8 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                   )}
 
                   {/* Input para API key (solo para proveedores cloud) */}
-                  {pipelineConfig.preselection.ai.provider !== "openai-compatible" && (
+                  {pipelineConfig.preselection.ai.provider !==
+                    "openai-compatible" && (
                     <div className="space-y-2">
                       <Label>API Key</Label>
                       <Input
@@ -262,7 +347,8 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                         }
                       />
                       <p className="text-xs text-muted-foreground">
-                        Introduce tu API key de Anthropic u OpenAI segun el modelo
+                        Introduce tu API key de Anthropic u OpenAI segun el
+                        modelo
                       </p>
                     </div>
                   )}
@@ -381,9 +467,15 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1080x1920">1080x1920 (9:16 Vertical)</SelectItem>
-                    <SelectItem value="1080x1080">1080x1080 (1:1 Cuadrado)</SelectItem>
-                    <SelectItem value="1920x1080">1920x1080 (16:9 Horizontal)</SelectItem>
+                    <SelectItem value="1080x1920">
+                      1080x1920 (9:16 Vertical)
+                    </SelectItem>
+                    <SelectItem value="1080x1080">
+                      1080x1080 (1:1 Cuadrado)
+                    </SelectItem>
+                    <SelectItem value="1920x1080">
+                      1920x1080 (16:9 Horizontal)
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -394,7 +486,10 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
                   value={String(pipelineConfig.output.fps)}
                   onValueChange={(v) =>
                     setPipelineConfig({
-                      output: { ...pipelineConfig.output, fps: Number(v) as FPS },
+                      output: {
+                        ...pipelineConfig.output,
+                        fps: Number(v) as FPS,
+                      },
                     })
                   }
                 >
@@ -434,7 +529,11 @@ export function ConfigPanel({ open, onClose }: ConfigPanelProps) {
         </Accordion>
 
         <SheetFooter className="mt-6 flex-col gap-2 sm:flex-col">
-          <Button variant="outline" onClick={resetPipelineConfig} className="w-full">
+          <Button
+            variant="outline"
+            onClick={resetPipelineConfig}
+            className="w-full"
+          >
             Restaurar valores por defecto
           </Button>
         </SheetFooter>

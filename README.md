@@ -1,83 +1,153 @@
-# Remotion video
+# ReelForge
 
-<p align="center">
-  <a href="https://github.com/remotion-dev/logo">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://github.com/remotion-dev/logo/raw/main/animated-logo-banner-dark.apng">
-      <img alt="Animated Remotion Logo" src="https://github.com/remotion-dev/logo/raw/main/animated-logo-banner-light.gif">
-    </picture>
-  </a>
-</p>
+An AI-powered video editing automation tool for creating engaging short-form content (TikTok, Reels, YouTube Shorts). ReelForge automates the tedious parts of video editing: silence removal, caption generation, take selection, and effects application.
 
-Welcome to your Remotion project!
+## Features
 
-## Commands
+- **Automated Silence Detection** - Uses FFmpeg to detect and remove pauses/silences from raw footage
+- **AI Transcription** - Whisper.cpp integration for accurate speech-to-text with word-level timestamps
+- **Smart Take Selection** - AI-powered analysis to automatically select the best takes when you repeat phrases
+- **Caption Generation** - Automatic subtitle generation with customizable styling (TikTok-style captions)
+- **Effects Analysis** - AI detects key moments for zooms, highlights, and emphasis effects
+- **Batch Processing** - Process multiple videos in parallel with a unified pipeline
+- **Non-Linear Editor** - Timeline-based editor for fine-tuning cuts and captions
+- **Script Alignment** - Import your script to improve transcription accuracy and take selection
 
-**Install Dependencies**
+## Tech Stack
 
-```console
+- **Frontend**: React 19, TanStack Router, Zustand, Tailwind CSS, shadcn/ui
+- **Video**: Remotion for programmatic video composition and rendering
+- **AI**: Anthropic Claude, OpenAI GPT-4, local models via Ollama/LM Studio
+- **Audio**: FFmpeg for processing, Whisper.cpp for transcription
+- **Runtime**: Bun
+
+## Pipeline Overview
+
+ReelForge processes videos through an 8-phase pipeline:
+
+```
+Raw Video (+ optional script)
+    │
+    ├─────────────────────────┐
+    │                         │
+    ▼                         ▼
+Silences              Full-Captions
+    │                   (Whisper)
+    ▼                         │
+Segments                      │
+(+ AI preselection)           │
+    │                         │
+    ▼                         │
+Cut                           │
+(+ cut-map)                   │
+    │                         │
+    └─────────────────────────┘
+                │
+                ▼
+           Captions
+      (derived + scoring)
+                │
+                ▼
+       Effects-Analysis
+          (optional)
+                │
+                ▼
+           Rendered
+```
+
+Each phase generates intermediate files, allowing you to resume from any point or manually adjust settings.
+
+## Getting Started
+
+### Prerequisites
+
+- [Bun](https://bun.sh) (v1.0+)
+- FFmpeg installed and available in PATH
+- (Optional) Whisper.cpp for local transcription
+
+### Installation
+
+```bash
 bun install
 ```
 
-**Start Preview**
+### Development
 
-```console
+```bash
+# Start the Vite dev server
 bun run dev
+
+# Start all services (Vite + API + Remotion Studio)
+bun run dev:all
+
+# Run Remotion Studio only
+bun run studio
 ```
 
-**Render video**
+### Processing Videos
 
-```console
-bunx remotionb render
+1. Drop a video file into the app
+2. Configure silence detection parameters (threshold, min duration)
+3. (Optional) Import your script for better transcription
+4. Run the pipeline - silences are detected, video is cut, captions are generated
+5. Review and adjust in the editor
+6. Render the final video with captions and effects
+
+### CLI Commands
+
+```bash
+# Generate subtitles for a video
+bun run create-subtitles <path-to-video>
+
+# Process a video through the full pipeline
+bun run process <path-to-video>
 ```
 
-**Upgrade Remotion**
+## Project Structure
 
-```console
-bunx remotion upgrade
+```
+src/
+├── app/              # TanStack Router pages
+├── components/       # React components (shadcn/ui based)
+├── core/             # Business logic
+│   ├── batch/        # Batch processing
+│   ├── effects/      # AI effects analysis
+│   ├── semantic/     # Semantic segmentation
+│   ├── silence/      # Silence detection
+│   ├── takes/        # Take selection & scoring
+│   └── timeline/     # Timeline operations
+├── hooks/            # React hooks
+├── lib/              # Utilities
+├── remotion-compositions/  # Remotion video templates
+├── store/            # Zustand stores
+└── types/            # TypeScript types
+
+server/               # Backend API (Bun)
+public/
+├── videos/           # Video files (raw, cut, rendered)
+├── pipeline/         # Pipeline intermediate files
+└── subs/             # Caption files (JSON)
 ```
 
-## Captioning
+## Configuration
 
-Replace the `sample-video.mp4` with your video file.
-Caption all the videos in you `public` by running the following command:
+### Whisper Models
 
-```console
-node sub.mjs
+The default model is `medium.en`. To change it or use non-English languages, edit `whisper-config.mjs`:
+
+```javascript
+export const WHISPER_MODEL = "medium"; // Remove .en suffix for multilingual
 ```
 
-Only caption a specific video:
+### Silence Detection Presets
 
-```console
-node sub.mjs <path-to-video-file>
-```
-
-Only caption a specific folder:
-
-```console
-node sub.mjs <path-to-folder>
-```
-
-## Configure Whisper.cpp
-
-Captioning will download Whisper.cpp and the 1.5GB big `medium.en` model. To configure which model is being used, you can configure the variables in `whisper-config.mjs`.
-
-### Non-English languages
-
-To support non-English languages, you need to change the `WHISPER_MODEL` variable in `whisper-config.mjs` to a model that does not have a `.en` sufix.
-
-## Docs
-
-Get started with Remotion by reading the [fundamentals page](https://www.remotion.dev/docs/the-fundamentals).
-
-## Help
-
-We provide help on our [Discord server](https://remotion.dev/discord).
-
-## Issues
-
-Found an issue with Remotion? [File an issue here](https://github.com/remotion-dev/remotion/issues/new).
+| Content Type | Threshold | Min Duration | Notes |
+|-------------|-----------|--------------|-------|
+| Podcast | -40 dB | 0.8s | More sensitive, longer natural pauses |
+| Tutorial | -35 dB | 0.5s | Standard balance |
+| Presentation | -30 dB | 1.0s | Allow dramatic pauses |
+| Vlog/Dynamic | -35 dB | 0.3s | Aggressive cutting |
 
 ## License
 
-Note that for some entities a company license is needed. [Read the terms here](https://github.com/remotion-dev/remotion/blob/main/LICENSE.md).
+Private - All rights reserved.

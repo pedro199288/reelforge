@@ -111,3 +111,25 @@ export const TIMELINE_SHORTCUTS = [
   { key: "Home", description: "Go to start" },
   { key: "End", description: "Go to end" },
 ] as const;
+
+/** Keyboard shortcut definitions for the segment editor */
+export const SEGMENT_EDITOR_SHORTCUTS = [
+  { key: "Space", description: "Play / Pause" },
+  { key: "\u2318/Ctrl + B", description: "Dividir segmento en el playhead" },
+  { key: "Q", description: "Cortar izquierda (mover inicio al playhead)" },
+  { key: "W", description: "Cortar derecha (mover fin al playhead)" },
+  { key: "\u2190", description: "Seek -100ms" },
+  { key: "\u2192", description: "Seek +100ms" },
+  { key: "Shift + \u2190", description: "Seek -1 segundo" },
+  { key: "Shift + \u2192", description: "Seek +1 segundo" },
+  { key: "\u2191", description: "Keypoint anterior" },
+  { key: "\u2193", description: "Keypoint siguiente" },
+  { key: "-", description: "Alejar zoom" },
+  { key: "= (+)", description: "Acercar zoom" },
+  { key: "Shift + 1", description: "Ajustar a la vista" },
+  { key: "F", description: "Seguir playhead" },
+  { key: "T", description: "Timeline completo / contiguo" },
+  { key: "H", description: "Duplicar altura del track" },
+  { key: "C", description: "Mostrar/ocultar subtítulos" },
+  { key: "J", description: "Continuo / Skip" },
+] as const;

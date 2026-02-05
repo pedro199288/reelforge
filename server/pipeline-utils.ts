@@ -11,6 +11,7 @@ import type { PreselectionStats, PreselectedSegment } from "../src/core/preselec
 
 export type PipelineStep =
   | "silences"
+  | "full-captions"
   | "segments"
   | "cut"
   | "captions"
@@ -40,8 +41,10 @@ export interface SilencesResult {
   silences: SilenceRange[];
   videoDuration: number;
   config: {
+    method?: "ffmpeg" | "envelope";
     thresholdDb: number;
     minDurationSec: number;
+    amplitudeThreshold?: number;
   };
   createdAt: string;
 }
@@ -105,12 +108,17 @@ export interface EffectsAnalysisResultMeta {
 }
 
 // Step dependencies: step -> required preceding steps
-// Simplified 6-phase pipeline:
-// silences -> segments -> cut -> captions -> effects-analysis -> rendered
+// Pipeline:
+// silences ────────┐
+//                  ├─> segments -> cut -> captions -> effects-analysis -> rendered
+// full-captions ──┘
 // preselection-logs is a side-effect of segments, generated alongside it
+// segments uses full-captions for real preselection scoring
+// captions runs Whisper on the cut video (not derived from full-captions)
 const STEP_DEPENDENCIES: Record<PipelineStep, PipelineStep[]> = {
   silences: [],
-  segments: ["silences"],
+  "full-captions": [],
+  segments: ["silences", "full-captions"],
   cut: ["segments"],
   captions: ["cut"],
   "effects-analysis": ["captions"],  // Now depends on post-cut captions
@@ -162,6 +170,7 @@ function getInitialStatus(videoId: string, filename: string): PipelineStatus {
     filename,
     steps: {
       silences: { ...emptyStep },
+      "full-captions": { ...emptyStep },
       segments: { ...emptyStep },
       cut: { ...emptyStep },
       captions: { ...emptyStep },
@@ -302,4 +311,40 @@ export function loadStepResult<T>(videoId: string, step: PipelineStep): T | null
  */
 export function hasStepResult(videoId: string, step: PipelineStep): boolean {
   return existsSync(getStepResultPath(videoId, step));
+}
+
+/**
+ * Reset a step's status to pending (full replace, no merge)
+ */
+export function resetStepStatus(videoId: string, step: PipelineStep): void {
+  const current = getPipelineStatus(videoId, "");
+  current.steps[step] = { status: "pending" };
+  current.updatedAt = new Date().toISOString();
+
+  const dir = ensurePipelineDir(videoId);
+  writeFileSync(join(dir, "status.json"), JSON.stringify(current, null, 2));
+}
+
+/**
+ * Get public file paths associated with a pipeline step.
+ * Returns absolute paths to files that should be deleted when resetting the step.
+ */
+export function getStepPublicFiles(videoId: string, step: PipelineStep, filename: string): string[] {
+  const ext = extname(filename);
+  const name = basename(filename, ext);
+  const videosDir = join(process.cwd(), "public", "videos");
+  const subsDir = join(process.cwd(), "public", "subs");
+
+  switch (step) {
+    case "full-captions":
+      return [join(subsDir, `${name}.json`)];
+    case "cut":
+      return [join(videosDir, `${name}-cut${ext}`)];
+    case "captions":
+      return [join(subsDir, `${name}-cut.json`)];
+    case "rendered":
+      return [join(videosDir, `${name}-rendered${ext}`)];
+    default:
+      return [];
+  }
 }

@@ -10,11 +10,13 @@ export interface PreselectionConfig {
   minScore: number;
   /** Weights for scoring criteria (must sum to 1.0) */
   weights: {
-    /** Priority: script coverage. Default: 0.45 */
+    /** Priority: script coverage. Default: 0.30 */
     scriptMatch: number;
-    /** First take preferred. Default: 0.25 */
+    /** Whisper transcription confidence. Default: 0.25 */
+    whisperConfidence: number;
+    /** Last take preferred (recency). Default: 0.20 */
     takeOrder: number;
-    /** Complete sentences preferred. Default: 0.20 */
+    /** Complete sentences preferred. Default: 0.15 */
     completeness: number;
     /** Appropriate duration. Default: 0.10 */
     duration: number;
@@ -34,9 +36,10 @@ export interface PreselectionConfig {
 export const DEFAULT_PRESELECTION_CONFIG: PreselectionConfig = {
   minScore: 50,
   weights: {
-    scriptMatch: 0.45,
-    takeOrder: 0.25,
-    completeness: 0.20,
+    scriptMatch: 0.30,
+    whisperConfidence: 0.25,
+    takeOrder: 0.20,
+    completeness: 0.15,
     duration: 0.10,
   },
   idealDuration: {
@@ -53,9 +56,10 @@ export const DEFAULT_PRESELECTION_CONFIG_NO_SCRIPT: PreselectionConfig = {
   minScore: 50,
   weights: {
     scriptMatch: 0, // No script to match
-    takeOrder: 0.50,
-    completeness: 0.30,
-    duration: 0.20,
+    whisperConfidence: 0.30,
+    takeOrder: 0.35,
+    completeness: 0.20,
+    duration: 0.15,
   },
   idealDuration: {
     minMs: 2000,
@@ -70,7 +74,9 @@ export const DEFAULT_PRESELECTION_CONFIG_NO_SCRIPT: PreselectionConfig = {
 export interface SegmentScoreBreakdown {
   /** Script coverage score (0-100) */
   scriptMatch: number;
-  /** Take order score (0-100) - first take gets highest */
+  /** Whisper transcription confidence score (0-100) */
+  whisperConfidence: number;
+  /** Take order score (0-100) - last take gets highest (recency) */
   takeOrder: number;
   /** Completeness score (0-100) - complete sentences */
   completeness: number;
@@ -95,6 +101,30 @@ export interface SegmentScore {
 }
 
 /**
+ * Content type classification for AI preselection
+ */
+export type ContentType =
+  | "best_take" // Best take of a script line
+  | "alternative_take" // Alternative/backup take
+  | "false_start" // Aborted attempt / false start
+  | "off_script" // Content not in script (improvisation)
+  | "transition"; // Natural transition between content
+
+/**
+ * Proposed split within a segment (from AI analysis)
+ */
+export interface ProposedSplit {
+  /** Timestamp in ms where to split (relative to segment start) */
+  splitAtMs: number;
+  /** Reason for the split */
+  reason: string;
+  /** Whether to enable the first part (before split) */
+  enableFirst: boolean;
+  /** Whether to enable the second part (after split) */
+  enableSecond: boolean;
+}
+
+/**
  * A segment with preselection metadata
  */
 export interface PreselectedSegment {
@@ -110,6 +140,22 @@ export interface PreselectedSegment {
   score: number;
   /** Human-readable reason for selection/rejection */
   reason: string;
+  /** Content type classification (AI preselection) */
+  contentType?: ContentType;
+  /** Script lines covered by this segment (1-indexed, AI preselection) */
+  coversScriptLines?: number[];
+  /** If alternative_take, reference to the best take segment ID */
+  bestTakeSegmentId?: string;
+  /** Proposed splits if segment contains mixed content */
+  proposedSplits?: ProposedSplit[];
+  /** Take group identifier (segments covering the same script content) */
+  takeGroupId?: string;
+  /** Take number within the group (1-based) */
+  takeNumber?: number;
+  /** Total number of takes in the group */
+  totalTakes?: number;
+  /** Score breakdown per criterion */
+  scoreBreakdown?: SegmentScoreBreakdown;
 }
 
 /**
@@ -132,6 +178,12 @@ export interface PreselectionStats {
   averageScore: number;
   /** Number of ambiguous segments */
   ambiguousSegments: number;
+  /** Number of false starts detected (AI preselection) */
+  falseStartsDetected?: number;
+  /** Script lines covered (1-indexed, AI preselection) */
+  coveredScriptLines?: number[];
+  /** Script lines NOT covered (1-indexed, AI preselection) */
+  missingScriptLines?: number[];
 }
 
 /**
@@ -204,7 +256,7 @@ export const AI_PRESELECTION_MODELS: AIModelOption[] = [
   { provider: "anthropic", modelId: "claude-3-haiku-20240307", displayName: "Claude 3 Haiku (Rapido)", requiresApiKey: true },
   { provider: "openai", modelId: "gpt-4o", displayName: "GPT-4o", requiresApiKey: true },
   { provider: "openai", modelId: "gpt-4o-mini", displayName: "GPT-4o Mini (Rapido)", requiresApiKey: true },
-  { provider: "openai-compatible", modelId: "local-model", displayName: "LM Studio / Ollama (Local)", requiresApiKey: false },
+  { provider: "openai-compatible", modelId: "qwen/qwen2.5-vl-7b", displayName: "Qwen 2.5 VL 7B", requiresApiKey: false },
 ];
 
 /** Configuration for AI-powered preselection */
@@ -243,6 +295,7 @@ export interface SegmentPreselectionLog {
     breakdown: SegmentScoreBreakdown;
     weighted: {
       scriptMatch: number;
+      whisperConfidence: number;
       takeOrder: number;
       completeness: number;
       duration: number;
@@ -294,6 +347,7 @@ export interface SegmentPreselectionLog {
     isAmbiguous: boolean;
     criterionReasons: {
       scriptMatch?: string;
+      whisperConfidence?: string;
       takeOrder?: string;
       completeness?: string;
       duration?: string;
@@ -350,4 +404,77 @@ export interface PreselectionLog {
     event: "selected" | "rejected" | "ambiguous";
     score: number;
   }>;
+}
+
+// =============================================================================
+// TAKE-BASED SCORING TYPES
+// =============================================================================
+
+/**
+ * Score breakdown for a single take (used in take-based preselection)
+ */
+export interface TakeScoreBreakdown {
+  scriptCoverage: number;
+  fluency: number;
+  whisperConfidence: number;
+  completeness: number;
+  duration: number;
+}
+
+/**
+ * Score result for a single take
+ */
+export interface TakeScore {
+  takeId: string;
+  sentenceIdx: number;
+  totalScore: number;
+  breakdown: TakeScoreBreakdown;
+  reason: string;
+}
+
+// =============================================================================
+// AI PRESELECTION TYPES
+// =============================================================================
+
+/**
+ * Warning types for AI preselection issues
+ */
+export type AIPreselectionWarningType =
+  | "missing_script_line" // A script line has no coverage
+  | "multiple_takes" // Multiple takes detected
+  | "audio_quality" // Potential audio quality issues
+  | "long_gap" // Long gap in coverage
+  | "out_of_order"; // Content appears out of script order
+
+/**
+ * Warning from AI preselection analysis
+ */
+export interface AIPreselectionWarning {
+  type: AIPreselectionWarningType;
+  message: string;
+  affectedScriptLines?: number[];
+  affectedSegmentIds?: string[];
+}
+
+/**
+ * Summary from AI preselection analysis
+ */
+export interface AIPreselectionSummary {
+  totalSegments: number;
+  selectedSegments: number;
+  falseStartsDetected: number;
+  repetitionsDetected: number;
+  coveredScriptLines: number[];
+  missingScriptLines: number[];
+  estimatedFinalDurationMs: number;
+}
+
+/**
+ * Complete result from AI-first preselection
+ */
+export interface AIPreselectionResult {
+  segments: PreselectedSegment[];
+  summary: AIPreselectionSummary;
+  warnings: AIPreselectionWarning[];
+  stats: PreselectionStats;
 }

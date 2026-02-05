@@ -27,7 +27,7 @@ import {
   matchSegmentsToScript,
   calculateScriptCoverage,
 } from "./script-matcher";
-import { scoreSegments, selectByScore } from "./scorer";
+import { scoreSegments, selectBestPerGroup } from "./scorer";
 import { groupSimilarPhrases, mergeCaptions, type PhraseGroup } from "../takes/similarity";
 import {
   createLogCollector,
@@ -35,10 +35,24 @@ import {
   logSegmentDecision,
   finalizeLog,
   type LogCollector,
+  type ScoringLogData,
 } from "./logger";
+import {
+  extractAndClassifyTakes,
+  mapTakesToSegments,
+  type ClassifiedTake,
+} from "./take-extractor";
+import {
+  selectBestTakes,
+  DEFAULT_TAKE_SCORE_CONFIG,
+  type TakeScoreConfig,
+  type SelectionResult,
+  type TakeScore,
+} from "./take-scorer";
+import type { TakeExtractionResult } from "./take-extractor";
 
 /**
- * Builds a map of segment ID → take number from phrase groups
+ * Builds maps of segment ID → take number and segment ID → total takes from phrase groups
  *
  * When no script is available, this function uses similarity-based phrase grouping
  * to detect repetitions. Each group represents a distinct phrase, and takes within
@@ -48,8 +62,9 @@ function buildTakeGroupsFromPhrases(
   phraseGroups: PhraseGroup[],
   segments: Array<{ id: string; startMs: number; endMs: number }>,
   captions: Caption[]
-): Map<string, number> {
-  const takeGroups = new Map<string, number>();
+): { takeNumbers: Map<string, number>; totalTakes: Map<string, number> } {
+  const takeNumbers = new Map<string, number>();
+  const totalTakes = new Map<string, number>();
 
   for (const group of phraseGroups) {
     // Skip groups with only one take (no repetition)
@@ -57,6 +72,7 @@ function buildTakeGroupsFromPhrases(
 
     // Sort takes by time (they should already be sorted, but ensure it)
     const sortedTakes = [...group.takes].sort((a, b) => a.startMs - b.startMs);
+    const groupSize = sortedTakes.length;
 
     // Assign takeNumber to each segment that contains this take
     for (let i = 0; i < sortedTakes.length; i++) {
@@ -71,15 +87,204 @@ function buildTakeGroupsFromPhrases(
       if (segment) {
         // Only update if this takeNumber is higher (worse) than existing
         // This handles cases where a segment might contain multiple takes
-        const existing = takeGroups.get(segment.id) ?? 1;
+        const existing = takeNumbers.get(segment.id) ?? 1;
         if (takeNumber > existing) {
-          takeGroups.set(segment.id, takeNumber);
+          takeNumbers.set(segment.id, takeNumber);
+        }
+        // Always update totalTakes to the max group size
+        const existingTotal = totalTakes.get(segment.id) ?? 1;
+        if (groupSize > existingTotal) {
+          totalTakes.set(segment.id, groupSize);
         }
       }
     }
   }
 
-  return takeGroups;
+  return { takeNumbers, totalTakes };
+}
+
+/**
+ * Logs scoring + decision data for take-based preselection segments.
+ * Maps take-level scores to the existing SegmentPreselectionLog format
+ * so the UI panel works correctly.
+ */
+function logTakeBasedSegments(
+  collector: LogCollector,
+  preselected: PreselectedSegment[],
+  selection: SelectionResult,
+  takeResult: TakeExtractionResult,
+  captions: Caption[],
+  takeScoreConfig: TakeScoreConfig,
+  config: PreselectionConfig
+): void {
+  // Build lookup: takeId → TakeScore
+  const scoreByTakeId = new Map<string, TakeScore>();
+  for (const s of selection.scores) {
+    scoreByTakeId.set(s.takeId, s);
+  }
+
+  // Build lookup of all takes (selected + rejected)
+  const allTakes = [
+    ...selection.selected,
+    ...selection.rejected,
+  ];
+
+  for (const seg of preselected) {
+    // Find the take(s) that overlap with this segment
+    const overlapping = allTakes.filter(
+      (t) => t.startMs < seg.endMs && t.endMs > seg.startMs
+    );
+    const primaryTake = overlapping[0] as ClassifiedTake | undefined;
+    const takeScore = primaryTake
+      ? scoreByTakeId.get(primaryTake.id)
+      : undefined;
+
+    const durationMs = seg.endMs - seg.startMs;
+
+    // Map take-based breakdown to the existing SegmentScoreBreakdown format:
+    // scriptCoverage → scriptMatch, fluency → takeOrder
+    const breakdown = takeScore
+      ? {
+          scriptMatch: takeScore.breakdown.scriptCoverage,
+          whisperConfidence: takeScore.breakdown.whisperConfidence,
+          takeOrder: takeScore.breakdown.fluency,
+          completeness: takeScore.breakdown.completeness,
+          duration: takeScore.breakdown.duration,
+        }
+      : {
+          scriptMatch: 0,
+          whisperConfidence: 50,
+          takeOrder: 50,
+          completeness: 50,
+          duration: 50,
+        };
+
+    // Calculate weighted scores using take-based weights mapped to old field names
+    const w = takeScoreConfig.weights;
+    const weighted = {
+      scriptMatch: breakdown.scriptMatch * w.scriptCoverage,
+      whisperConfidence: breakdown.whisperConfidence * w.whisperConfidence,
+      takeOrder: breakdown.takeOrder * w.fluency,
+      completeness: breakdown.completeness * w.completeness,
+      duration: breakdown.duration * w.duration,
+    };
+
+    // Determine take number within its group
+    let takeNumber = 1;
+    if (primaryTake) {
+      const group = takeResult.groups.find(
+        (g) => g.sentence.index === primaryTake.sentenceIndex
+      );
+      if (group) {
+        const sorted = [...group.takes].sort((a, b) => a.startMs - b.startMs);
+        const idx = sorted.findIndex((t) => t.id === primaryTake.id);
+        takeNumber = idx >= 0 ? idx + 1 : 1;
+      }
+    }
+
+    // Determine duration status
+    let durationStatus: "too_short" | "ideal" | "too_long" = "ideal";
+    if (durationMs < config.idealDuration.minMs) durationStatus = "too_short";
+    else if (durationMs > config.idealDuration.maxMs) durationStatus = "too_long";
+
+    // Build criterion reasons
+    const criterionReasons: ScoringLogData["criterionReasons"] = {};
+    if (breakdown.scriptMatch >= 80) {
+      criterionReasons.scriptMatch = `Alta cobertura del guion (${breakdown.scriptMatch.toFixed(0)}%)`;
+    } else if (breakdown.scriptMatch >= 50) {
+      criterionReasons.scriptMatch = `Cobertura parcial del guion (${breakdown.scriptMatch.toFixed(0)}%)`;
+    } else if (breakdown.scriptMatch > 0) {
+      criterionReasons.scriptMatch = `Baja cobertura del guion (${breakdown.scriptMatch.toFixed(0)}%)`;
+    } else {
+      criterionReasons.scriptMatch = "Sin coincidencia con el guion";
+    }
+
+    if (breakdown.whisperConfidence >= 80) {
+      criterionReasons.whisperConfidence = `Alta confianza (${breakdown.whisperConfidence.toFixed(0)}%)`;
+    } else if (breakdown.whisperConfidence >= 50) {
+      criterionReasons.whisperConfidence = `Confianza media (${breakdown.whisperConfidence.toFixed(0)}%)`;
+    } else {
+      criterionReasons.whisperConfidence = `Baja confianza (${breakdown.whisperConfidence.toFixed(0)}%)`;
+    }
+
+    if (primaryTake?.isFalseStart) {
+      criterionReasons.takeOrder = `Falso comienzo (fluidez: ${breakdown.takeOrder.toFixed(0)}%)`;
+    } else if (breakdown.takeOrder >= 80) {
+      criterionReasons.takeOrder = `Alta fluidez (${breakdown.takeOrder.toFixed(0)}%)`;
+    } else if (breakdown.takeOrder >= 50) {
+      criterionReasons.takeOrder = `Fluidez media (${breakdown.takeOrder.toFixed(0)}%)`;
+    } else {
+      criterionReasons.takeOrder = `Baja fluidez (${breakdown.takeOrder.toFixed(0)}%)`;
+    }
+
+    criterionReasons.completeness =
+      breakdown.completeness >= 100
+        ? "Cubre inicio y fin de la frase"
+        : breakdown.completeness >= 75
+          ? `Buena cobertura (${breakdown.completeness.toFixed(0)}%)`
+          : `Cobertura parcial (${breakdown.completeness.toFixed(0)}%)`;
+
+    if (durationStatus === "ideal") {
+      criterionReasons.duration = "Duracion ideal";
+    } else if (durationStatus === "too_short") {
+      criterionReasons.duration = `Demasiado corto (${breakdown.duration.toFixed(0)}%)`;
+    } else {
+      criterionReasons.duration = `Demasiado largo (${breakdown.duration.toFixed(0)}%)`;
+    }
+
+    const data: ScoringLogData = {
+      segmentId: seg.id,
+      timing: { startMs: seg.startMs, endMs: seg.endMs, durationMs },
+      scores: {
+        total: takeScore?.totalScore ?? seg.score,
+        breakdown,
+        weighted,
+      },
+      scriptMatch: primaryTake
+        ? {
+            matchedSentenceIndices: [primaryTake.sentenceIndex],
+            coverageScore: takeScore?.breakdown.scriptCoverage ?? 0,
+            isRepetition: !selection.selected.some(
+              (t) => t.id === primaryTake.id
+            ),
+            transcribedText: primaryTake.transcribedText,
+          }
+        : undefined,
+      takeInfo: {
+        takeNumber,
+        detectionMethod: "script" as const,
+        groupId: primaryTake
+          ? `take-s${primaryTake.sentenceIndex}`
+          : undefined,
+      },
+      completeness: {
+        score: breakdown.completeness,
+        isCompleteSentence: breakdown.completeness >= 100,
+        boundaries: {
+          startScore: breakdown.completeness >= 75 ? 100 : 50,
+          endScore: breakdown.completeness >= 75 ? 100 : 50,
+          startAlignedWithCaption: true,
+          endHasPunctuation: breakdown.completeness >= 100,
+        },
+      },
+      durationAnalysis: {
+        score: breakdown.duration,
+        status: durationStatus,
+        idealRange: config.idealDuration,
+      },
+      criterionReasons,
+    };
+
+    logSegmentScoring(collector, data);
+    logSegmentDecision(
+      collector,
+      seg.id,
+      seg.enabled,
+      seg.reason,
+      seg.score >= 40 && seg.score <= 60,
+      seg.score
+    );
+  }
 }
 
 /**
@@ -311,8 +516,8 @@ export async function preselectSegments(
           timing: { startMs: seg.startMs, endMs: seg.endMs, durationMs },
           scores: {
             total: 100,
-            breakdown: { scriptMatch: 0, takeOrder: 100, completeness: 100, duration: 100 },
-            weighted: { scriptMatch: 0, takeOrder: 100, completeness: 100, duration: 100 },
+            breakdown: { scriptMatch: 0, whisperConfidence: 50, takeOrder: 100, completeness: 100, duration: 100 },
+            weighted: { scriptMatch: 0, whisperConfidence: 50, takeOrder: 100, completeness: 100, duration: 100 },
           },
           takeInfo: { takeNumber: 1, detectionMethod: "none" },
           completeness: {
@@ -327,6 +532,7 @@ export async function preselectSegments(
           },
           criterionReasons: {
             scriptMatch: "Sin captions para evaluar",
+            whisperConfidence: "Sin captions disponibles",
             takeOrder: "Sin captions para detectar tomas",
             completeness: "Sin captions para evaluar",
             duration: "Duracion asumida como ideal",
@@ -341,16 +547,110 @@ export async function preselectSegments(
     return { segments, stats };
   }
 
-  // Get script matches if script is provided
-  const scriptMatches = hasScript
-    ? matchSegmentsToScript(segmentsWithIds, captions, script!)
-    : undefined;
+  // === WITH-SCRIPT PATH: Take-based preselection ===
+  if (hasScript) {
+    // 1. Detect and classify takes at caption level
+    const takeResult = extractAndClassifyTakes(captions, script!);
 
-  // Build take groups from similarity-based phrase detection when no script is available
+    // 2. Score and select best take per sentence
+    const takeScoreConfig: TakeScoreConfig = configOverrides?.weights
+      ? { weights: { ...DEFAULT_TAKE_SCORE_CONFIG.weights } }
+      : DEFAULT_TAKE_SCORE_CONFIG;
+
+    const selection = selectBestTakes(
+      takeResult.groups,
+      captions,
+      takeScoreConfig
+    );
+
+    // 3. Map takes → segments (enable/disable/split)
+    const preselected = mapTakesToSegments(
+      selection.selected,
+      selection.rejected,
+      segmentsWithIds,
+      captions
+    );
+
+    // 4. Calculate stats
+    const totalSentences = takeResult.totalSentences;
+    const coveredSentences = takeResult.groups
+      .filter((g) => g.takes.length > 0)
+      .map((g) => g.sentence.index);
+    const selectedSegments = preselected.filter((s) => s.enabled);
+
+    const originalDurationMs = preselected.reduce(
+      (sum, s) => sum + (s.endMs - s.startMs),
+      0
+    );
+    const selectedDurationMs = selectedSegments.reduce(
+      (sum, s) => sum + (s.endMs - s.startMs),
+      0
+    );
+    const averageScore =
+      selectedSegments.length > 0
+        ? selectedSegments.reduce((sum, s) => sum + s.score, 0) /
+          selectedSegments.length
+        : 0;
+
+    const stats: PreselectionStats = {
+      totalSegments: preselected.length,
+      selectedSegments: selectedSegments.length,
+      originalDurationMs,
+      selectedDurationMs,
+      scriptCoverage:
+        totalSentences > 0
+          ? Math.round((coveredSentences.length / totalSentences) * 100)
+          : 100,
+      repetitionsRemoved:
+        takeResult.sentencesWithRepetitions > 0
+          ? selection.rejected.length
+          : 0,
+      averageScore,
+      ambiguousSegments: preselected.filter(
+        (s) => s.score >= 40 && s.score <= 60
+      ).length,
+      falseStartsDetected: takeResult.falseStartsDetected,
+      coveredScriptLines: coveredSentences.map((i) => i + 1),
+      missingScriptLines: selection.missingScripts.map((i) => i + 1),
+    };
+
+    // Log scoring + decisions if collector is active
+    if (collector) {
+      logTakeBasedSegments(
+        collector,
+        preselected,
+        selection,
+        takeResult,
+        captions,
+        takeScoreConfig,
+        config
+      );
+      // Override config weights to reflect take-based scoring for the log UI
+      const takeLogConfig: PreselectionConfig = {
+        ...config,
+        weights: {
+          scriptMatch: takeScoreConfig.weights.scriptCoverage,
+          whisperConfidence: takeScoreConfig.weights.whisperConfidence,
+          takeOrder: takeScoreConfig.weights.fluency,
+          completeness: takeScoreConfig.weights.completeness,
+          duration: takeScoreConfig.weights.duration,
+        },
+      };
+      const log = finalizeLog(collector, videoId, takeLogConfig, stats, "traditional");
+      return { segments: preselected, stats, log };
+    }
+
+    return { segments: preselected, stats };
+  }
+
+  // === NO-SCRIPT PATH: Similarity-based grouping (unchanged) ===
+
+  // Build take groups from similarity-based phrase detection
   let takeGroups: Map<string, number> | undefined;
+  let totalTakesMap: Map<string, number> | undefined;
   let repetitionsFromSimilarity = 0;
 
-  if (!hasScript && captions.length > 0) {
+  if (captions.length > 0) {
     // Merge captions to form longer phrases for better similarity matching
     const mergedCaptions = mergeCaptions(captions, 500);
 
@@ -360,21 +660,39 @@ export async function preselectSegments(
       minPhraseLength: 10,
     });
 
-    // Build map of segment ID → take number
-    takeGroups = buildTakeGroupsFromPhrases(phraseGroups, segmentsWithIds, captions);
+    // Build maps of segment ID → take number and segment ID → total takes
+    const result = buildTakeGroupsFromPhrases(phraseGroups, segmentsWithIds, captions);
+    takeGroups = result.takeNumbers;
+    totalTakesMap = result.totalTakes;
 
     // Count repetitions for stats
     repetitionsFromSimilarity = Array.from(takeGroups.values()).filter((t) => t > 1).length;
   }
 
   // Score all segments (passing takeGroups for no-script repetition detection)
-  const scores = scoreSegments(segmentsWithIds, captions, script, config, {
+  const scores = scoreSegments(segmentsWithIds, captions, undefined, config, {
     takeGroups,
+    totalTakesMap,
     collector,
   });
 
-  // Select segments based on scores
-  const selectedIds = selectByScore(scores, config);
+  // Select segments based on scores (best per take-group)
+  const selectedIds = selectBestPerGroup(scores, config, undefined, takeGroups);
+
+  // Build take info maps for enriching PreselectedSegment
+  const takeNumberMap = new Map<string, number>();
+  const totalTakesResultMap = new Map<string, number>();
+  const takeGroupIdMap = new Map<string, string>();
+
+  if (takeGroups && totalTakesMap) {
+    for (const [segId, takeNum] of takeGroups) {
+      takeNumberMap.set(segId, takeNum);
+    }
+    for (const [segId, total] of totalTakesMap) {
+      totalTakesResultMap.set(segId, total);
+      takeGroupIdMap.set(segId, `sim-${segId}`);
+    }
+  }
 
   // Build result segments
   const segments: PreselectedSegment[] = segmentsWithIds.map((seg, index) => {
@@ -393,6 +711,9 @@ export async function preselectSegments(
       );
     }
 
+    const takeNum = takeNumberMap.get(seg.id);
+    const totalTakesVal = totalTakesResultMap.get(seg.id);
+
     return {
       id: seg.id,
       startMs: seg.startMs,
@@ -400,11 +721,15 @@ export async function preselectSegments(
       enabled,
       score: Math.round(score.totalScore),
       reason: score.reason,
+      takeGroupId: takeGroupIdMap.get(seg.id),
+      takeNumber: takeNum,
+      totalTakes: totalTakesVal,
+      scoreBreakdown: score.breakdown,
     };
   });
 
   // Calculate stats (passing similarity-based repetitions for no-script case)
-  const stats = calculateStats(segments, script, scriptMatches, repetitionsFromSimilarity);
+  const stats = calculateStats(segments, undefined, undefined, repetitionsFromSimilarity);
 
   // Finalize log
   if (collector) {
@@ -460,30 +785,85 @@ export async function reapplyPreselection(
     };
   }
 
-  // Get script matches
-  const scriptMatches = hasScript
-    ? matchSegmentsToScript(existingSegments, captions, script!)
-    : undefined;
+  // === WITH-SCRIPT PATH: Take-based preselection ===
+  if (hasScript) {
+    const takeResult = extractAndClassifyTakes(captions, script!);
+    const selection = selectBestTakes(
+      takeResult.groups,
+      captions,
+      DEFAULT_TAKE_SCORE_CONFIG
+    );
 
-  // Build take groups from similarity-based phrase detection when no script is available
+    const preselected = mapTakesToSegments(
+      selection.selected,
+      selection.rejected,
+      existingSegments,
+      captions
+    );
+
+    const totalSentences = takeResult.totalSentences;
+    const coveredSentences = takeResult.groups
+      .filter((g) => g.takes.length > 0)
+      .map((g) => g.sentence.index);
+    const selectedSegments = preselected.filter((s) => s.enabled);
+
+    const stats: PreselectionStats = {
+      totalSegments: preselected.length,
+      selectedSegments: selectedSegments.length,
+      originalDurationMs: preselected.reduce(
+        (sum, s) => sum + (s.endMs - s.startMs),
+        0
+      ),
+      selectedDurationMs: selectedSegments.reduce(
+        (sum, s) => sum + (s.endMs - s.startMs),
+        0
+      ),
+      scriptCoverage:
+        totalSentences > 0
+          ? Math.round((coveredSentences.length / totalSentences) * 100)
+          : 100,
+      repetitionsRemoved: selection.rejected.length,
+      averageScore:
+        selectedSegments.length > 0
+          ? selectedSegments.reduce((sum, s) => sum + s.score, 0) /
+            selectedSegments.length
+          : 0,
+      ambiguousSegments: preselected.filter(
+        (s) => s.score >= 40 && s.score <= 60
+      ).length,
+      falseStartsDetected: takeResult.falseStartsDetected,
+      coveredScriptLines: coveredSentences.map((i) => i + 1),
+      missingScriptLines: selection.missingScripts.map((i) => i + 1),
+    };
+
+    return { segments: preselected, stats };
+  }
+
+  // === NO-SCRIPT PATH: Similarity-based grouping (unchanged) ===
   let takeGroups: Map<string, number> | undefined;
+  let totalTakesMapReapply: Map<string, number> | undefined;
   let repetitionsFromSimilarity = 0;
 
-  if (!hasScript && captions.length > 0) {
+  if (captions.length > 0) {
     const mergedCaptions = mergeCaptions(captions, 500);
     const phraseGroups = groupSimilarPhrases(mergedCaptions, {
       threshold: 0.65,
       minPhraseLength: 10,
     });
-    takeGroups = buildTakeGroupsFromPhrases(phraseGroups, existingSegments, captions);
+    const result = buildTakeGroupsFromPhrases(phraseGroups, existingSegments, captions);
+    takeGroups = result.takeNumbers;
+    totalTakesMapReapply = result.totalTakes;
     repetitionsFromSimilarity = Array.from(takeGroups.values()).filter((t) => t > 1).length;
   }
 
   // Score segments (passing takeGroups for no-script repetition detection)
-  const scores = scoreSegments(existingSegments, captions, script, config, takeGroups);
+  const scores = scoreSegments(existingSegments, captions, undefined, config, {
+    takeGroups,
+    totalTakesMap: totalTakesMapReapply,
+  });
 
-  // Select based on scores
-  const selectedIds = selectByScore(scores, config);
+  // Select based on scores (best per take-group)
+  const selectedIds = selectBestPerGroup(scores, config, undefined, takeGroups);
 
   // Build result
   const segments: PreselectedSegment[] = existingSegments.map((seg, index) => {
@@ -498,7 +878,7 @@ export async function reapplyPreselection(
     };
   });
 
-  const stats = calculateStats(segments, script, scriptMatches, repetitionsFromSimilarity);
+  const stats = calculateStats(segments, undefined, undefined, repetitionsFromSimilarity);
 
   return {
     segments,
@@ -519,6 +899,7 @@ export function remapCaptionsToOriginal(
   cutMap: CutMapEntry[]
 ): Caption[] {
   const remapped: Caption[] = [];
+  let prevCutEndMs = -Infinity;
 
   for (const cap of captions) {
     // Find which segment in the cut video this caption falls into
@@ -528,6 +909,7 @@ export function remapCaptionsToOriginal(
 
     if (!segment) {
       // Caption doesn't fall into any mapped segment - skip it
+      prevCutEndMs = cap.endMs;
       continue;
     }
 
@@ -536,15 +918,24 @@ export function remapCaptionsToOriginal(
     const capDuration = cap.endMs - cap.startMs;
 
     // Map back to original video timestamps
-    const originalStart = segment.originalStartMs + offsetInSegment;
-    const originalEnd = originalStart + capDuration;
+    let originalStart = segment.originalStartMs + offsetInSegment;
 
-    // Clamp to segment boundaries
+    // Close artificial gaps from cross-segment remapping:
+    // If words were adjacent in the CUT (<100ms gap) but remapping placed them
+    // far apart (>500ms) due to silence detection splitting segments, snap the
+    // second word right after the first — they were continuous speech.
+    const prev = remapped.length > 0 ? remapped[remapped.length - 1] : null;
+    const cutGap = cap.startMs - prevCutEndMs;
+    if (prev && cutGap < 100 && originalStart - prev.endMs > 500) {
+      originalStart = prev.endMs;
+    }
+
     remapped.push({
       ...cap,
       startMs: originalStart,
-      endMs: Math.min(originalEnd, segment.originalEndMs),
+      endMs: originalStart + capDuration,
     });
+    prevCutEndMs = cap.endMs;
   }
 
   return remapped;
@@ -558,8 +949,8 @@ export interface ReapplyWithCaptionsOptions {
   captions: Caption[];
   /** Cut-map entries mapping original ↔ cut timestamps */
   cutMap: CutMapEntry[];
-  /** Script text for matching */
-  script: string;
+  /** Script text for matching (optional - scoring still works without it) */
+  script?: string;
   /** Video ID for logging */
   videoId: string;
   /** Whether to collect detailed logs */

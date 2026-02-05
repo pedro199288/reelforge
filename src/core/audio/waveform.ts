@@ -3,6 +3,15 @@
  * Extracts amplitude data from video/audio files for visualization
  */
 
+export interface WaveformAlignment {
+  /** Audio stream start_time from container (seconds) */
+  audioStreamStartTime: number;
+  /** Offset applied to align audio with video (seconds) */
+  appliedOffset: number;
+  /** Video duration requested (seconds), if provided */
+  videoDuration?: number;
+}
+
 export interface WaveformData {
   /** Normalized amplitude values (-1 to 1) */
   samples: number[];
@@ -10,6 +19,8 @@ export interface WaveformData {
   sampleRate: number;
   /** Total duration in seconds */
   duration: number;
+  /** Alignment metadata for debugging */
+  alignment?: WaveformAlignment;
 }
 
 /**

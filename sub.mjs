@@ -19,9 +19,9 @@ import {
   downloadWhisperModel,
   installWhisperCpp,
   transcribe,
-  toCaptions,
 } from "@remotion/install-whisper-cpp";
-import { fullCleanup } from "./src/core/captions/cleanup.mjs";
+import { fullCleanup, fixTimingOnly } from "./src/core/captions/cleanup.mjs";
+import { toCaptionsDTW } from "./src/core/captions/to-captions.mjs";
 
 /**
  * Clean script text by removing markers [zoom], [zoom:slow], {highlight}
@@ -65,6 +65,8 @@ const extractToTempAudioFile = (fileToTranscribe, tempOutFile) => {
   );
 };
 
+const rawMode = process.argv.includes("--raw");
+
 const subFile = async (filePath, fileName, folder, promptText = null) => {
   // Always save subtitles to public/subs/ directory
   const subsDir = path.join(process.cwd(), "public", "subs");
@@ -75,7 +77,9 @@ const subFile = async (filePath, fileName, folder, promptText = null) => {
 
   // Build additional args, optionally including prompt from script
   const additionalArgs = [
-    ["--max-len", "1"], // Max 1 token per segment for better granularity
+    ["--beam-size", "5"],
+    ["--best-of", "3"],
+    ["--max-context", "0"],
   ];
 
   if (promptText) {
@@ -94,26 +98,41 @@ const subFile = async (filePath, fileName, folder, promptText = null) => {
     language: WHISPER_LANG,
     splitOnWord: true,
     // Optimization parameters for better accuracy
-    flashAttention: true,
+    flashAttention: false,
     additionalArgs,
   });
 
-  const { captions } = toCaptions({
-    whisperCppOutput,
-  });
+  const { captions } = toCaptionsDTW(whisperCppOutput);
 
-  // Clean up captions: remove duplicates, fix timing issues, filter low confidence
-  const cleanedCaptions = fullCleanup(captions, {
-    minConfidence: 0.25,
-    maxWordDurationMs: 800, // Reduced from 2500 - single words shouldn't last more than 800ms
-    duplicateWindowMs: 5000,
-  });
+  if (rawMode) {
+    // In raw mode, preserve all words but apply timing fixes (cap duration + prevent overlap)
+    const fixedCaptions = fixTimingOnly(captions, { maxWordDurationMs: 800 });
+    console.log(
+      `  Raw mode: ${fixedCaptions.length} captions (timing-only fix)`,
+    );
+    writeFileSync(outPath, JSON.stringify(fixedCaptions, null, 2));
+  } else {
+    // Clean up captions: fix timing issues, filter low confidence, remove false starts/repeated phrases
+    const log = [];
+    const cleanedCaptions = fullCleanup(captions, {
+      minConfidence: 0.15,
+      maxWordDurationMs: 800,
+      log,
+    });
 
-  console.log(
-    `  Cleaned: ${captions.length} -> ${cleanedCaptions.length} captions`,
-  );
+    console.log(
+      `  Cleaned: ${captions.length} -> ${cleanedCaptions.length} captions`,
+    );
 
-  writeFileSync(outPath, JSON.stringify(cleanedCaptions, null, 2));
+    writeFileSync(outPath, JSON.stringify(cleanedCaptions, null, 2));
+
+    // Save cleanup log alongside captions for debugging
+    if (log.length > 0) {
+      const logPath = outPath.replace(".json", ".cleanup-log.json");
+      writeFileSync(logPath, JSON.stringify(log, null, 2));
+      console.log(`  Cleanup log: ${log.length} items removed (${logPath})`);
+    }
+  }
 };
 
 const processVideo = async (fullPath, entry, directory, promptText = null) => {
@@ -187,6 +206,8 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] === "--script" && i + 1 < args.length) {
     scriptPath = args[i + 1];
     i++; // Skip next arg
+  } else if (args[i] === "--raw") {
+    // Already handled via rawMode flag
   } else {
     videoArgs.push(args[i]);
   }

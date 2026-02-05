@@ -8,6 +8,8 @@ interface CaptionBlockProps {
   viewportStartMs: number;
   isHighlighted: boolean;
   onClick?: () => void;
+  /** Viewport width in pixels (for viewport-aware culling) */
+  viewportWidthPx?: number;
 }
 
 export function CaptionBlock({
@@ -16,6 +18,7 @@ export function CaptionBlock({
   viewportStartMs,
   isHighlighted,
   onClick,
+  viewportWidthPx,
 }: CaptionBlockProps) {
   // Calculate pixels per millisecond based on zoom level
   const pxPerMs = (100 * zoomLevel) / 1000;
@@ -24,7 +27,7 @@ export function CaptionBlock({
   const width = Math.max((caption.endMs - caption.startMs) * pxPerMs, 30); // Minimum 30px width
 
   // Don't render if outside viewport
-  if (x + width < -50 || x > 2000) return null;
+  if (x + width < -50 || x > (viewportWidthPx || 2000) + 100) return null;
 
   return (
     <div

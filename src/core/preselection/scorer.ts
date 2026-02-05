@@ -20,6 +20,7 @@ import {
   matchSegmentsToScript,
   getSegmentTakeNumber,
   getSegmentTranscription,
+  detectTakeGroups,
 } from "./script-matcher";
 import type { ScoringLogData, LogCollector } from "./logger";
 import { logSegmentScoring, generateCriterionReasons } from "./logger";
@@ -135,13 +136,47 @@ function analyzeDuration(
 }
 
 /**
- * Calculates take order score
- * First take: 100, Second: 60, Third+: 30
+ * Calculates Whisper transcription confidence score for a segment.
+ * Averages the confidence of overlapping captions.
+ *
+ * @param segment - The segment to evaluate
+ * @param captions - All transcription captions
+ * @returns Score 0-100 based on average confidence
  */
-function calculateTakeOrderScore(takeNumber: number): number {
-  if (takeNumber === 1) return 100;
-  if (takeNumber === 2) return 60;
-  return 30;
+function calculateWhisperConfidence(
+  segment: InputSegment,
+  captions: Caption[]
+): number {
+  const overlapping = captions.filter(
+    (cap) => cap.startMs < segment.endMs && cap.endMs > segment.startMs
+  );
+
+  if (overlapping.length === 0) return 50; // Neutral if no captions overlap
+
+  let totalConfidence = 0;
+  for (const cap of overlapping) {
+    totalConfidence += cap.confidence ?? 1.0;
+  }
+
+  const avgConfidence = totalConfidence / overlapping.length;
+  return Math.round(avgConfidence * 100);
+}
+
+/**
+ * Calculates take order score with recency preference.
+ * Last take (most recent) gets highest score.
+ *
+ * @param takeNumber - 1-based take number for this segment
+ * @param totalTakes - Total number of takes in the group
+ * @returns Score 0-100 favoring the last take
+ */
+function calculateTakeOrderScore(takeNumber: number, totalTakes: number): number {
+  if (totalTakes <= 1) return 100; // Single take → full score
+
+  const positionFromEnd = totalTakes - takeNumber;
+  if (positionFromEnd === 0) return 100; // Last take
+  if (positionFromEnd === 1) return 70;  // Penultimate
+  return 40;                              // Earlier takes
 }
 
 /**
@@ -182,6 +217,11 @@ function generateScoreReason(
     reasons.push("toma 1");
   }
 
+  // Whisper confidence
+  if (config.weights.whisperConfidence > 0 && breakdown.whisperConfidence < 50) {
+    reasons.push("baja confianza de transcripcion");
+  }
+
   // Duration
   if (breakdown.duration < 50) {
     reasons.push("duracion no ideal");
@@ -209,6 +249,7 @@ interface ScoreSegmentOptions {
   takeDetectionMethod?: "script" | "similarity" | "none";
   takeGroupId?: string;
   relatedSegmentIds?: string[];
+  totalTakes?: number;
 }
 
 /**
@@ -227,9 +268,11 @@ function scoreSegment(
 
   // Calculate individual scores
   const durationAnalysis = analyzeDuration(durationMs, config);
+  const totalTakes = options?.totalTakes ?? 1;
   const breakdown: SegmentScoreBreakdown = {
     scriptMatch: scriptMatch?.coverageScore ?? 0,
-    takeOrder: calculateTakeOrderScore(takeNumber),
+    whisperConfidence: calculateWhisperConfidence(segment, captions),
+    takeOrder: calculateTakeOrderScore(takeNumber, totalTakes),
     completeness: 50, // Default
     duration: durationAnalysis.score,
   };
@@ -254,6 +297,7 @@ function scoreSegment(
   // Calculate weighted scores for logging
   const weightedScores = {
     scriptMatch: breakdown.scriptMatch * config.weights.scriptMatch,
+    whisperConfidence: breakdown.whisperConfidence * config.weights.whisperConfidence,
     takeOrder: breakdown.takeOrder * config.weights.takeOrder,
     completeness: breakdown.completeness * config.weights.completeness,
     duration: breakdown.duration * config.weights.duration,
@@ -262,6 +306,7 @@ function scoreSegment(
   // Calculate weighted total
   const totalScore =
     weightedScores.scriptMatch +
+    weightedScores.whisperConfidence +
     weightedScores.takeOrder +
     weightedScores.completeness +
     weightedScores.duration;
@@ -345,6 +390,8 @@ function scoreSegment(
 export interface ScoreSegmentsOptions {
   /** Optional map of segment ID → take number (for no-script repetition detection) */
   takeGroups?: Map<string, number>;
+  /** Optional map of segment ID → total takes in its group */
+  totalTakesMap?: Map<string, number>;
   /** Optional log collector for detailed logging */
   collector?: LogCollector;
 }
@@ -368,6 +415,7 @@ export function scoreSegments(
 ): SegmentScore[] {
   // Handle backward compatibility: options can be a Map (old API) or object (new API)
   const takeGroups = options instanceof Map ? options : options?.takeGroups;
+  const totalTakesMap = options instanceof Map ? undefined : options?.totalTakesMap;
   const collector = options instanceof Map ? undefined : options?.collector;
 
   // Match segments to script if available
@@ -380,6 +428,21 @@ export function scoreSegments(
   if (scriptMatches) {
     for (const match of scriptMatches) {
       matchMap.set(match.segmentId, match);
+    }
+  }
+
+  // Build totalTakes map from script matches if not provided
+  let effectiveTotalTakesMap = totalTakesMap;
+  if (!effectiveTotalTakesMap && scriptMatches) {
+    effectiveTotalTakesMap = new Map<string, number>();
+    const takeGroupsByScript = detectTakeGroups(scriptMatches);
+    for (const [, segmentIds] of takeGroupsByScript) {
+      for (const segId of segmentIds) {
+        const current = effectiveTotalTakesMap.get(segId) ?? 1;
+        if (segmentIds.length > current) {
+          effectiveTotalTakesMap.set(segId, segmentIds.length);
+        }
+      }
     }
   }
 
@@ -403,9 +466,12 @@ export function scoreSegments(
       }
     }
 
+    const totalTakes = effectiveTotalTakesMap?.get(segment.id) ?? 1;
+
     const score = scoreSegment(segment, captions, match, config, takeNumber, {
       collector,
       takeDetectionMethod,
+      totalTakes,
     });
     scores.push(score);
   }
@@ -428,6 +494,102 @@ export function selectByScore(
 
   for (const score of scores) {
     if (score.totalScore >= config.minScore) {
+      selected.add(score.segmentId);
+    }
+  }
+
+  return selected;
+}
+
+/**
+ * Selects the best take per group, ensuring only one segment per take-group is enabled.
+ * Segments not belonging to any group use the standard minScore threshold.
+ *
+ * @param scores - All segment scores
+ * @param config - Configuration with threshold
+ * @param scriptMatches - Script matching results (for detecting take groups)
+ * @param takeGroups - Similarity-based take groups (for no-script mode)
+ * @returns Set of segment IDs that should be enabled
+ */
+export function selectBestPerGroup(
+  scores: SegmentScore[],
+  config: PreselectionConfig,
+  scriptMatches?: SegmentScriptMatch[],
+  takeGroups?: Map<string, number>
+): Set<string> {
+  const selected = new Set<string>();
+  const scoreMap = new Map<string, SegmentScore>();
+  for (const s of scores) {
+    scoreMap.set(s.segmentId, s);
+  }
+
+  // Track which segments have been assigned to a group
+  const assignedToGroup = new Set<string>();
+
+  if (scriptMatches) {
+    // Build groups from script matching: group by shared sentence coverage
+    const sentenceGroups = detectTakeGroups(scriptMatches);
+
+    // For each sentence that has multiple takes, pick the best one
+    for (const [, segmentIds] of sentenceGroups) {
+      if (segmentIds.length <= 1) continue;
+
+      // Find the best scoring segment in this group
+      let bestId: string | null = null;
+      let bestScore = -1;
+
+      for (const segId of segmentIds) {
+        assignedToGroup.add(segId);
+        const score = scoreMap.get(segId);
+        if (score && score.totalScore > bestScore) {
+          bestScore = score.totalScore;
+          bestId = segId;
+        }
+      }
+
+      if (bestId && bestScore >= config.minScore) {
+        selected.add(bestId);
+      }
+    }
+  } else if (takeGroups) {
+    // Build groups from similarity-based detection
+    // takeGroups maps segmentId → takeNumber; group segments that share the same group
+    // We need to reconstruct groups: segments with takeNumber > 1 are part of a repetition group
+    // But we don't have group IDs directly. Use a heuristic: segments with takeNumber > 1
+    // near each other temporally are in the same group.
+
+    // For similarity mode, segments with takeNumber > 1 have been already identified as repeats.
+    // The simplest approach: for all segments with takeNumber > 1, only keep the highest scorer.
+    const repeatedSegments: string[] = [];
+    for (const [segId, takeNum] of takeGroups) {
+      if (takeNum > 1) {
+        repeatedSegments.push(segId);
+        assignedToGroup.add(segId);
+      }
+    }
+
+    // Also add takeNumber=1 segments that are the "first" of a repeated group
+    // These are implicitly part of the group
+    // For simplicity, among all segments with takeGroups entries, pick the best
+    if (repeatedSegments.length > 0) {
+      let bestId: string | null = null;
+      let bestScore = -1;
+      for (const segId of repeatedSegments) {
+        const score = scoreMap.get(segId);
+        if (score && score.totalScore > bestScore) {
+          bestScore = score.totalScore;
+          bestId = segId;
+        }
+      }
+      if (bestId && bestScore >= config.minScore) {
+        selected.add(bestId);
+      }
+    }
+  }
+
+  // For segments not assigned to any group, use standard threshold
+  for (const score of scores) {
+    if (!assignedToGroup.has(score.segmentId) && score.totalScore >= config.minScore) {
       selected.add(score.segmentId);
     }
   }

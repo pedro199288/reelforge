@@ -12,6 +12,8 @@ interface UseWaveformOptions {
   samplesPerSecond?: number;
   /** Target number of points for visualization */
   targetPoints?: number;
+  /** Video duration in seconds, used to align waveform with video timeline */
+  videoDurationSec?: number;
 }
 
 interface UseWaveformResult {
@@ -43,7 +45,7 @@ export function useWaveform(
   videoPath: string | null,
   options: UseWaveformOptions = {}
 ): UseWaveformResult {
-  const { samplesPerSecond = 100, targetPoints } = options;
+  const { samplesPerSecond = 100, targetPoints, videoDurationSec } = options;
   const [rawData, setRawData] = useState<WaveformData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,13 +58,16 @@ export function useWaveform(
 
     // Extract just the filename for the API request
     const filename = extractFilename(videoPath);
-    const cacheKey = `${filename}:${samplesPerSecond}`;
+    const cacheKey = `${filename}:${samplesPerSecond}:${videoDurationSec ?? "auto"}`;
 
     // Check cache first
     if (waveformCache.has(cacheKey)) {
       setRawData(waveformCache.get(cacheKey)!);
       return;
     }
+
+    // Clear stale data immediately so we don't show the old video's waveform
+    setRawData(null);
 
     let cancelled = false;
     setLoading(true);
@@ -71,7 +76,11 @@ export function useWaveform(
     fetch(`${API_BASE}/api/waveform`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ videoPath: filename, samplesPerSecond }),
+      body: JSON.stringify({
+        videoPath: filename,
+        samplesPerSecond,
+        ...(videoDurationSec != null && { videoDuration: videoDurationSec }),
+      }),
     })
       .then((res) => {
         if (!res.ok) throw new Error(`Failed to fetch waveform: ${res.status}`);
@@ -93,7 +102,7 @@ export function useWaveform(
     return () => {
       cancelled = true;
     };
-  }, [videoPath, samplesPerSecond]);
+  }, [videoPath, samplesPerSecond, videoDurationSec]);
 
   // Downsample if targetPoints specified
   const data = rawData

@@ -44,6 +44,7 @@ export function VideoList({ videos }: VideoListProps) {
           <TableHead className="w-[50%]">Title</TableHead>
           <TableHead>Size</TableHead>
           <TableHead>Status</TableHead>
+          <TableHead className="w-[80px]" />
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -66,6 +67,15 @@ export function VideoList({ videos }: VideoListProps) {
             </TableCell>
             <TableCell>
               <VideoStatusBadge hasCaptions={video.hasCaptions} />
+            </TableCell>
+            <TableCell>
+              <Link
+                to="/edit/$videoId"
+                params={{ videoId: video.id }}
+                className="text-xs text-primary hover:underline"
+              >
+                Editar
+              </Link>
             </TableCell>
           </TableRow>
         ))}
