@@ -172,38 +172,6 @@ function EditorPage() {
             height={project.height}
             durationInFrames={durationInFrames}
           />
-
-          {/* Timeline */}
-          <EditorTimeline
-            tracks={tracks}
-            fps={project.fps}
-            durationInFrames={durationInFrames}
-            currentFrame={currentFrame}
-            isPlaying={isPlaying}
-            zoom={zoom}
-            scrollX={scrollX}
-            scrollY={scrollY}
-            selection={selection}
-            canUndo={canUndo}
-            canRedo={canRedo}
-            onTogglePlayback={togglePlayback}
-            onSeek={setCurrentFrame}
-            onZoomIn={zoomIn}
-            onZoomOut={zoomOut}
-            onScrollX={setTimelineScrollX}
-            onScrollY={setTimelineScrollY}
-            onSelectItem={handleSelectItem}
-            onSelectTrack={handleSelectTrack}
-            onClearSelection={clearSelection}
-            onUndo={editorUndo}
-            onRedo={editorRedo}
-            onDeleteSelected={deleteSelected}
-            onSplitAtPlayhead={handleSplitAtPlayhead}
-            onMoveItem={moveItem}
-            onUpdateTrack={updateTrack}
-            onAddTrack={handleAddTrack}
-            onItemDoubleClick={handleItemDoubleClick}
-          />
         </div>
 
         {/* Right sidebar: Properties */}
@@ -223,6 +191,38 @@ function EditorPage() {
           )}
         </div>
       </div>
+
+      {/* Timeline — full width */}
+      <EditorTimeline
+        tracks={tracks}
+        fps={project.fps}
+        durationInFrames={durationInFrames}
+        currentFrame={currentFrame}
+        isPlaying={isPlaying}
+        zoom={zoom}
+        scrollX={scrollX}
+        scrollY={scrollY}
+        selection={selection}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onTogglePlayback={togglePlayback}
+        onSeek={setCurrentFrame}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onScrollX={setTimelineScrollX}
+        onScrollY={setTimelineScrollY}
+        onSelectItem={handleSelectItem}
+        onSelectTrack={handleSelectTrack}
+        onClearSelection={clearSelection}
+        onUndo={editorUndo}
+        onRedo={editorRedo}
+        onDeleteSelected={deleteSelected}
+        onSplitAtPlayhead={handleSplitAtPlayhead}
+        onMoveItem={moveItem}
+        onUpdateTrack={updateTrack}
+        onAddTrack={handleAddTrack}
+        onItemDoubleClick={handleItemDoubleClick}
+      />
     </div>
   );
 }
