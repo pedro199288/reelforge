@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { getVideoMetadata } from "@remotion/media-utils";
+import type { PlayerRef } from "@remotion/player";
 import type { MediaDropData } from "@/components/editor-timeline/EditorTrackRow";
 import {
   useEditorProjectStore,
@@ -71,11 +72,24 @@ function EditorPage() {
   const scrollX = useEditorProjectStore((s) => s.timelineScrollX);
   const scrollY = useEditorProjectStore((s) => s.timelineScrollY);
 
+  const playerRef = useRef<PlayerRef>(null);
+
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
 
   // Keyboard shortcuts
-  useEditorShortcuts();
+  useEditorShortcuts({ playerRef });
+
+  // Toggle playback — call player directly to keep user gesture chain
+  const handleTogglePlayback = useCallback(() => {
+    const willPlay = !isPlaying;
+    togglePlayback();
+    if (willPlay) {
+      playerRef.current?.play();
+    } else {
+      playerRef.current?.pause();
+    }
+  }, [isPlaying, togglePlayback]);
 
   const handleSelectItem = useCallback(
     (itemId: string, trackId: string) => {
@@ -208,6 +222,7 @@ function EditorPage() {
             width={project.width}
             height={project.height}
             durationInFrames={durationInFrames}
+            playerRef={playerRef}
           />
         </div>
 
@@ -242,7 +257,7 @@ function EditorPage() {
         selection={selection}
         canUndo={canUndo}
         canRedo={canRedo}
-        onTogglePlayback={togglePlayback}
+        onTogglePlayback={handleTogglePlayback}
         onSeek={setCurrentFrame}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}

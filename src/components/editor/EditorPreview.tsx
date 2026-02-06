@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useMemo, memo } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { MultiTrackMain } from "@/remotion-compositions/MultiTrackEditor";
 import type { Track } from "@/types/editor";
@@ -10,18 +10,20 @@ interface EditorPreviewProps {
   width: number;
   height: number;
   durationInFrames: number;
+  playerRef: React.RefObject<PlayerRef | null>;
 }
 
-export function EditorPreview({
+export const EditorPreview = memo(function EditorPreview({
   tracks,
   fps,
   width,
   height,
   durationInFrames,
+  playerRef,
 }: EditorPreviewProps) {
-  const playerRef = useRef<PlayerRef>(null);
-
   usePlayerSync({ playerRef, fps });
+
+  const inputProps = useMemo(() => ({ tracks }), [tracks]);
 
   return (
     <div className="flex-1 flex items-center justify-center bg-black/90 p-4 min-h-0 min-w-0">
@@ -32,7 +34,7 @@ export function EditorPreview({
         <Player
           ref={playerRef}
           component={MultiTrackMain}
-          inputProps={{ tracks }}
+          inputProps={inputProps}
           durationInFrames={Math.max(1, durationInFrames)}
           compositionWidth={width}
           compositionHeight={height}
@@ -51,4 +53,4 @@ export function EditorPreview({
       </div>
     </div>
   );
-}
+});

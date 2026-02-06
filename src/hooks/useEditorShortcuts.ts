@@ -1,4 +1,5 @@
 import { useHotkeys } from "react-hotkeys-hook";
+import type { PlayerRef } from "@remotion/player";
 import {
   useEditorProjectStore,
   useEditorUndo,
@@ -7,10 +8,12 @@ import {
 
 interface UseEditorShortcutsOptions {
   enabled?: boolean;
+  playerRef?: React.RefObject<PlayerRef | null>;
 }
 
 export function useEditorShortcuts({
   enabled = true,
+  playerRef,
 }: UseEditorShortcutsOptions = {}) {
   const store = useEditorProjectStore;
   const undo = useEditorUndo();
@@ -21,10 +24,16 @@ export function useEditorShortcuts({
     "space",
     (e) => {
       e.preventDefault();
+      const willPlay = !store.getState().isPlaying;
       store.getState().togglePlayback();
+      if (willPlay) {
+        playerRef?.current?.play();
+      } else {
+        playerRef?.current?.pause();
+      }
     },
     { enabled, preventDefault: true },
-    []
+    [playerRef]
   );
 
   // ←/→ → Seek ±1 frame
