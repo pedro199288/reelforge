@@ -68,6 +68,7 @@ function EditorPage() {
     updateProjectSettings,
     addTrack,
     addVideoItem,
+    addImageItem,
     getProjectDuration,
   } = useEditorActions();
 
@@ -145,9 +146,12 @@ function EditorPage() {
         } catch {
           addVideoItem(trackId, mediaData.src, framePosition, defaultDuration);
         }
+      } else if (mediaData.type === "image") {
+        const defaultDuration = 2 * project.fps;
+        addImageItem(trackId, mediaData.src, framePosition, defaultDuration);
       }
     },
-    [tracks.length, project.fps, addTrack, addVideoItem]
+    [tracks.length, project.fps, addTrack, addVideoItem, addImageItem]
   );
 
   const handleDropMedia = useCallback(
@@ -161,9 +165,12 @@ function EditorPage() {
         } catch {
           addVideoItem(trackId, mediaData.src, framePosition, defaultDuration);
         }
+      } else if (mediaData.type === "image") {
+        const defaultDuration = 2 * project.fps;
+        addImageItem(trackId, mediaData.src, framePosition, defaultDuration);
       }
     },
-    [project.fps, addVideoItem]
+    [project.fps, addVideoItem, addImageItem]
   );
 
   const durationInFrames = getProjectDuration();
