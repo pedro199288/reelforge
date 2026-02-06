@@ -214,6 +214,36 @@ export function EditorTimeline({
     if (contentRef.current) contentRef.current.scrollLeft = scrollX;
   }, [zoom, scrollX]);
 
+  // ─── Hover playhead (ghost line) ────────────────────────────────
+  const [hoverFrame, setHoverFrame] = useState<number | null>(null);
+
+  const handleContentMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = contentRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const xInContent = e.clientX - rect.left + scrollX;
+      const frame = Math.round(xInContent / pxPerFrame);
+      setHoverFrame(Math.max(0, Math.min(durationInFrames - 1, frame)));
+    },
+    [scrollX, pxPerFrame, durationInFrames]
+  );
+
+  const handleContentMouseLeave = useCallback(() => {
+    setHoverFrame(null);
+  }, []);
+
+  // ─── Click-to-seek (capture phase — runs before item onClick) ──
+  const handleContentClickCapture = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = contentRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const xInContent = e.clientX - rect.left + scrollX;
+      const frame = Math.max(0, Math.min(durationInFrames - 1, Math.round(xInContent / pxPerFrame)));
+      onSeek(frame);
+    },
+    [scrollX, pxPerFrame, durationInFrames, onSeek]
+  );
+
   const EDITOR_MEDIA_MIME = "application/x-editor-media";
   const [isTimelineDragOver, setIsTimelineDragOver] = useState(false);
 
@@ -323,7 +353,10 @@ export function EditorTimeline({
               isTimelineDragOver && "bg-primary/5"
             )}
             onScroll={handleContentScroll}
+            onClickCapture={handleContentClickCapture}
             onClick={onClearSelection}
+            onMouseMove={handleContentMouseMove}
+            onMouseLeave={handleContentMouseLeave}
             onDragOver={handleTimelineDragOver}
             onDragLeave={handleTimelineDragLeave}
             onDrop={handleTimelineDrop}
@@ -351,6 +384,19 @@ export function EditorTimeline({
                     onDropMedia={onDropMedia}
                   />
                 ))
+              )}
+
+              {/* Hover playhead (ghost) */}
+              {hoverFrame !== null && (
+                <div
+                  className="absolute top-0 bottom-0 z-20 pointer-events-none"
+                  style={{
+                    transform: `translateX(${hoverFrame * pxPerFrame}px)`,
+                    willChange: "transform",
+                  }}
+                >
+                  <div className="w-px h-full bg-foreground/30" />
+                </div>
               )}
 
               {/* Playhead overlay — inside inner div so it scrolls with content */}
