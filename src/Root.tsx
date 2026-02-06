@@ -20,6 +20,7 @@ import {
   StatCardDemo,
   QuoteOverlayDemo,
 } from "./remotion-compositions/ui";
+import { MultiTrackMain } from "./remotion-compositions/MultiTrackEditor";
 
 // Each <Composition> is an entry in the sidebar!
 
@@ -179,6 +180,17 @@ export const RemotionRoot: React.FC = () => {
           fps={30}
           width={1080}
           height={1920}
+        />
+      </Folder>
+      <Folder name="editor">
+        <Composition
+          id="MultiTrackEditor"
+          component={MultiTrackMain}
+          durationInFrames={900}
+          fps={30}
+          width={1080}
+          height={1920}
+          defaultProps={{ tracks: [] }}
         />
       </Folder>
     </>
