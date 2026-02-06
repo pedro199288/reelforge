@@ -32,6 +32,7 @@ interface EditorProjectStore {
   // Transient state (not persisted, not undoable)
   currentFrame: number;
   isPlaying: boolean;
+  playbackRate: number;
   timelineZoom: number; // 1 = default
   timelineScrollX: number; // px
   timelineScrollY: number; // px
@@ -76,6 +77,7 @@ interface EditorProjectStore {
   play: () => void;
   pause: () => void;
   togglePlayback: () => void;
+  cyclePlaybackRate: () => void;
 
   // ─── Timeline View ──────────────────────────────────────────────
   setTimelineZoom: (zoom: number) => void;
@@ -106,6 +108,7 @@ interface EditorProjectStore {
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
 const ZOOM_FACTOR = 1.3;
+const PLAYBACK_RATES = [1, 1.25, 1.5, 2, 2.5, 3] as const;
 
 // ─── Store ───────────────────────────────────────────────────────────
 
@@ -121,6 +124,7 @@ export const useEditorProjectStore = create<EditorProjectStore>()(
         })(),
         currentFrame: 0,
         isPlaying: false,
+        playbackRate: 1,
         timelineZoom: 1,
         timelineScrollX: 0,
         timelineScrollY: 0,
@@ -384,6 +388,11 @@ export const useEditorProjectStore = create<EditorProjectStore>()(
         play: () => set({ isPlaying: true }),
         pause: () => set({ isPlaying: false }),
         togglePlayback: () => set((state) => ({ isPlaying: !state.isPlaying })),
+        cyclePlaybackRate: () =>
+          set((state) => {
+            const idx = PLAYBACK_RATES.indexOf(state.playbackRate as typeof PLAYBACK_RATES[number]);
+            return { playbackRate: PLAYBACK_RATES[(idx + 1) % PLAYBACK_RATES.length] };
+          }),
 
         // ─── Timeline View ─────────────────────────────────────────
 
@@ -510,6 +519,9 @@ export const useCurrentFrame = () =>
 export const useIsEditorPlaying = () =>
   useEditorProjectStore((state) => state.isPlaying);
 
+export const usePlaybackRate = () =>
+  useEditorProjectStore((state) => state.playbackRate);
+
 export const useEditorProject = () =>
   useStoreWithEqualityFn(
     useEditorProjectStore,
@@ -563,6 +575,7 @@ export const useEditorActions = () =>
       play: state.play,
       pause: state.pause,
       togglePlayback: state.togglePlayback,
+      cyclePlaybackRate: state.cyclePlaybackRate,
       setTimelineZoom: state.setTimelineZoom,
       zoomIn: state.zoomIn,
       zoomOut: state.zoomOut,

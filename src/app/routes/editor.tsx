@@ -17,6 +17,7 @@ import {
   useEditorCanRedo,
   useEditorUndo,
   useEditorRedo,
+  usePlaybackRate,
 } from "@/store/editor-project";
 import { EditorTimeline } from "@/components/editor-timeline/EditorTimeline";
 import { EditorPreview } from "@/components/editor/EditorPreview";
@@ -48,6 +49,7 @@ function EditorPage() {
   const canRedo = useEditorCanRedo();
   const editorUndo = useEditorUndo();
   const editorRedo = useEditorRedo();
+  const playbackRate = usePlaybackRate();
 
   const {
     setCurrentFrame,
@@ -222,6 +224,7 @@ function EditorPage() {
             width={project.width}
             height={project.height}
             durationInFrames={durationInFrames}
+            playbackRate={playbackRate}
             playerRef={playerRef}
           />
         </div>

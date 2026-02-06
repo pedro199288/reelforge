@@ -241,6 +241,14 @@ export function useEditorShortcuts({
     []
   );
 
+  // R → Cycle playback rate
+  useHotkeys(
+    "r",
+    () => store.getState().cyclePlaybackRate(),
+    { enabled, preventDefault: true },
+    []
+  );
+
   // Escape → Clear selection
   useHotkeys(
     "escape",
@@ -273,6 +281,7 @@ export const EDITOR_SHORTCUTS = [
   { key: "Home / End", description: "Inicio / Fin" },
   { key: "Q", description: "Trim left (inicio → playhead)" },
   { key: "W", description: "Trim right (fin → playhead)" },
+  { key: "R", description: "Velocidad de reproducción (1x–3x)" },
   { key: "Delete", description: "Eliminar seleccionado" },
   { key: "Cmd + Z", description: "Deshacer" },
   { key: "Cmd + Shift + Z / Cmd + Y", description: "Rehacer" },

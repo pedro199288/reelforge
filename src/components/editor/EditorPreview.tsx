@@ -10,6 +10,7 @@ interface EditorPreviewProps {
   width: number;
   height: number;
   durationInFrames: number;
+  playbackRate: number;
   playerRef: React.RefObject<PlayerRef | null>;
 }
 
@@ -19,6 +20,7 @@ export const EditorPreview = memo(function EditorPreview({
   width,
   height,
   durationInFrames,
+  playbackRate,
   playerRef,
 }: EditorPreviewProps) {
   usePlayerSync({ playerRef, fps });
@@ -39,6 +41,7 @@ export const EditorPreview = memo(function EditorPreview({
           compositionWidth={width}
           compositionHeight={height}
           fps={fps}
+          playbackRate={playbackRate}
           style={{
             width: "100%",
             maxHeight: "100%",
