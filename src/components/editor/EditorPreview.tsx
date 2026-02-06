@@ -1,8 +1,9 @@
-import { useMemo, memo } from "react";
+import { useMemo, useRef, memo } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { MultiTrackMain } from "@/remotion-compositions/MultiTrackEditor";
 import type { Track } from "@/types/editor";
 import { usePlayerSync } from "@/hooks/usePlayerSync";
+import { PreviewDragOverlay } from "./PreviewDragOverlay";
 
 interface EditorPreviewProps {
   tracks: Track[];
@@ -25,11 +26,13 @@ export const EditorPreview = memo(function EditorPreview({
 }: EditorPreviewProps) {
   usePlayerSync({ playerRef, fps });
 
+  const playerContainerRef = useRef<HTMLDivElement>(null);
   const inputProps = useMemo(() => ({ tracks }), [tracks]);
 
   return (
     <div className="flex-1 flex items-center justify-center bg-black/90 p-4 min-h-0 min-w-0">
       <div
+        ref={playerContainerRef}
         className="relative w-full h-full flex items-center justify-center"
         style={{ maxWidth: "100%", maxHeight: "100%" }}
       >
@@ -52,6 +55,11 @@ export const EditorPreview = memo(function EditorPreview({
               Error: {error.message}
             </div>
           )}
+        />
+        <PreviewDragOverlay
+          containerRef={playerContainerRef}
+          compositionWidth={width}
+          compositionHeight={height}
         />
       </div>
     </div>
