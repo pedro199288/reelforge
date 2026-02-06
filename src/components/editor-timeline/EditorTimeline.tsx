@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -17,7 +17,7 @@ import { EditorTimelinePlayhead } from "./EditorTimelinePlayhead";
 import { EditorTrackHeader } from "./EditorTrackHeader";
 import { EditorTrackRow, type MediaDropData } from "./EditorTrackRow";
 import { EditorTimelineToolbar } from "./EditorTimelineToolbar";
-import { TRACK_HEADER_WIDTH, getPxPerFrame } from "./constants";
+import { TRACK_HEADER_WIDTH, MIN_ZOOM, MAX_ZOOM, getPxPerFrame } from "./constants";
 
 interface EditorTimelineProps {
   tracks: Track[];
@@ -35,6 +35,7 @@ interface EditorTimelineProps {
   onSeek: (frame: number) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  onSetZoom: (zoom: number) => void;
   onUndo: () => void;
   onRedo: () => void;
   onScrollX: (px: number) => void;
@@ -68,6 +69,7 @@ export function EditorTimeline({
   onSeek,
   onZoomIn,
   onZoomOut,
+  onSetZoom,
   onUndo,
   onRedo,
   onScrollX,
@@ -170,16 +172,47 @@ export function EditorTimeline({
     [onScrollX]
   );
 
-  const handleWheel = useCallback(
-    (e: React.WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        if (e.deltaY > 0) onZoomOut();
-        else onZoomIn();
+  // ─── Cursor-anchored zoom via native wheel listener ─────────────
+  const zoomRef = useRef(zoom);
+  const scrollXRef = useRef(scrollX);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { scrollXRef.current = scrollX; }, [scrollX]);
+
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.deltaX !== 0 && !e.ctrlKey && !e.metaKey) {
+        // Horizontal pan
+        const newScrollX = Math.max(0, scrollXRef.current + e.deltaX);
+        el.scrollLeft = newScrollX;
+        onScrollX(newScrollX);
+      } else if (e.deltaY !== 0) {
+        // Cursor-anchored zoom
+        const cur = zoomRef.current;
+        const factor = e.deltaY > 0 ? 0.8 : 1.25;
+        const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cur * factor));
+        if (newZoom === cur) return;
+        const rect = el.getBoundingClientRect();
+        const cursorPx = Math.max(0, e.clientX - rect.left);
+        const oldPxPF = getPxPerFrame(cur);
+        const cursorFrame = (scrollXRef.current + cursorPx) / oldPxPF;
+        const newPxPF = getPxPerFrame(newZoom);
+        const newScrollX = Math.max(0, cursorFrame * newPxPF - cursorPx);
+        onSetZoom(newZoom);
+        el.scrollLeft = newScrollX;
+        onScrollX(newScrollX);
       }
-    },
-    [onZoomIn, onZoomOut]
-  );
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [onScrollX, onSetZoom]);
+
+  // Sync scrollLeft after zoom re-render
+  useEffect(() => {
+    if (contentRef.current) contentRef.current.scrollLeft = scrollX;
+  }, [zoom, scrollX]);
 
   const EDITOR_MEDIA_MIME = "application/x-editor-media";
   const [isTimelineDragOver, setIsTimelineDragOver] = useState(false);
@@ -286,11 +319,10 @@ export function EditorTimeline({
           <div
             ref={contentRef}
             className={cn(
-              "flex-1 overflow-auto relative",
+              "flex-1 overflow-auto relative overscroll-contain touch-none",
               isTimelineDragOver && "bg-primary/5"
             )}
             onScroll={handleContentScroll}
-            onWheel={handleWheel}
             onClick={onClearSelection}
             onDragOver={handleTimelineDragOver}
             onDragLeave={handleTimelineDragLeave}

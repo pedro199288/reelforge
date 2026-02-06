@@ -3,12 +3,14 @@ import { useDraggable } from "@dnd-kit/core";
 import { Video, Music, Type, Image, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TimelineItem, TimelineItemType } from "@/types/editor";
+import { TimelineItemWaveform } from "./TimelineItemWaveform";
 
 interface TimelineItemBlockProps {
   item: TimelineItem;
   x: number;
   width: number;
   height: number;
+  fps: number;
   selected: boolean;
   onSelect: () => void;
   onDoubleClick: () => void;
@@ -38,11 +40,17 @@ const ITEM_ICONS: Record<TimelineItemType, React.FC<{ className?: string }>> = {
   solid: Square,
 };
 
+const WAVEFORM_COLORS: Partial<Record<TimelineItemType, string>> = {
+  audio: "rgba(74, 222, 128, 0.4)",
+  video: "rgba(96, 165, 250, 0.4)",
+};
+
 export function TimelineItemBlock({
   item,
   x,
   width,
   height,
+  fps,
   selected,
   onSelect,
   onDoubleClick,
@@ -123,11 +131,26 @@ export function TimelineItemBlock({
         onMouseDown={(e) => handleMouseDown(e, "left")}
       />
 
-      {/* Content */}
-      <Icon className="h-3 w-3 shrink-0 opacity-60" />
-      {width > 60 && (
-        <span className="text-[10px] truncate opacity-80">{item.name}</span>
+      {/* Waveform background for audio/video items */}
+      {(item.type === "audio" || item.type === "video") && (
+        <TimelineItemWaveform
+          src={item.src}
+          trimStartFrame={item.trimStartFrame}
+          durationInFrames={item.durationInFrames}
+          width={Math.max(width, 20)}
+          height={height}
+          fps={fps}
+          color={WAVEFORM_COLORS[item.type]!}
+        />
       )}
+
+      {/* Content */}
+      <div className="relative z-10 flex items-center gap-1">
+        <Icon className="h-3 w-3 shrink-0 opacity-60" />
+        {width > 60 && (
+          <span className="text-[10px] truncate opacity-80">{item.name}</span>
+        )}
+      </div>
 
       {/* Right resize handle */}
       <div

@@ -62,6 +62,7 @@ function EditorPage() {
     clearSelection,
     deleteSelected,
     splitItem,
+    setTimelineZoom,
     moveItem,
     updateTrack,
     updateItem,
@@ -271,6 +272,7 @@ function EditorPage() {
         onSeek={setCurrentFrame}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
+        onSetZoom={setTimelineZoom}
         onScrollX={setTimelineScrollX}
         onScrollY={setTimelineScrollY}
         onSelectItem={handleSelectItem}

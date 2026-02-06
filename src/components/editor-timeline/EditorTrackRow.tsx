@@ -145,6 +145,7 @@ export function EditorTrackRow({
             x={x}
             width={width}
             height={track.height - 4}
+            fps={fps}
             selected={isSelected}
             onSelect={() => onSelectItem(item.id, track.id)}
             onDoubleClick={() => onItemDoubleClick(item.id, track.id)}
