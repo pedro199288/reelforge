@@ -1,11 +1,15 @@
 import { useCallback, useRef, useState } from "react";
 import {
   DndContext,
+  DragOverlay,
   type DragEndEvent,
+  type DragMoveEvent,
+  type DragStartEvent,
   PointerSensor,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
+import type { TimelineItem } from "@/types/editor";
 import { cn } from "@/lib/utils";
 import type { Track, EditorSelection } from "@/types/editor";
 import { EditorTimelineRuler } from "./EditorTimelineRuler";
@@ -91,8 +95,46 @@ export function EditorTimeline({
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
+  // ─── Drag ghost state for item move preview ──────────────────────
+  const [dragGhost, setDragGhost] = useState<{
+    targetTrackId: string;
+    newFrom: number;
+    durationInFrames: number;
+    itemType: string;
+  } | null>(null);
+
+  const handleDragStart = useCallback((_event: DragStartEvent) => {
+    // Ghost will be set on first move
+  }, []);
+
+  const handleDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      const { active, over, delta } = event;
+      const itemData = active.data.current;
+      if (!itemData || itemData.type !== "timeline-item") return;
+
+      const item = itemData.item as TimelineItem;
+      const deltaFrames = Math.round(delta.x / pxPerFrame);
+      const newFrom = Math.max(0, item.from + deltaFrames);
+
+      const overData = over?.data.current;
+      const targetTrackId = overData?.type === "track" ? overData.trackId : item.trackId;
+
+      setDragGhost({
+        targetTrackId,
+        newFrom,
+        durationInFrames: item.durationInFrames,
+        itemType: item.type,
+      });
+    },
+    [pxPerFrame]
+  );
+
+  const clearDragGhost = useCallback(() => setDragGhost(null), []);
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
+      setDragGhost(null);
       const { active, over, delta } = event;
       if (!over) return;
 
@@ -234,7 +276,13 @@ export function EditorTimeline({
         </div>
 
         {/* Track content (scrollable) */}
-        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+        <DndContext
+          sensors={sensors}
+          onDragStart={handleDragStart}
+          onDragMove={handleDragMove}
+          onDragEnd={handleDragEnd}
+          onDragCancel={clearDragGhost}
+        >
           <div
             ref={contentRef}
             className={cn(
@@ -263,6 +311,9 @@ export function EditorTimeline({
                     viewportWidth={viewportWidth}
                     fps={fps}
                     selection={selection}
+                    dragGhost={
+                      dragGhost?.targetTrackId === track.id ? dragGhost : null
+                    }
                     onSelectItem={onSelectItem}
                     onItemDoubleClick={onItemDoubleClick}
                     onDropMedia={onDropMedia}
@@ -270,6 +321,8 @@ export function EditorTimeline({
                 ))
               )}
             </div>
+
+            <DragOverlay dropAnimation={null} />
 
             {/* Playhead overlay */}
             <EditorTimelinePlayhead

@@ -13,6 +13,13 @@ export interface MediaDropData {
   name: string;
 }
 
+export interface DragGhostData {
+  targetTrackId: string;
+  newFrom: number;
+  durationInFrames: number;
+  itemType: string;
+}
+
 interface EditorTrackRowProps {
   track: Track;
   zoom: number;
@@ -20,6 +27,7 @@ interface EditorTrackRowProps {
   viewportWidth: number;
   fps: number;
   selection: EditorSelection;
+  dragGhost: DragGhostData | null;
   onSelectItem: (itemId: string, trackId: string) => void;
   onItemDoubleClick: (itemId: string, trackId: string) => void;
   onDropMedia?: (trackId: string, mediaData: MediaDropData, framePosition: number) => void;
@@ -32,6 +40,7 @@ export function EditorTrackRow({
   viewportWidth,
   fps,
   selection,
+  dragGhost,
   onSelectItem,
   onItemDoubleClick,
   onDropMedia,
@@ -142,13 +151,24 @@ export function EditorTrackRow({
         );
       })}
 
-      {/* Ghost preview during drag */}
+      {/* Ghost preview — media drop from browser */}
       {dragHoverFrame !== null && (
         <div
           className="absolute top-0.5 bottom-0.5 pointer-events-none bg-primary/20 border border-dashed border-primary/60 rounded"
           style={{
             left: dragHoverFrame * pxPerFrame - scrollX,
             width: 5 * fps * pxPerFrame,
+          }}
+        />
+      )}
+
+      {/* Ghost preview — item move within timeline */}
+      {dragGhost && (
+        <div
+          className="absolute top-0.5 bottom-0.5 pointer-events-none bg-primary/25 border-2 border-dashed border-primary/70 rounded"
+          style={{
+            left: dragGhost.newFrom * pxPerFrame - scrollX,
+            width: Math.max(dragGhost.durationInFrames * pxPerFrame, 20),
           }}
         />
       )}
