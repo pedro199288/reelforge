@@ -114,7 +114,11 @@ export const useEditorProjectStore = create<EditorProjectStore>()(
     persist(
       (set, get) => ({
         // Initial state
-        project: createProject(nanoid(8), "Untitled Project"),
+        project: (() => {
+          const p = createProject(nanoid(8), "Untitled Project");
+          p.tracks = [createTrack(nanoid(8), "Track 1", "video")];
+          return p;
+        })(),
         currentFrame: 0,
         isPlaying: false,
         timelineZoom: 1,

@@ -116,6 +116,24 @@ function EditorPage() {
     [updateItem]
   );
 
+  const handleDropMediaNewTrack = useCallback(
+    async (mediaData: MediaDropData, framePosition: number) => {
+      const trackName = `Track ${tracks.length + 1}`;
+      const trackId = addTrack(trackName, "video");
+      if (mediaData.type === "video") {
+        const defaultDuration = 5 * project.fps;
+        try {
+          const metadata = await getVideoMetadata(mediaData.src);
+          const frames = Math.ceil(metadata.durationInSeconds * project.fps);
+          addVideoItem(trackId, mediaData.src, framePosition, frames);
+        } catch {
+          addVideoItem(trackId, mediaData.src, framePosition, defaultDuration);
+        }
+      }
+    },
+    [tracks.length, project.fps, addTrack, addVideoItem]
+  );
+
   const handleDropMedia = useCallback(
     async (trackId: string, mediaData: MediaDropData, framePosition: number) => {
       if (mediaData.type === "video") {
@@ -242,6 +260,7 @@ function EditorPage() {
         onAddTrack={handleAddTrack}
         onItemDoubleClick={handleItemDoubleClick}
         onDropMedia={handleDropMedia}
+        onDropMediaNewTrack={handleDropMediaNewTrack}
       />
     </div>
   );

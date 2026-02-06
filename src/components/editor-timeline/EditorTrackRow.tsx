@@ -18,6 +18,7 @@ interface EditorTrackRowProps {
   zoom: number;
   scrollX: number;
   viewportWidth: number;
+  fps: number;
   selection: EditorSelection;
   onSelectItem: (itemId: string, trackId: string) => void;
   onItemDoubleClick: (itemId: string, trackId: string) => void;
@@ -29,6 +30,7 @@ export function EditorTrackRow({
   zoom,
   scrollX,
   viewportWidth,
+  fps,
   selection,
   onSelectItem,
   onItemDoubleClick,
@@ -41,6 +43,7 @@ export function EditorTrackRow({
 
   const rowRef = useRef<HTMLDivElement>(null);
   const [isNativeDragOver, setIsNativeDragOver] = useState(false);
+  const [dragHoverFrame, setDragHoverFrame] = useState<number | null>(null);
 
   const pxPerFrame = getPxPerFrame(zoom);
 
@@ -51,22 +54,31 @@ export function EditorTrackRow({
       e.preventDefault();
       e.dataTransfer.dropEffect = "copy";
       setIsNativeDragOver(true);
+
+      const rect = rowRef.current?.getBoundingClientRect();
+      if (rect) {
+        const xInContent = e.clientX - rect.left + scrollX;
+        setDragHoverFrame(Math.max(0, Math.round(xInContent / pxPerFrame)));
+      }
     },
-    [track.locked]
+    [track.locked, scrollX, pxPerFrame]
   );
 
   const handleDragLeave = useCallback(() => {
     setIsNativeDragOver(false);
+    setDragHoverFrame(null);
   }, []);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       setIsNativeDragOver(false);
+      setDragHoverFrame(null);
       if (track.locked) return;
 
       const raw = e.dataTransfer.getData(EDITOR_MEDIA_MIME);
       if (!raw) return;
       e.preventDefault();
+      e.stopPropagation();
 
       const mediaData: MediaDropData = JSON.parse(raw);
       const rect = rowRef.current?.getBoundingClientRect();
@@ -129,6 +141,17 @@ export function EditorTrackRow({
           />
         );
       })}
+
+      {/* Ghost preview during drag */}
+      {dragHoverFrame !== null && (
+        <div
+          className="absolute top-0.5 bottom-0.5 pointer-events-none bg-primary/20 border border-dashed border-primary/60 rounded"
+          style={{
+            left: dragHoverFrame * pxPerFrame - scrollX,
+            width: 5 * fps * pxPerFrame,
+          }}
+        />
+      )}
     </div>
   );
 }

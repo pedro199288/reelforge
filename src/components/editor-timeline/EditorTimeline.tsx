@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   DndContext,
   type DragEndEvent,
@@ -6,6 +6,7 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
+import { cn } from "@/lib/utils";
 import type { Track, EditorSelection } from "@/types/editor";
 import { EditorTimelineRuler } from "./EditorTimelineRuler";
 import { EditorTimelinePlayhead } from "./EditorTimelinePlayhead";
@@ -44,6 +45,7 @@ interface EditorTimelineProps {
   onAddTrack: () => void;
   onItemDoubleClick: (itemId: string, trackId: string) => void;
   onDropMedia?: (trackId: string, mediaData: MediaDropData, framePosition: number) => void;
+  onDropMediaNewTrack?: (mediaData: MediaDropData, framePosition: number) => void;
 }
 
 export function EditorTimeline({
@@ -76,6 +78,7 @@ export function EditorTimeline({
   onAddTrack,
   onItemDoubleClick,
   onDropMedia,
+  onDropMediaNewTrack,
 }: EditorTimelineProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const headersRef = useRef<HTMLDivElement>(null);
@@ -136,6 +139,47 @@ export function EditorTimeline({
     [onZoomIn, onZoomOut]
   );
 
+  const EDITOR_MEDIA_MIME = "application/x-editor-media";
+  const [isTimelineDragOver, setIsTimelineDragOver] = useState(false);
+
+  const handleTimelineDragOver = useCallback(
+    (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes(EDITOR_MEDIA_MIME)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      setIsTimelineDragOver(true);
+    },
+    []
+  );
+
+  const handleTimelineDragLeave = useCallback(
+    (e: React.DragEvent) => {
+      // Only clear if leaving the container itself (not entering a child)
+      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+      setIsTimelineDragOver(false);
+    },
+    []
+  );
+
+  const handleTimelineDrop = useCallback(
+    (e: React.DragEvent) => {
+      setIsTimelineDragOver(false);
+      const raw = e.dataTransfer.getData(EDITOR_MEDIA_MIME);
+      if (!raw) return;
+      e.preventDefault();
+
+      const mediaData: MediaDropData = JSON.parse(raw);
+      const rect = contentRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const xInContent = e.clientX - rect.left + scrollX;
+      const framePosition = Math.max(0, Math.round(xInContent / pxPerFrame));
+
+      onDropMediaNewTrack?.(mediaData, framePosition);
+    },
+    [scrollX, pxPerFrame, onDropMediaNewTrack]
+  );
+
   const hasSelection = selection !== null;
 
   return (
@@ -193,25 +237,38 @@ export function EditorTimeline({
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
           <div
             ref={contentRef}
-            className="flex-1 overflow-auto relative"
+            className={cn(
+              "flex-1 overflow-auto relative",
+              isTimelineDragOver && "bg-primary/5"
+            )}
             onScroll={handleContentScroll}
             onWheel={handleWheel}
             onClick={onClearSelection}
+            onDragOver={handleTimelineDragOver}
+            onDragLeave={handleTimelineDragLeave}
+            onDrop={handleTimelineDrop}
           >
             <div style={{ width: contentWidth, minWidth: "100%" }}>
-              {tracks.map((track) => (
-                <EditorTrackRow
-                  key={track.id}
-                  track={track}
-                  zoom={zoom}
-                  scrollX={scrollX}
-                  viewportWidth={viewportWidth}
-                  selection={selection}
-                  onSelectItem={onSelectItem}
-                  onItemDoubleClick={onItemDoubleClick}
-                  onDropMedia={onDropMedia}
-                />
-              ))}
+              {tracks.length === 0 ? (
+                <div className="flex items-center justify-center h-24 text-sm text-muted-foreground border border-dashed border-muted-foreground/30 rounded m-2">
+                  Arrastra media aquí para comenzar
+                </div>
+              ) : (
+                tracks.map((track) => (
+                  <EditorTrackRow
+                    key={track.id}
+                    track={track}
+                    zoom={zoom}
+                    scrollX={scrollX}
+                    viewportWidth={viewportWidth}
+                    fps={fps}
+                    selection={selection}
+                    onSelectItem={onSelectItem}
+                    onItemDoubleClick={onItemDoubleClick}
+                    onDropMedia={onDropMedia}
+                  />
+                ))
+              )}
             </div>
 
             {/* Playhead overlay */}
