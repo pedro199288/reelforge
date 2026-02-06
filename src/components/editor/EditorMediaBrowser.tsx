@@ -43,11 +43,11 @@ export function EditorMediaBrowser({ onDragStart }: EditorMediaBrowserProps) {
     (e: React.DragEvent, video: Video) => {
       e.dataTransfer.setData("application/x-editor-media", JSON.stringify({
         type: "video",
-        src: `/${video.filename}`,
+        src: `/videos/${video.filename}`,
         name: video.title,
       }));
       e.dataTransfer.effectAllowed = "copy";
-      onDragStart?.("video", `/${video.filename}`);
+      onDragStart?.("video", `/videos/${video.filename}`);
     },
     [onDragStart]
   );
