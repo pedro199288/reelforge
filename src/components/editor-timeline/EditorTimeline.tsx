@@ -295,7 +295,7 @@ export function EditorTimeline({
           className="overflow-hidden flex-shrink-0"
           style={{ width: TRACK_HEADER_WIDTH }}
         >
-          {tracks.map((track) => (
+          {[...tracks].reverse().map((track) => (
             <EditorTrackHeader
               key={track.id}
               track={track}
@@ -334,7 +334,7 @@ export function EditorTimeline({
                   Arrastra media aquí para comenzar
                 </div>
               ) : (
-                tracks.map((track) => (
+                [...tracks].reverse().map((track) => (
                   <EditorTrackRow
                     key={track.id}
                     track={track}

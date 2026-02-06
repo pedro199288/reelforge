@@ -22,6 +22,7 @@ import {
   createImageItem,
   createSolidItem,
 } from "@/types/editor";
+import { resolveOverlaps } from "@/utils/resolve-track-overlaps";
 
 // ─── Store Interface ─────────────────────────────────────────────────
 
@@ -183,7 +184,7 @@ export const useEditorProjectStore = create<EditorProjectStore>()(
               ...state.project,
               tracks: state.project.tracks.map((t) =>
                 t.id === trackId
-                  ? { ...t, items: [...t.items, item].sort((a, b) => a.from - b.from) }
+                  ? { ...t, items: resolveOverlaps(t.items, item) }
                   : t
               ),
             },
@@ -244,7 +245,7 @@ export const useEditorProjectStore = create<EditorProjectStore>()(
                 ...state.project,
                 tracks: tracks.map((t) =>
                   t.id === toTrackId
-                    ? { ...t, items: [...t.items, movedItem!].sort((a, b) => a.from - b.from) }
+                    ? { ...t, items: resolveOverlaps(t.items, movedItem!) }
                     : t
                 ),
               },
@@ -256,22 +257,18 @@ export const useEditorProjectStore = create<EditorProjectStore>()(
           set((state) => ({
             project: {
               ...state.project,
-              tracks: state.project.tracks.map((t) =>
-                t.id === trackId
-                  ? {
-                      ...t,
-                      items: t.items.map((i) =>
-                        i.id === itemId
-                          ? {
-                              ...i,
-                              from: Math.max(0, newFrom),
-                              durationInFrames: Math.max(1, newDuration),
-                            }
-                          : i
-                      ),
-                    }
-                  : t
-              ),
+              tracks: state.project.tracks.map((t) => {
+                if (t.id !== trackId) return t;
+                const item = t.items.find((i) => i.id === itemId);
+                if (!item) return t;
+                const resized: TimelineItem = {
+                  ...item,
+                  from: Math.max(0, newFrom),
+                  durationInFrames: Math.max(1, newDuration),
+                };
+                const others = t.items.filter((i) => i.id !== itemId);
+                return { ...t, items: resolveOverlaps(others, resized) };
+              }),
             },
           })),
 
@@ -355,7 +352,7 @@ export const useEditorProjectStore = create<EditorProjectStore>()(
                 t.id === trackId
                   ? {
                       ...t,
-                      items: [...t.items, duplicate].sort((a, b) => a.from - b.from),
+                      items: resolveOverlaps(t.items, duplicate),
                     }
                   : t
               ),
