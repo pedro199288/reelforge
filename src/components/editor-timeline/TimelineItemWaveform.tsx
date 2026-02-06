@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useWaveform } from "@/hooks/useWaveform";
 import { downsampleWaveform } from "@/core/audio/waveform";
-import { Waveform } from "@/components/Timeline/Waveform";
+import { Waveform, WaveformPlaceholder } from "@/components/Timeline/Waveform";
 
 interface TimelineItemWaveformProps {
   src: string;
@@ -22,7 +22,13 @@ export function TimelineItemWaveform({
   fps,
   color,
 }: TimelineItemWaveformProps) {
-  const { rawData } = useWaveform(src);
+  const { rawData, loading, error } = useWaveform(src, {
+    samplesPerSecond: 200,
+  });
+
+  if (error) {
+    console.warn(`[TimelineItemWaveform] Waveform error for "${src}":`, error);
+  }
 
   const slicedData = useMemo(() => {
     if (!rawData || rawData.samples.length === 0) return null;
@@ -51,6 +57,14 @@ export function TimelineItemWaveform({
       targetPoints
     );
   }, [rawData, trimStartFrame, durationInFrames, width, fps]);
+
+  if (loading) {
+    return (
+      <div className="absolute inset-0 pointer-events-none">
+        <WaveformPlaceholder width={width} height={height} />
+      </div>
+    );
+  }
 
   if (!slicedData) return null;
 
