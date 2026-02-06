@@ -10,7 +10,7 @@ import type { Track, EditorSelection } from "@/types/editor";
 import { EditorTimelineRuler } from "./EditorTimelineRuler";
 import { EditorTimelinePlayhead } from "./EditorTimelinePlayhead";
 import { EditorTrackHeader } from "./EditorTrackHeader";
-import { EditorTrackRow } from "./EditorTrackRow";
+import { EditorTrackRow, type MediaDropData } from "./EditorTrackRow";
 import { EditorTimelineToolbar } from "./EditorTimelineToolbar";
 import { TRACK_HEADER_WIDTH, getPxPerFrame } from "./constants";
 
@@ -43,6 +43,7 @@ interface EditorTimelineProps {
   onUpdateTrack: (trackId: string, updates: Partial<Pick<Track, "name" | "locked" | "visible" | "volume">>) => void;
   onAddTrack: () => void;
   onItemDoubleClick: (itemId: string, trackId: string) => void;
+  onDropMedia?: (trackId: string, mediaData: MediaDropData, framePosition: number) => void;
 }
 
 export function EditorTimeline({
@@ -74,6 +75,7 @@ export function EditorTimeline({
   onUpdateTrack,
   onAddTrack,
   onItemDoubleClick,
+  onDropMedia,
 }: EditorTimelineProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const headersRef = useRef<HTMLDivElement>(null);
@@ -207,6 +209,7 @@ export function EditorTimeline({
                   selection={selection}
                   onSelectItem={onSelectItem}
                   onItemDoubleClick={onItemDoubleClick}
+                  onDropMedia={onDropMedia}
                 />
               ))}
             </div>

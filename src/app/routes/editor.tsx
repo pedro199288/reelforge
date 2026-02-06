@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useState } from "react";
+import { getVideoMetadata } from "@remotion/media-utils";
+import type { MediaDropData } from "@/components/editor-timeline/EditorTrackRow";
 import {
   useEditorProjectStore,
   useEditorProject,
@@ -62,6 +64,7 @@ function EditorPage() {
     updateItem,
     updateProjectSettings,
     addTrack,
+    addVideoItem,
     getProjectDuration,
   } = useEditorActions();
 
@@ -111,6 +114,22 @@ function EditorPage() {
       updateItem(trackId, itemId, updates);
     },
     [updateItem]
+  );
+
+  const handleDropMedia = useCallback(
+    async (trackId: string, mediaData: MediaDropData, framePosition: number) => {
+      if (mediaData.type === "video") {
+        const defaultDuration = 5 * project.fps;
+        try {
+          const metadata = await getVideoMetadata(mediaData.src);
+          const frames = Math.ceil(metadata.durationInSeconds * project.fps);
+          addVideoItem(trackId, mediaData.src, framePosition, frames);
+        } catch {
+          addVideoItem(trackId, mediaData.src, framePosition, defaultDuration);
+        }
+      }
+    },
+    [project.fps, addVideoItem]
   );
 
   const durationInFrames = getProjectDuration();
@@ -222,6 +241,7 @@ function EditorPage() {
         onUpdateTrack={updateTrack}
         onAddTrack={handleAddTrack}
         onItemDoubleClick={handleItemDoubleClick}
+        onDropMedia={handleDropMedia}
       />
     </div>
   );
