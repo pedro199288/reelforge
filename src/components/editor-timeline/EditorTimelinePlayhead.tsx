@@ -1,4 +1,4 @@
-import { TRACK_HEADER_WIDTH, getPxPerFrame } from "./constants";
+import { getPxPerFrame } from "./constants";
 
 interface EditorTimelinePlayheadProps {
   currentFrame: number;
@@ -14,10 +14,11 @@ export function EditorTimelinePlayhead({
   viewportWidth,
 }: EditorTimelinePlayheadProps) {
   const pxPerFrame = getPxPerFrame(zoom);
-  const x = currentFrame * pxPerFrame - scrollX + TRACK_HEADER_WIDTH;
+  const x = currentFrame * pxPerFrame;
 
-  // Viewport culling
-  if (x < TRACK_HEADER_WIDTH - 10 || x > (viewportWidth ?? 2000) + TRACK_HEADER_WIDTH + 10) {
+  // Viewport culling — check position in visible viewport
+  const visibleX = x - scrollX;
+  if (visibleX < -10 || visibleX > (viewportWidth ?? 2000) + 10) {
     return null;
   }
 

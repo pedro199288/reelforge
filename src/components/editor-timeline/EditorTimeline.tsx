@@ -296,7 +296,7 @@ export function EditorTimeline({
             onDragLeave={handleTimelineDragLeave}
             onDrop={handleTimelineDrop}
           >
-            <div style={{ width: contentWidth, minWidth: "100%" }}>
+            <div style={{ width: contentWidth, minWidth: "100%", position: "relative" }}>
               {tracks.length === 0 ? (
                 <div className="flex items-center justify-center h-24 text-sm text-muted-foreground border border-dashed border-muted-foreground/30 rounded m-2">
                   Arrastra media aquí para comenzar
@@ -320,17 +320,17 @@ export function EditorTimeline({
                   />
                 ))
               )}
+
+              {/* Playhead overlay — inside inner div so it scrolls with content */}
+              <EditorTimelinePlayhead
+                currentFrame={currentFrame}
+                zoom={zoom}
+                scrollX={scrollX}
+                viewportWidth={viewportWidth}
+              />
             </div>
 
             <DragOverlay dropAnimation={null} />
-
-            {/* Playhead overlay */}
-            <EditorTimelinePlayhead
-              currentFrame={currentFrame}
-              zoom={zoom}
-              scrollX={scrollX}
-              viewportWidth={viewportWidth}
-            />
           </div>
         </DndContext>
       </div>

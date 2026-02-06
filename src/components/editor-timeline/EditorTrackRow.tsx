@@ -66,11 +66,11 @@ export function EditorTrackRow({
 
       const rect = rowRef.current?.getBoundingClientRect();
       if (rect) {
-        const xInContent = e.clientX - rect.left + scrollX;
+        const xInContent = e.clientX - rect.left;
         setDragHoverFrame(Math.max(0, Math.round(xInContent / pxPerFrame)));
       }
     },
-    [track.locked, scrollX, pxPerFrame]
+    [track.locked, pxPerFrame]
   );
 
   const handleDragLeave = useCallback(() => {
@@ -93,12 +93,12 @@ export function EditorTrackRow({
       const rect = rowRef.current?.getBoundingClientRect();
       if (!rect) return;
 
-      const xInContent = e.clientX - rect.left + scrollX;
+      const xInContent = e.clientX - rect.left;
       const framePosition = Math.max(0, Math.round(xInContent / pxPerFrame));
 
       onDropMedia?.(track.id, mediaData, framePosition);
     },
-    [track.locked, track.id, scrollX, pxPerFrame, onDropMedia]
+    [track.locked, track.id, pxPerFrame, onDropMedia]
   );
 
   // Merge refs: dnd-kit droppable + our local ref
@@ -126,11 +126,12 @@ export function EditorTrackRow({
       onDrop={handleDrop}
     >
       {track.items.map((item) => {
-        const x = item.from * pxPerFrame - scrollX;
+        const x = item.from * pxPerFrame;
         const width = item.durationInFrames * pxPerFrame;
 
-        // Viewport culling
-        if (x + width < -50 || x > viewportWidth + 50) return null;
+        // Viewport culling — check visible position
+        const visibleX = x - scrollX;
+        if (visibleX + width < -50 || visibleX > viewportWidth + 50) return null;
 
         const isSelected =
           selection?.type === "item" &&
@@ -156,7 +157,7 @@ export function EditorTrackRow({
         <div
           className="absolute top-0.5 bottom-0.5 pointer-events-none bg-primary/20 border border-dashed border-primary/60 rounded"
           style={{
-            left: dragHoverFrame * pxPerFrame - scrollX,
+            left: dragHoverFrame * pxPerFrame,
             width: 5 * fps * pxPerFrame,
           }}
         />
@@ -167,7 +168,7 @@ export function EditorTrackRow({
         <div
           className="absolute top-0.5 bottom-0.5 pointer-events-none bg-primary/25 border-2 border-dashed border-primary/70 rounded"
           style={{
-            left: dragGhost.newFrom * pxPerFrame - scrollX,
+            left: dragGhost.newFrom * pxPerFrame,
             width: Math.max(dragGhost.durationInFrames * pxPerFrame, 20),
           }}
         />
