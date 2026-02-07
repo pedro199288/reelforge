@@ -79,6 +79,38 @@ export function VideoItemProperties({ item, onUpdate }: VideoItemPropertiesProps
         </div>
       </div>
 
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Posición X</Label>
+          <Input
+            type="number"
+            value={item.position.x}
+            onChange={(e) => onUpdate({ position: { ...item.position, x: parseInt(e.target.value) || 0 } })}
+            className="h-8 text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Posición Y</Label>
+          <Input
+            type="number"
+            value={item.position.y}
+            onChange={(e) => onUpdate({ position: { ...item.position, y: parseInt(e.target.value) || 0 } })}
+            className="h-8 text-xs"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">Escala: {item.scale.toFixed(2)}x</Label>
+        <Slider
+          value={[item.scale]}
+          min={0.1}
+          max={5}
+          step={0.1}
+          onValueChange={([v]) => onUpdate({ scale: v })}
+        />
+      </div>
+
       <div className="space-y-1">
         <Label className="text-xs">Ajuste</Label>
         <Select value={item.fit} onValueChange={(v) => onUpdate({ fit: v })}>

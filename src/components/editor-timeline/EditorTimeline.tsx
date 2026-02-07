@@ -105,9 +105,21 @@ export function EditorTimeline({
     itemType: string;
   } | null>(null);
 
+  const dragStartScrollXRef = useRef(0);
+
   const handleDragStart = useCallback((_event: DragStartEvent) => {
-    // Ghost will be set on first move
+    dragStartScrollXRef.current = scrollXRef.current;
   }, []);
+
+  const getDragNewFrom = useCallback(
+    (item: TimelineItem, deltaX: number) => {
+      const scrollDelta = scrollXRef.current - dragStartScrollXRef.current;
+      const adjustedDeltaX = deltaX + scrollDelta;
+      const deltaFrames = Math.round(adjustedDeltaX / pxPerFrame);
+      return Math.max(0, item.from + deltaFrames);
+    },
+    [pxPerFrame]
+  );
 
   const handleDragMove = useCallback(
     (event: DragMoveEvent) => {
@@ -116,8 +128,7 @@ export function EditorTimeline({
       if (!itemData || itemData.type !== "timeline-item") return;
 
       const item = itemData.item as TimelineItem;
-      const deltaFrames = Math.round(delta.x / pxPerFrame);
-      const newFrom = Math.max(0, item.from + deltaFrames);
+      const newFrom = getDragNewFrom(item, delta.x);
 
       const overData = over?.data.current;
       const targetTrackId = overData?.type === "track" ? overData.trackId : item.trackId;
@@ -129,7 +140,7 @@ export function EditorTimeline({
         itemType: item.type,
       });
     },
-    [pxPerFrame]
+    [getDragNewFrom]
   );
 
   const clearDragGhost = useCallback(() => setDragGhost(null), []);
@@ -146,8 +157,7 @@ export function EditorTimeline({
       const overData = over.data.current;
       if (!overData || overData.type !== "track") return;
 
-      const deltaFrames = Math.round(delta.x / pxPerFrame);
-      const newFrom = Math.max(0, itemData.item.from + deltaFrames);
+      const newFrom = getDragNewFrom(itemData.item, delta.x);
 
       onMoveItem(
         itemData.item.trackId,
@@ -156,7 +166,7 @@ export function EditorTimeline({
         newFrom
       );
     },
-    [pxPerFrame, onMoveItem]
+    [getDragNewFrom, onMoveItem]
   );
 
   const handleContentScroll = useCallback(
@@ -183,6 +193,7 @@ export function EditorTimeline({
     if (!el) return;
     const handler = (e: WheelEvent) => {
       e.preventDefault();
+      e.stopPropagation();
       if (e.deltaX !== 0 && !e.ctrlKey && !e.metaKey) {
         // Horizontal pan
         const newScrollX = Math.max(0, scrollXRef.current + e.deltaX);
@@ -349,7 +360,7 @@ export function EditorTimeline({
           <div
             ref={contentRef}
             className={cn(
-              "flex-1 overflow-auto relative overscroll-contain touch-none",
+              "flex-1 overflow-auto relative overscroll-none touch-none",
               isTimelineDragOver && "bg-primary/5"
             )}
             onScroll={handleContentScroll}

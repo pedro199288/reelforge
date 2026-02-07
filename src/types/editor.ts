@@ -25,6 +25,8 @@ export interface VideoItem extends BaseItem {
   volume: number;
   playbackRate: number;
   fit: "cover" | "contain" | "fill";
+  position: { x: number; y: number };
+  scale: number;
 }
 
 export interface AudioItem extends BaseItem {
@@ -149,6 +151,8 @@ export function createVideoItem(
     volume: 1,
     playbackRate: 1,
     fit: "cover",
+    position: { x: 540, y: 960 },
+    scale: 1,
   };
 }
 

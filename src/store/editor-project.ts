@@ -96,17 +96,20 @@ interface EditorProjectStore {
   findItemGlobal: (itemId: string) => { item: TimelineItem; track: Track } | undefined;
   getProjectDuration: () => number;
 
+  // ─── Media URL Remapping ───────────────────────────────────────
+  remapMediaUrls: (urlMap: Map<string, string>) => void;
+
   // ─── Quick Add Helpers ──────────────────────────────────────────
-  addVideoItem: (trackId: string, src: string, from: number, durationInFrames: number) => string;
-  addAudioItem: (trackId: string, src: string, from: number, durationInFrames: number) => string;
+  addVideoItem: (trackId: string, src: string, from: number, durationInFrames: number, name?: string) => string;
+  addAudioItem: (trackId: string, src: string, from: number, durationInFrames: number, name?: string) => string;
   addTextItem: (trackId: string, text: string, from: number, durationInFrames: number) => string;
-  addImageItem: (trackId: string, src: string, from: number, durationInFrames: number) => string;
+  addImageItem: (trackId: string, src: string, from: number, durationInFrames: number, name?: string) => string;
   addSolidItem: (trackId: string, color: string, from: number, durationInFrames: number) => string;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────
 
-const MIN_ZOOM = 0.1;
+const MIN_ZOOM = 0.01;
 const MAX_ZOOM = 10;
 const ZOOM_FACTOR = 1.3;
 const PLAYBACK_RATES = [1, 1.25, 1.5, 2, 2.5, 3] as const;
@@ -443,17 +446,40 @@ export const useEditorProjectStore = create<EditorProjectStore>()(
           return maxFrame;
         },
 
+        // ─── Media URL Remapping ─────────────────────────────────────
+
+        remapMediaUrls: (urlMap) =>
+          set((state) => ({
+            project: {
+              ...state.project,
+              tracks: state.project.tracks.map((t) => ({
+                ...t,
+                items: t.items.map((item) => {
+                  if ("src" in item && typeof item.src === "string") {
+                    const fresh = urlMap.get(item.src);
+                    if (fresh) return { ...item, src: fresh };
+                  }
+                  return item;
+                }),
+              })),
+            },
+          })),
+
         // ─── Quick Add Helpers ─────────────────────────────────────
 
-        addVideoItem: (trackId, src, from, durationInFrames) => {
+        addVideoItem: (trackId, src, from, durationInFrames, name?) => {
           const id = nanoid(8);
-          get().addItem(trackId, createVideoItem(id, trackId, src, from, durationInFrames));
+          const item = createVideoItem(id, trackId, src, from, durationInFrames);
+          if (name) item.name = name;
+          get().addItem(trackId, item);
           return id;
         },
 
-        addAudioItem: (trackId, src, from, durationInFrames) => {
+        addAudioItem: (trackId, src, from, durationInFrames, name?) => {
           const id = nanoid(8);
-          get().addItem(trackId, createAudioItem(id, trackId, src, from, durationInFrames));
+          const item = createAudioItem(id, trackId, src, from, durationInFrames);
+          if (name) item.name = name;
+          get().addItem(trackId, item);
           return id;
         },
 
@@ -463,9 +489,11 @@ export const useEditorProjectStore = create<EditorProjectStore>()(
           return id;
         },
 
-        addImageItem: (trackId, src, from, durationInFrames) => {
+        addImageItem: (trackId, src, from, durationInFrames, name?) => {
           const id = nanoid(8);
-          get().addItem(trackId, createImageItem(id, trackId, src, from, durationInFrames));
+          const item = createImageItem(id, trackId, src, from, durationInFrames);
+          if (name) item.name = name;
+          get().addItem(trackId, item);
           return id;
         },
 
@@ -477,9 +505,28 @@ export const useEditorProjectStore = create<EditorProjectStore>()(
       }),
       {
         name: "reelforge-editor-project",
+        version: 1,
         partialize: (state) => ({
           project: state.project,
         }),
+        migrate: (persisted, version) => {
+          if (version === 0) {
+            const state = persisted as { project: EditorProject };
+            for (const track of state.project.tracks) {
+              for (const item of track.items) {
+                if (item.type === "video") {
+                  const video = item as VideoItem;
+                  video.position ??= {
+                    x: state.project.width / 2,
+                    y: state.project.height / 2,
+                  };
+                  video.scale ??= 1;
+                }
+              }
+            }
+          }
+          return persisted;
+        },
       }
     ),
     {
@@ -583,6 +630,7 @@ export const useEditorActions = () =>
       getItem: state.getItem,
       findItemGlobal: state.findItemGlobal,
       getProjectDuration: state.getProjectDuration,
+      remapMediaUrls: state.remapMediaUrls,
       addVideoItem: state.addVideoItem,
       addAudioItem: state.addAudioItem,
       addTextItem: state.addTextItem,

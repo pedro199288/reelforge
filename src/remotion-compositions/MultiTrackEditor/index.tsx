@@ -11,18 +11,25 @@ interface MultiTrackMainProps extends Record<string, unknown> {
 
 function VideoItemComp({ item }: { item: VideoItem }) {
   return (
-    <OffthreadVideo
-      src={item.src}
-      startFrom={item.trimStartFrame}
-      endAt={item.trimEndFrame}
-      volume={item.volume}
-      playbackRate={item.playbackRate}
-      style={{
-        width: "100%",
-        height: "100%",
-        objectFit: item.fit,
-      }}
-    />
+    <AbsoluteFill>
+      <OffthreadVideo
+        src={item.src}
+        startFrom={item.trimStartFrame}
+        endAt={item.trimEndFrame}
+        volume={item.volume}
+        playbackRate={item.playbackRate}
+        style={{
+          position: "absolute",
+          left: item.position.x,
+          top: item.position.y,
+          width: "100%",
+          height: "100%",
+          transform: `translate(-50%, -50%) scale(${item.scale})`,
+          transformOrigin: "center center",
+          objectFit: item.fit,
+        }}
+      />
+    </AbsoluteFill>
   );
 }
 

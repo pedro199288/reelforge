@@ -1,7 +1,7 @@
 import { useMemo, useRef, memo } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { MultiTrackMain } from "@/remotion-compositions/MultiTrackEditor";
-import type { Track } from "@/types/editor";
+import type { Track, EditorSelection } from "@/types/editor";
 import { usePlayerSync } from "@/hooks/usePlayerSync";
 import { PreviewDragOverlay } from "./PreviewDragOverlay";
 
@@ -13,6 +13,9 @@ interface EditorPreviewProps {
   durationInFrames: number;
   playbackRate: number;
   playerRef: React.RefObject<PlayerRef | null>;
+  currentFrame: number;
+  onSelect: (selection: EditorSelection) => void;
+  onClearSelection: () => void;
 }
 
 export const EditorPreview = memo(function EditorPreview({
@@ -23,6 +26,9 @@ export const EditorPreview = memo(function EditorPreview({
   durationInFrames,
   playbackRate,
   playerRef,
+  currentFrame,
+  onSelect,
+  onClearSelection,
 }: EditorPreviewProps) {
   usePlayerSync({ playerRef, fps });
 
@@ -60,6 +66,10 @@ export const EditorPreview = memo(function EditorPreview({
           containerRef={playerContainerRef}
           compositionWidth={width}
           compositionHeight={height}
+          tracks={tracks}
+          currentFrame={currentFrame}
+          onSelect={onSelect}
+          onClearSelection={onClearSelection}
         />
       </div>
     </div>

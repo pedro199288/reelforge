@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Film, Music, ImageIcon, FileText, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -55,8 +55,6 @@ export function EditorMediaBrowser({ onDragStart }: EditorMediaBrowserProps) {
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<MediaTab>("video");
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const importedItems = useMediaLibraryStore((s) => s.items);
   const importFiles = useMediaLibraryStore((s) => s.importFiles);
   const removeItem = useMediaLibraryStore((s) => s.removeItem);
@@ -87,24 +85,22 @@ export function EditorMediaBrowser({ onDragStart }: EditorMediaBrowserProps) {
     [onDragStart]
   );
 
-  const handleImportClick = useCallback(() => {
-    const input = fileInputRef.current;
-    if (!input) return;
-    input.accept = ACCEPT_BY_TAB[activeTab];
-    input.click();
-  }, [activeTab]);
-
-  const handleFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (files && files.length > 0) {
-        importFiles(files);
-      }
-      // Reset so re-selecting the same file triggers onChange
-      e.target.value = "";
-    },
-    [importFiles]
-  );
+  const handleImportClick = useCallback(async () => {
+    const accept = ACCEPT_BY_TAB[activeTab];
+    if (!accept) return;
+    try {
+      const handles = await showOpenFilePicker({
+        multiple: true,
+        types: [{ description: "Media", accept: { [accept]: [] } }],
+      });
+      const entries = await Promise.all(
+        handles.map(async (h) => ({ handle: h, file: await h.getFile() }))
+      );
+      importFiles(entries);
+    } catch {
+      // User cancelled the picker
+    }
+  }, [activeTab, importFiles]);
 
   const filteredImported = importedItems.filter(
     (item) => activeTab !== "text" && item.type === activeTab
@@ -133,14 +129,6 @@ export function EditorMediaBrowser({ onDragStart }: EditorMediaBrowserProps) {
           </Button>
         )}
       </div>
-
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        className="hidden"
-        onChange={handleFileChange}
-      />
 
       {/* Tabs */}
       <div className="flex border-b">

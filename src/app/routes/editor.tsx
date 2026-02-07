@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getVideoMetadata } from "@remotion/media-utils";
 import type { PlayerRef } from "@remotion/player";
 import type { MediaDropData } from "@/components/editor-timeline/EditorTrackRow";
@@ -32,6 +32,7 @@ import {
   PanelRightOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useMediaLibraryStore } from "@/store/media-library";
 
 export const Route = createFileRoute("/editor")({
   component: EditorPage,
@@ -71,7 +72,40 @@ function EditorPage() {
     addVideoItem,
     addImageItem,
     getProjectDuration,
+    remapMediaUrls,
   } = useEditorActions();
+
+  // ─── Media hydration gate ─────────────────────────────────────
+  const [mediaReady, setMediaReady] = useState(false);
+  const [needsPermission, setNeedsPermission] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hydrate = async () => {
+      const result = await useMediaLibraryStore.getState().hydrateBlobs();
+      if (cancelled) return;
+      if (result.urlMap.size > 0) {
+        useEditorProjectStore.temporal.getState().pause();
+        remapMediaUrls(result.urlMap);
+        useEditorProjectStore.temporal.getState().resume();
+      }
+      setNeedsPermission(result.needsPermission);
+      setMediaReady(true);
+    };
+    hydrate();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleRestoreAccess = useCallback(async () => {
+    const urlMap = await useMediaLibraryStore.getState().requestFileAccess();
+    if (urlMap.size > 0) {
+      useEditorProjectStore.temporal.getState().pause();
+      remapMediaUrls(urlMap);
+      useEditorProjectStore.temporal.getState().resume();
+    }
+    const pending = useMediaLibraryStore.getState()._pendingPermissionIds;
+    setNeedsPermission(pending.length > 0);
+  }, [remapMediaUrls]);
 
   const scrollX = useEditorProjectStore((s) => s.timelineScrollX);
   const scrollY = useEditorProjectStore((s) => s.timelineScrollY);
@@ -143,13 +177,13 @@ function EditorPage() {
         try {
           const metadata = await getVideoMetadata(mediaData.src);
           const frames = Math.ceil(metadata.durationInSeconds * project.fps);
-          addVideoItem(trackId, mediaData.src, framePosition, frames);
+          addVideoItem(trackId, mediaData.src, framePosition, frames, mediaData.name);
         } catch {
-          addVideoItem(trackId, mediaData.src, framePosition, defaultDuration);
+          addVideoItem(trackId, mediaData.src, framePosition, defaultDuration, mediaData.name);
         }
       } else if (mediaData.type === "image") {
         const defaultDuration = 2 * project.fps;
-        addImageItem(trackId, mediaData.src, framePosition, defaultDuration);
+        addImageItem(trackId, mediaData.src, framePosition, defaultDuration, mediaData.name);
       }
     },
     [tracks.length, project.fps, addTrack, addVideoItem, addImageItem]
@@ -162,13 +196,13 @@ function EditorPage() {
         try {
           const metadata = await getVideoMetadata(mediaData.src);
           const frames = Math.ceil(metadata.durationInSeconds * project.fps);
-          addVideoItem(trackId, mediaData.src, framePosition, frames);
+          addVideoItem(trackId, mediaData.src, framePosition, frames, mediaData.name);
         } catch {
-          addVideoItem(trackId, mediaData.src, framePosition, defaultDuration);
+          addVideoItem(trackId, mediaData.src, framePosition, defaultDuration, mediaData.name);
         }
       } else if (mediaData.type === "image") {
         const defaultDuration = 2 * project.fps;
-        addImageItem(trackId, mediaData.src, framePosition, defaultDuration);
+        addImageItem(trackId, mediaData.src, framePosition, defaultDuration, mediaData.name);
       }
     },
     [project.fps, addVideoItem, addImageItem]
@@ -176,8 +210,31 @@ function EditorPage() {
 
   const durationInFrames = getProjectDuration();
 
+  if (!mediaReady) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <span className="text-sm text-muted-foreground">Loading media...</span>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col">
+      {/* Permission banner */}
+      {needsPermission && (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-amber-500/15 border-b border-amber-500/30 text-xs text-amber-700 dark:text-amber-400">
+          <span>Some imported files need re-authorization to display.</span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 text-xs shrink-0"
+            onClick={handleRestoreAccess}
+          >
+            Restore access
+          </Button>
+        </div>
+      )}
+
       {/* Main content area */}
       <div className="flex-1 flex min-h-0">
         {/* Left sidebar: Media Browser */}
@@ -233,6 +290,9 @@ function EditorPage() {
             height={project.height}
             durationInFrames={durationInFrames}
             playbackRate={playbackRate}
+            currentFrame={currentFrame}
+            onSelect={select}
+            onClearSelection={clearSelection}
             playerRef={playerRef}
           />
         </div>
