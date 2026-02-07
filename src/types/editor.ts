@@ -5,6 +5,8 @@
  * Use frameToMs/msToFrame helpers for conversion.
  */
 
+import type { ItemAnimations } from "./animation";
+
 // ─── Base Item ───────────────────────────────────────────────────────
 
 export interface BaseItem {
@@ -13,6 +15,7 @@ export interface BaseItem {
   from: number; // Start frame on the timeline
   durationInFrames: number;
   trackId: string;
+  animations?: ItemAnimations;
 }
 
 // ─── Item Types ──────────────────────────────────────────────────────
@@ -39,6 +42,21 @@ export interface AudioItem extends BaseItem {
   fadeOutFrames: number;
 }
 
+export interface TextItemShadow {
+  color: string;
+  offsetX: number;
+  offsetY: number;
+  blur: number;
+}
+
+export interface TextItemBackground {
+  color: string;
+  borderRadius: number;
+  opacity: number;
+  paddingX: number;
+  paddingY: number;
+}
+
 export interface TextItem extends BaseItem {
   type: "text";
   text: string;
@@ -49,6 +67,16 @@ export interface TextItem extends BaseItem {
   strokeColor: string;
   strokeWidth: number;
   position: { x: number; y: number };
+  textShadow?: TextItemShadow;
+  lineHeight: number;
+  letterSpacing: number;
+  background?: TextItemBackground;
+  textOpacity: number;
+  textTransform: "none" | "uppercase" | "lowercase" | "capitalize";
+  underline: boolean;
+  italic: boolean;
+  textBoxWidth: number | null;
+  textBoxHeight: number | null;
 }
 
 export interface ImageItem extends BaseItem {
@@ -66,6 +94,19 @@ export interface SolidItem extends BaseItem {
   opacity: number;
 }
 
+export interface CaptionWord {
+  text: string;
+  startOffsetFrames: number; // relative to CaptionItem start
+  endOffsetFrames: number;
+}
+
+export interface CaptionItem extends BaseItem {
+  type: "caption";
+  text: string;
+  words: CaptionWord[];
+  sourceVideoItemId?: string;
+}
+
 // ─── Discriminated Union ─────────────────────────────────────────────
 
 export type TimelineItem =
@@ -73,13 +114,14 @@ export type TimelineItem =
   | AudioItem
   | TextItem
   | ImageItem
-  | SolidItem;
+  | SolidItem
+  | CaptionItem;
 
 export type TimelineItemType = TimelineItem["type"];
 
 // ─── Track ───────────────────────────────────────────────────────────
 
-export type TrackType = "video" | "audio" | "text" | "overlay";
+export type TrackType = "video" | "audio" | "text" | "overlay" | "caption";
 
 export interface Track {
   id: string;
@@ -201,6 +243,14 @@ export function createTextItem(
     strokeColor: "#000000",
     strokeWidth: 0,
     position: { x: 540, y: 960 },
+    lineHeight: 1.2,
+    letterSpacing: 0,
+    textOpacity: 1,
+    textTransform: "none",
+    underline: false,
+    italic: false,
+    textBoxWidth: null,
+    textBoxHeight: null,
   };
 }
 
@@ -245,6 +295,28 @@ export function createSolidItem(
   };
 }
 
+export function createCaptionItem(
+  id: string,
+  trackId: string,
+  text: string,
+  words: CaptionWord[],
+  from: number,
+  durationInFrames: number,
+  sourceVideoItemId?: string
+): CaptionItem {
+  return {
+    id,
+    name: text.slice(0, 20) || "Caption",
+    type: "caption",
+    from,
+    durationInFrames,
+    trackId,
+    text,
+    words,
+    sourceVideoItemId,
+  };
+}
+
 export function createTrack(
   id: string,
   name: string,
@@ -258,7 +330,7 @@ export function createTrack(
     locked: false,
     visible: true,
     volume: 1,
-    height: type === "audio" ? 60 : 80,
+    height: type === "audio" ? 60 : type === "caption" ? 50 : 80,
   };
 }
 

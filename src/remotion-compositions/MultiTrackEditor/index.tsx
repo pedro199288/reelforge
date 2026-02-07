@@ -15,6 +15,8 @@ import type {
   SolidItem,
 } from "@/types/editor";
 import { useGoogleFont } from "@/hooks/useGoogleFont";
+import { CaptionItemComp } from "./CaptionItemComp";
+import { AnimatedItem } from "./AnimatedItem";
 
 // ─── Props ───────────────────────────────────────────────────────────
 
@@ -62,31 +64,74 @@ function AudioItemComp({ item }: { item: AudioItem }) {
 function TextItemComp({ item }: { item: TextItem }) {
   const fontFamily = useGoogleFont(item.fontFamily);
 
+  const textShadow = item.textShadow
+    ? `${item.textShadow.offsetX}px ${item.textShadow.offsetY}px ${item.textShadow.blur}px ${item.textShadow.color}`
+    : undefined;
+
+  const letterSpacing = item.letterSpacing ?? 0;
+
+  const textStyles: React.CSSProperties = {
+    fontFamily,
+    fontSize: item.fontSize,
+    fontWeight: item.fontWeight,
+    fontStyle: (item.italic ?? false) ? "italic" : "normal",
+    color: item.color,
+    opacity: item.textOpacity ?? 1,
+    WebkitTextStroke:
+      item.strokeWidth > 0
+        ? `${item.strokeWidth}px ${item.strokeColor}`
+        : undefined,
+    textShadow,
+    lineHeight: item.lineHeight ?? 1.2,
+    letterSpacing: letterSpacing ? `${letterSpacing}px` : undefined,
+    textTransform: (item.textTransform ?? "none") as React.CSSProperties["textTransform"],
+    textDecoration: (item.underline ?? false) ? "underline" : "none",
+    whiteSpace: "pre-wrap",
+    textAlign: "center",
+    margin: 0,
+    maxWidth: item.textBoxWidth ?? undefined,
+    maxHeight: item.textBoxHeight ?? undefined,
+    overflow: item.textBoxHeight ? "hidden" : undefined,
+    wordBreak: item.textBoxWidth ? "break-word" : undefined,
+  };
+
+  if (item.background) {
+    return (
+      <AbsoluteFill
+        style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            left: item.position.x,
+            top: item.position.y,
+            transform: "translate(-50%, -50%)",
+            backgroundColor: item.background.color,
+            borderRadius: item.background.borderRadius,
+            opacity: item.background.opacity,
+            paddingLeft: item.background.paddingX,
+            paddingRight: item.background.paddingX,
+            paddingTop: item.background.paddingY,
+            paddingBottom: item.background.paddingY,
+          }}
+        >
+          <h1 style={textStyles}>{item.text}</h1>
+        </div>
+      </AbsoluteFill>
+    );
+  }
+
   return (
     <AbsoluteFill
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
+      style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
     >
       <h1
         style={{
+          ...textStyles,
           position: "absolute",
           left: item.position.x,
           top: item.position.y,
           transform: "translate(-50%, -50%)",
-          fontFamily,
-          fontSize: item.fontSize,
-          fontWeight: item.fontWeight,
-          color: item.color,
-          WebkitTextStroke:
-            item.strokeWidth > 0
-              ? `${item.strokeWidth}px ${item.strokeColor}`
-              : undefined,
-          whiteSpace: "pre-wrap",
-          textAlign: "center",
-          margin: 0,
         }}
       >
         {item.text}
@@ -129,18 +174,24 @@ function SolidItemComp({ item }: { item: SolidItem }) {
 // ─── Item Router ─────────────────────────────────────────────────────
 
 function ItemComp({ item }: { item: TimelineItem }) {
-  switch (item.type) {
-    case "video":
-      return <VideoItemComp item={item} />;
-    case "audio":
-      return <AudioItemComp item={item} />;
-    case "text":
-      return <TextItemComp item={item} />;
-    case "image":
-      return <ImageItemComp item={item} />;
-    case "solid":
-      return <SolidItemComp item={item} />;
-  }
+  const content = (() => {
+    switch (item.type) {
+      case "video":
+        return <VideoItemComp item={item} />;
+      case "audio":
+        return <AudioItemComp item={item} />;
+      case "text":
+        return <TextItemComp item={item} />;
+      case "image":
+        return <ImageItemComp item={item} />;
+      case "solid":
+        return <SolidItemComp item={item} />;
+      case "caption":
+        return <CaptionItemComp item={item} />;
+    }
+  })();
+
+  return <AnimatedItem item={item}>{content}</AnimatedItem>;
 }
 
 // ─── Track Renderer ──────────────────────────────────────────────────

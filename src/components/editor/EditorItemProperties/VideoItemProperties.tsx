@@ -9,6 +9,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { VideoItem } from "@/types/editor";
+import { useEditorProject } from "@/store/editor-project";
+import { EditorCaptionGenerator } from "../EditorCaptionGenerator";
+import { AnimationSection } from "./AnimationSection";
 
 interface VideoItemPropertiesProps {
   item: VideoItem;
@@ -16,6 +19,8 @@ interface VideoItemPropertiesProps {
 }
 
 export function VideoItemProperties({ item, onUpdate }: VideoItemPropertiesProps) {
+  const project = useEditorProject();
+
   return (
     <div className="space-y-3">
       <div className="space-y-1">
@@ -124,6 +129,14 @@ export function VideoItemProperties({ item, onUpdate }: VideoItemPropertiesProps
           </SelectContent>
         </Select>
       </div>
+
+      <EditorCaptionGenerator videoItem={item} fps={project.fps} />
+
+      <AnimationSection
+        animations={item.animations}
+        maxDurationInFrames={item.durationInFrames}
+        onUpdate={onUpdate}
+      />
     </div>
   );
 }

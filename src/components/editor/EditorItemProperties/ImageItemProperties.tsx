@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { ImageItem } from "@/types/editor";
+import { AnimationSection } from "./AnimationSection";
 
 interface ImageItemPropertiesProps {
   item: ImageItem;
@@ -92,6 +93,12 @@ export function ImageItemProperties({ item, onUpdate }: ImageItemPropertiesProps
           </SelectContent>
         </Select>
       </div>
+
+      <AnimationSection
+        animations={item.animations}
+        maxDurationInFrames={item.durationInFrames}
+        onUpdate={onUpdate}
+      />
     </div>
   );
 }

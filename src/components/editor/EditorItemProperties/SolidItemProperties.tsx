@@ -2,6 +2,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import type { SolidItem } from "@/types/editor";
+import { AnimationSection } from "./AnimationSection";
 
 interface SolidItemPropertiesProps {
   item: SolidItem;
@@ -47,6 +48,12 @@ export function SolidItemProperties({ item, onUpdate }: SolidItemPropertiesProps
           onValueChange={([v]) => onUpdate({ opacity: v })}
         />
       </div>
+
+      <AnimationSection
+        animations={item.animations}
+        maxDurationInFrames={item.durationInFrames}
+        onUpdate={onUpdate}
+      />
     </div>
   );
 }
