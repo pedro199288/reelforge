@@ -1,5 +1,20 @@
-import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence } from "remotion";
-import type { Track, TimelineItem, VideoItem, AudioItem, TextItem, ImageItem, SolidItem } from "@/types/editor";
+import {
+  AbsoluteFill,
+  Html5Audio,
+  Img,
+  OffthreadVideo,
+  Sequence,
+} from "remotion";
+import type {
+  Track,
+  TimelineItem,
+  VideoItem,
+  AudioItem,
+  TextItem,
+  ImageItem,
+  SolidItem,
+} from "@/types/editor";
+import { useGoogleFont } from "@/hooks/useGoogleFont";
 
 // ─── Props ───────────────────────────────────────────────────────────
 
@@ -35,16 +50,18 @@ function VideoItemComp({ item }: { item: VideoItem }) {
 
 function AudioItemComp({ item }: { item: AudioItem }) {
   return (
-    <Audio
+    <Html5Audio
       src={item.src}
-      startFrom={item.trimStartFrame}
-      endAt={item.trimEndFrame}
-      volume={item.volume}
+      trimBefore={item.trimStartFrame}
+      trimAfter={item.trimEndFrame}
+      volume={() => item.volume}
     />
   );
 }
 
 function TextItemComp({ item }: { item: TextItem }) {
+  const fontFamily = useGoogleFont(item.fontFamily);
+
   return (
     <AbsoluteFill
       style={{
@@ -59,13 +76,14 @@ function TextItemComp({ item }: { item: TextItem }) {
           left: item.position.x,
           top: item.position.y,
           transform: "translate(-50%, -50%)",
-          fontFamily: item.fontFamily,
+          fontFamily,
           fontSize: item.fontSize,
           fontWeight: item.fontWeight,
           color: item.color,
-          WebkitTextStroke: item.strokeWidth > 0
-            ? `${item.strokeWidth}px ${item.strokeColor}`
-            : undefined,
+          WebkitTextStroke:
+            item.strokeWidth > 0
+              ? `${item.strokeWidth}px ${item.strokeColor}`
+              : undefined,
           whiteSpace: "pre-wrap",
           textAlign: "center",
           margin: 0,

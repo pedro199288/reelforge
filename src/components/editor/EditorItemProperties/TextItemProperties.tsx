@@ -2,6 +2,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import type { TextItem } from "@/types/editor";
+import { FontPicker } from "@/components/editor/FontPicker";
 
 interface TextItemPropertiesProps {
   item: TextItem;
@@ -22,10 +23,9 @@ export function TextItemProperties({ item, onUpdate }: TextItemPropertiesProps) 
 
       <div className="space-y-1">
         <Label className="text-xs">Fuente</Label>
-        <Input
+        <FontPicker
           value={item.fontFamily}
-          onChange={(e) => onUpdate({ fontFamily: e.target.value })}
-          className="h-8 text-xs"
+          onValueChange={(f) => onUpdate({ fontFamily: f })}
         />
       </div>
 

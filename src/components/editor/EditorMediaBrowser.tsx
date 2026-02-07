@@ -7,6 +7,7 @@ import {
   type ImportedMedia,
   type ImportedMediaType,
 } from "@/store/media-library";
+import { useEditorProjectStore } from "@/store/editor-project";
 
 interface Video {
   id: string;
@@ -235,7 +236,11 @@ export function EditorMediaBrowser({ onDragStart }: EditorMediaBrowserProps) {
               size="sm"
               className="w-full text-xs"
               onClick={() => {
-                // Text items are created directly via the timeline
+                const state = useEditorProjectStore.getState();
+                const { project, currentFrame } = state;
+                let trackId = project.tracks.find((t) => t.type === "text")?.id;
+                if (!trackId) trackId = state.addTrack("Texto", "text");
+                state.addTextItem(trackId, "Nuevo texto", currentFrame, 3 * project.fps);
               }}
             >
               <FileText className="h-3 w-3 mr-1" />
